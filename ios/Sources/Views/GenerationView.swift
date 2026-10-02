@@ -20,6 +20,8 @@ struct GenerationView: View {
     @State private var showCast = false
     @State private var useCast = false
     @State private var uncertainAsNarrator = false
+    @State private var newTake = false
+    @State private var takeID: String?
     var body: some View {
         NavigationStack {
             Form {
@@ -34,8 +36,11 @@ struct GenerationView: View {
                         Picker("Generate", selection: $chapterID) { Text("Entire book").tag("all"); ForEach(remote.chapters) { Text($0.title).tag($0.id) } }
                         Toggle("Select individual passages", isOn: $customSelection)
                         Toggle("Announce chapter titles", isOn: $announce)
+                        Toggle("Render a new take", isOn: $newTake)
+                        if newTake { Text("Render these passages again. Some engines produce the same performance with unchanged settings.").font(.caption).foregroundStyle(.secondary) }
                         Toggle("Use full cast", isOn: $useCast)
                         if useCast {
+                            Text("A narrator voice assigned in Cast Studio also reads the unassigned words.").font(.caption).foregroundStyle(.secondary)
                             Button("Review characters & dialogue") { showCast = true }
                             Toggle("Use narrator for unreviewed lines", isOn: $uncertainAsNarrator)
                         }
@@ -66,6 +71,8 @@ struct GenerationView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .onChange(of: localID) { remote = nil; selectedSegments = []; cast = [:]; chapterID = "all" }
             .sheet(isPresented: $showCast) { if let remote { CastView(book: remote) } }
+            .task { if rules.isEmpty { rules = companion.importedPronunciations } }
+            .onChange(of: newTake) { takeID = newTake ? UUID().uuidString.lowercased() : nil }
         }
     }
     private func availableSegments(_ book: RemoteBook) -> [RemoteSegment] { chapterID == "all" ? book.segments : book.chapters.first { $0.id == chapterID }?.segments ?? [] }
@@ -81,17 +88,22 @@ struct GenerationView: View {
         Task {
             do {
                 var plan: [NarrationSpan] = []
+                var narrator = voice
                 if useCast {
                     let approved = try await companion.fetchCast(book.id)
+                    if let narratorID = approved.characters.first(where: { $0.id == "narrator" })?.voiceId {
+                        guard let assigned = companion.voices.first(where: { $0.id == narratorID }) else { throw BookError.message("The cast narrator voice is unavailable. Choose a replacement in Cast Studio.") }
+                        narrator = assigned
+                    }
                     let assignments = approved.assignments.filter { ids.contains($0.segmentId) }
                     guard uncertainAsNarrator || !assignments.contains(where: { !$0.reviewed }) else { throw BookError.message("Review suggested speakers, or explicitly choose narrator fallback for unreviewed lines.") }
                     for assignment in assignments where assignment.reviewed {
-                        let assignedVoice = approved.characters.first { $0.id == assignment.characterId }?.voiceId ?? voice.id
-                        guard companion.voices.contains(where: { $0.id == assignedVoice && $0.engine == voice.engine }) else { throw BookError.message("Every cast voice must use the narrator's engine for this production.") }
+                        let assignedVoice = approved.characters.first { $0.id == assignment.characterId }?.voiceId ?? narrator.id
+                        guard companion.voices.contains(where: { $0.id == assignedVoice && $0.engine == narrator.engine }) else { throw BookError.message("Every cast voice must use the narrator's engine for this production.") }
                         plan.append(NarrationSpan(segmentId: assignment.segmentId, startOffset: assignment.startOffset, endOffset: assignment.endOffset, voiceId: assignedVoice))
                     }
                 }
-                try await companion.generate(book: book, segments: ids, voice: voice, rules: rules, announce: announce, cast: cast.isEmpty ? nil : cast.filter { ids.contains($0.key) }, narrationPlan: plan.isEmpty ? nil : plan)
+                try await companion.generate(book: book, segments: ids, voice: narrator, rules: rules, announce: announce, cast: cast.isEmpty ? nil : cast.filter { ids.contains($0.key) }, narrationPlan: plan.isEmpty ? nil : plan, takeID: takeID)
                 dismiss()
             } catch { self.error = error.localizedDescription }
             busy = false

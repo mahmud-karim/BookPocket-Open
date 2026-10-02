@@ -4,6 +4,7 @@ enum Obsidian {
     static let background = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.067, green: 0.078, blue: 0.086, alpha: 1) : UIColor(red: 0.96, green: 0.95, blue: 0.93, alpha: 1) })
     static let surface = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.110, green: 0.129, blue: 0.145, alpha: 1) : .white })
     static let accent = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.863, green: 0.773, blue: 0.616, alpha: 1) : UIColor(red: 0.43, green: 0.32, blue: 0.15, alpha: 1) })
+    static let onAccent = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.067, green: 0.078, blue: 0.086, alpha: 1) : .white })
 }
 
 struct BookCover: View {

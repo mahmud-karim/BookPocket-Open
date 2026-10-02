@@ -85,7 +85,7 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     func toggle() { isPlaying ? pause() : resume() }
     func pause() { speech?.pause(); player?.pause(); isPlaying = false; nowPlaying() }
     func resume() { speech?.resume(); if let player { isPlaying = player.play() }; nowPlaying() }
-    func stop() { speech?.stop(); speech = nil; player?.stop(); player = nil; tickTask?.cancel(); isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; nowPlaying() }
+    func stop() { speech?.stop(); speech = nil; player?.stop(); player = nil; tickTask?.cancel(); isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
     func skip(_ seconds: Double) { if let player { seek(player.currentTime + seconds) } else if seconds > 0 { speech?.next() } else { speech?.previous() } }
     func seek(_ value: Double) { guard let player else { return }; player.currentTime = min(max(0, value), player.duration); elapsed = player.currentTime; onProgress?(elapsed); nowPlaying() }
     func sleep(minutes: Int?) {

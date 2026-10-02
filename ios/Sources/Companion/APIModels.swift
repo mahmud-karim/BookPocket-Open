@@ -87,6 +87,7 @@ struct RemoteJob: Codable, Identifiable {
     var generationSeconds: Double?
     var error: String?
     var assets: [AudioAsset]
+    var createdAt: String?
 }
 struct PronunciationRule: Codable, Identifiable {
     var term: String
@@ -105,6 +106,7 @@ struct GenerationRequest: Codable {
     var announceChapters: Bool
     var cast: [String: String]?
     var narrationPlan: [NarrationSpan]?
+    var takeId: String?
 }
 struct CastCharacter: Codable, Identifiable {
     var id: String
@@ -163,4 +165,14 @@ struct DownloadRecord: Codable, Identifiable {
     var asset: AudioAsset
     var file: String
     var segment: RemoteSegment?
+    var legacyTitle: String?
+    var legacyMapping: String?
+}
+struct LegacyRecording: Codable, Identifiable {
+    var id: String
+    var bookId: String
+    var title: String
+    var asset: AudioAsset
+    var mapping: String
+    var sourceText: String?
 }

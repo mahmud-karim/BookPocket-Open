@@ -20,9 +20,21 @@ struct StudioView: View {
                         Label(companion.paired ? "YOUR COMPANION" : "PERSONAL AUDIO STUDIO", systemImage: "waveform").font(.caption.weight(.semibold)).tracking(1.5).foregroundStyle(Obsidian.accent)
                         Text(companion.paired ? "Give your stories\na voice." : "Your books.\nYour voices.").font(.system(.largeTitle, design: .serif))
                         Text(companion.paired ? (companion.status ?? "Your PC generates. Your library stays with you.") : "Connect your PC to create natural narration, build a cast, and take complete audiobooks with you.").foregroundStyle(.secondary)
-                        Button(companion.paired ? "Create narration" : "Pair a companion", systemImage: companion.paired ? "waveform.badge.plus" : "qrcode.viewfinder") { if companion.paired { showGenerate = true } else { showPairing = true } }.buttonStyle(.borderedProminent).accessibilityIdentifier("studio.primary")
+                        Button(companion.paired ? "Create narration" : "Pair a companion", systemImage: companion.paired ? "waveform.badge.plus" : "qrcode.viewfinder") { if companion.paired { showGenerate = true } else { showPairing = true } }.buttonStyle(.borderedProminent).foregroundStyle(Obsidian.onAccent).accessibilityIdentifier("studio.primary")
                     }.padding(24).frame(maxWidth: .infinity, alignment: .leading).background(Obsidian.surface, in: .rect(cornerRadius: 22))
                     if companion.paired {
+                        if !companion.books.isEmpty {
+                            DisclosureGroup("Books on your PC") {
+                                ForEach(companion.books) { book in
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 4) { Text(book.title).font(.headline); Text(book.author).font(.caption).foregroundStyle(.secondary) }
+                                        Spacer()
+                                        if library.books.contains(where: { $0.sourceSHA256 == book.sourceSha256 }) { Image(systemName: "checkmark.circle").accessibilityLabel("On this device") }
+                                        else { Button("Download book", systemImage: "arrow.down.circle") { Task { await companion.receiveBook(book, library: library) } }.labelStyle(.iconOnly).disabled(companion.receivingBook) }
+                                    }.padding(.vertical, 8)
+                                }
+                            }
+                        }
                         HStack { Text("Voice collection").font(.title2.bold()); Spacer(); Button("Add voice", systemImage: "plus") { showVoice = true }.labelStyle(.iconOnly) }
                         if companion.voices.isEmpty { Text("Install a voice engine in your PC Studio, then refresh here.").foregroundStyle(.secondary) }
                         ForEach(companion.voices) { voice in
@@ -50,6 +62,19 @@ struct StudioView: View {
                                     Text(engine.license).font(.caption).foregroundStyle(.secondary)
                                     if let reason = engine.reason, !engine.available { Text(reason).font(.caption).foregroundStyle(.secondary) }
                                 }.padding(.vertical, 8)
+                            }
+                        }
+                        if !companion.legacyRecordings.isEmpty {
+                            Text("Legacy recordings").font(.title2.bold())
+                            ForEach(companion.legacyRecordings) { recording in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(recording.title).font(.headline)
+                                    Text(recording.mapping == "text_match_without_timings" ? "Source passage matched · no synchronized text" : "Unmapped recording · no synchronized text").font(.caption).foregroundStyle(.secondary)
+                                    if let local = library.books.first(where: { $0.companionBookID == recording.bookId || $0.sourceSHA256 == companion.books.first(where: { $0.id == recording.bookId })?.sourceSha256 }) {
+                                        if let downloaded = companion.downloads.first(where: { $0.id == recording.asset.id }) { Button("Play recording", systemImage: "play.circle") { companion.play(downloaded, library: library, player: player) } }
+                                        else { Button("Download recording", systemImage: "arrow.down.circle") { Task { await companion.downloadLegacy(recording, localBook: local) } }.disabled(companion.downloading != nil) }
+                                    } else { Text("Download its original book from Books on your PC first.").font(.caption).foregroundStyle(.secondary) }
+                                }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(Obsidian.surface, in: .rect(cornerRadius: 16))
                             }
                         }
                     }
@@ -84,10 +109,10 @@ struct StudioView: View {
             .confirmationDialog("Revoke this device's companion access? Downloaded audio will remain available.", isPresented: $revoke, titleVisibility: .visible) { Button("Revoke device", role: .destructive) { Task { await companion.disconnect() } } }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
-                await companion.refresh()
+                await companion.refresh(reportErrors: false)
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(10)) } catch { return }
-                    if companion.jobs.contains(where: { ["queued", "running"].contains($0.status) }) { await companion.refresh() }
+                    if companion.jobs.contains(where: { ["queued", "running"].contains($0.status) }) { await companion.refresh(reportErrors: false) }
                 }
             }
             .alert("Companion", isPresented: Binding(get: { companion.error != nil }, set: { if !$0 { companion.error = nil } })) { Button("OK") { companion.error = nil } } message: { Text(companion.error ?? "") }

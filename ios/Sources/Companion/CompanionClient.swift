@@ -55,7 +55,7 @@ final class CompanionClient {
     private let delegate: PinnedSessionDelegate
     private let session: URLSession
     static let decoder: JSONDecoder = { let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase; return d }()
-    static let encoder: JSONEncoder = { let e = JSONEncoder(); e.keyEncodingStrategy = .convertToSnakeCase; return e }()
+    static let encoder: JSONEncoder = { let e = JSONEncoder(); e.keyEncodingStrategy = .convertToSnakeCase; e.outputFormatting = [.sortedKeys]; return e }()
     init(url: URL, fingerprint: String?, token: String? = nil) throws {
         guard url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { throw BookError.message("Use the companion's HTTPS address without credentials, queries, or fragments.") }
         let cleaned = fingerprint?.replacingOccurrences(of: ":", with: "").lowercased()
@@ -97,6 +97,19 @@ final class CompanionClient {
         let boundary = UUID().uuidString
         let body = try multipart(boundary: boundary, fields: [:], fileURL: url, field: "file", filename: displayName)
         return try await send("/v1/books", method: "POST", body: body, contentType: "multipart/form-data; boundary=\(boundary)")
+    }
+    func downloadBookSource(_ book: RemoteBook) async throws -> URL {
+        let (temporary, response) = try await session.download(for: request("/v1/books/\(book.id)/source"))
+        try validate(response, data: nil)
+        let data = try Data(contentsOf: temporary, options: .mappedIfSafe)
+        guard SourceIdentity.hash(data) == book.sourceSha256.lowercased() else { throw BookError.message("The downloaded book did not match its original checksum. Retry the download.") }
+        let ext = data.starts(with: [0x50, 0x4b]) ? "epub" : "txt"
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = String(book.title.prefix(100)).replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_")
+        let destination = folder.appendingPathComponent(name.isEmpty ? "Book" : name).appendingPathExtension(ext)
+        try FileManager.default.moveItem(at: temporary, to: destination)
+        return destination
     }
     func cloneVoice(name: String, engine: String, language: String, transcript: String, sample: URL) async throws -> RemoteVoice {
         let boundary = UUID().uuidString

@@ -119,7 +119,7 @@ struct ReaderView: View {
                 Section("Read aloud") {
                     Picker("Voice", selection: $speechVoice) {
                         Text("System default").tag("")
-                        ForEach(AVSpeechSynthesisVoice.speechVoices().filter { $0.language.starts(with: model.book?.language.prefix(2) ?? "en") }, id: \.identifier) { voice in Text(voice.name).tag(voice.identifier) }
+                        ForEach(AVSpeechSynthesisVoice.speechVoices().filter { $0.language.starts(with: model.book?.language.prefix(2) ?? "en") && !$0.voiceTraits.contains(.isPersonalVoice) && !$0.voiceTraits.contains(.isNoveltyVoice) }, id: \.identifier) { voice in Text(voice.name).tag(voice.identifier) }
                     }
                     Text("Install additional voices in iOS Settings → Accessibility → Spoken Content.").font(.caption).foregroundStyle(.secondary)
                 }

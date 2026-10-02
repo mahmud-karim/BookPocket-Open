@@ -4,6 +4,7 @@ struct ListenView: View {
     @Environment(PlaybackController.self) private var player
     @Environment(LibraryStore.self) private var library
     @Environment(CompanionStore.self) private var companion
+    @State private var removingJob: String?
     var body: some View {
         @Bindable var player = player
         NavigationStack {
@@ -46,16 +47,28 @@ struct ListenView: View {
                                     Button { if let record = companion.resumeRecord(jobID: jobID, library: library) { companion.play(record, library: library, player: player) } } label: {
                                         HStack(spacing: 14) {
                                             BookCover(book: book, url: library.cover(book)).frame(width: 46)
-                                            VStack(alignment: .leading, spacing: 4) { Text(book.title).font(.headline).foregroundStyle(.primary); Text("\(companion.orderedDownloads(jobID: jobID).count) passages · Available offline").font(.caption).foregroundStyle(.secondary) }
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(first.legacyTitle ?? book.title).font(.headline).foregroundStyle(.primary)
+                                                Text(first.legacyTitle != nil ? "Legacy audio · no synchronized text" : companion.takeDescription(jobID: jobID)).font(.caption).foregroundStyle(.secondary)
+                                            }
                                             Spacer(); Image(systemName: "play.circle").font(.title2)
                                         }
-                                    }.buttonStyle(.plain)
+                                    }.buttonStyle(.plain).contextMenu { Button("Remove download", systemImage: "trash", role: .destructive) { removingJob = jobID } }
                                 }
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 16)
                     }
                 }.padding(28)
             }.background(Obsidian.background).navigationTitle("Listen")
+            .confirmationDialog("Remove this take from your device? The PC copy is kept.", isPresented: Binding(get: { removingJob != nil }, set: { if !$0 { removingJob = nil } }), titleVisibility: .visible) {
+                Button("Remove download", role: .destructive) {
+                    if let removingJob {
+                        if companion.downloads.contains(where: { $0.jobID == removingJob && $0.localBookID == player.bookID }) { player.stop() }
+                        do { try companion.removeDownloadedTake(removingJob) } catch { companion.error = error.localizedDescription }
+                    }
+                    removingJob = nil
+                }
+            }
         }
     }
 }
