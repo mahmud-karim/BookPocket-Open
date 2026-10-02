@@ -9,6 +9,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 import threading
+import tempfile
 import time
 import uuid
 import zipfile
@@ -23,6 +24,7 @@ from .models import Config, ExportRequest, GenerationRequest, PairRequest
 from .publication import parse_book, extract_cover
 from .store import Store, canonical, digest, now
 from .worker import Worker
+from .archiveio import MAX_ARCHIVE, require_disk
 
 
 def create_app(config=None, engines=None, start_worker=True):
@@ -40,6 +42,7 @@ def create_app(config=None, engines=None, start_worker=True):
     attempts = defaultdict(deque)
     installs = {}
     install_lock = threading.Lock()
+    project_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app):
@@ -88,7 +91,7 @@ def create_app(config=None, engines=None, start_worker=True):
             return JSONResponse({"detail": "Unrecognized browser origin"}, status_code=403)
         if request.method in {"POST", "PUT"}:
             # Reject oversized multipart bodies before Starlette spools uploaded files.
-            limit = 512 * 1024 * 1024 if request.url.path == "/v1/projects/import" else (config.max_import_bytes + 2 * 1024 * 1024 if request.url.path == "/v1/books" else (22 * 1024 * 1024 if request.url.path == "/v1/voices" else 20 * 1024 * 1024))
+            limit = MAX_ARCHIVE + 2 * 1024**2 if request.url.path == "/v1/projects/import" else (config.max_import_bytes + 2 * 1024 * 1024 if request.url.path == "/v1/books" else (22 * 1024 * 1024 if request.url.path == "/v1/voices" else 20 * 1024 * 1024))
             raw_length = request.headers.get("content-length")
             if request.headers.get("transfer-encoding"):
                 return JSONResponse({"detail": "Send a bounded request with Content-Length"}, status_code=411)
@@ -96,7 +99,19 @@ def create_app(config=None, engines=None, start_worker=True):
             except ValueError: return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
             if length < 0 or length > limit:
                 return JSONResponse({"detail": "Request exceeds the upload limit"}, status_code=413)
-        response = await call_next(request)
+        importing = request.method == "POST" and request.url.path == "/v1/projects/import"
+        if importing:
+            try:
+                auth(request)  # Authenticate before multipart parsing can spool a large archive.
+                if not raw_length: raise HTTPException(411, "Project uploads require Content-Length")
+                require_disk(tempfile.gettempdir(), length)
+            except HTTPException as exc: return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+            except ValueError as exc: return JSONResponse({"detail": str(exc)}, status_code=507)
+            if not project_lock.acquire(blocking=False):
+                return JSONResponse({"detail": "Another project is importing; try again when it finishes"}, status_code=409)
+        try: response = await call_next(request)
+        finally:
+            if importing: project_lock.release()
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
@@ -389,17 +404,19 @@ def create_app(config=None, engines=None, start_worker=True):
     def installations(): return {"installations": list(installs.values())}
 
     @app.post("/v1/projects/import", dependencies=[Depends(auth)])
-    async def project_import(file: UploadFile = File(...)):
+    def project_import(file: UploadFile = File(...)):
         from .project import import_project
-        content = await file.read(510 * 1024 * 1024 + 1)
-        if len(content) > 510 * 1024 * 1024: raise HTTPException(413, "Project exceeds the 510 MiB import limit")
+        file.file.seek(0, 2)
+        if file.file.tell() > MAX_ARCHIVE: raise HTTPException(413, "Project exceeds the 16 GiB import limit")
+        file.file.seek(0)
         try:
-            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            with zipfile.ZipFile(file.file) as archive:
                 legacy = "legacy.json" in archive.namelist()
+            file.file.seek(0)
             if legacy:
                 from .legacy import import_legacy
-                return import_legacy(store, content, config.ffmpeg)
-            return import_project(store, content)
+                return import_legacy(store, file.file, config.ffmpeg)
+            return import_project(store, file.file)
         except Exception as exc: raise HTTPException(400, "Cannot import project: " + str(exc))
 
     @app.get("/v1/legacy-recordings", dependencies=[Depends(auth)])

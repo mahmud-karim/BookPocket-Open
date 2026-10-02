@@ -1,5 +1,4 @@
 """Portable audiobook project import. No archive paths are extracted."""
-import io
 import json
 from pathlib import Path, PurePosixPath
 import uuid
@@ -8,10 +7,12 @@ from .publication import parse_book
 from .store import canonical, digest, now
 from .worker import validate_wav
 from .casting import Cast, validate_cast
+from .archiveio import stream_for, file_digest, copy_member, require_disk, MAX_EXPANDED, MAX_ASSET
 
 
 def import_project(store, content):
-    import_key = "project:" + digest(content)
+    content = stream_for(content)
+    import_key = "project:" + file_digest(content)
     with store.db() as db:
         existing = db.execute("SELECT data,request FROM jobs WHERE request_id=?", (import_key,)).fetchone()
         if existing:
@@ -22,11 +23,13 @@ def import_project(store, content):
             return {"book": book, "job": job, "cast": generation.get("imported_cast", {"characters": [], "assignments": []}), "unresolved_voices": json.loads(unresolved[0]) if unresolved else []}
     staged = []
     try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        with zipfile.ZipFile(content) as archive:
             members = archive.infolist()
             names = [m.filename for m in members]
-            if len(names) != len(set(names)) or len(names) > 10000 or sum(m.file_size for m in members) > 1024 * 1024 * 1024:
+            expanded = sum(m.file_size for m in members)
+            if len(names) != len(set(names)) or len(names) > 100000 or expanded > MAX_EXPANDED:
                 raise ValueError("Project archive exceeds safe size limits or contains duplicate entries")
+            require_disk(store.root, expanded)
             for item in members:
                 if item.filename.startswith(("/", "\\")) or "\\" in item.filename or ":" in item.filename or ".." in PurePosixPath(item.filename).parts or item.flag_bits & 1:
                     raise ValueError("Unsafe project archive path")
@@ -34,8 +37,8 @@ def import_project(store, content):
             manifest = json.loads(archive.read("project.json"))
             if manifest.get("format_version") != 1: raise ValueError("Unsupported project format version")
             source_name = "source.epub" if "source.epub" in names else "source.txt"
+            if archive.getinfo(source_name).file_size > 100 * 1024 * 1024: raise ValueError("Original publication exceeds 100 MiB")
             source = archive.read(source_name)
-            if len(source) > 100 * 1024 * 1024: raise ValueError("Original publication exceeds 100 MiB")
             book = parse_book(source, manifest.get("book", {}).get("title", "Imported book") + Path(source_name).suffix)
             if book["source_sha256"] != manifest["book"]["source_sha256"]: raise ValueError("Original publication checksum does not match the project")
             segments = {s["id"]: s for c in book["chapters"] for s in c["segments"]}
@@ -46,12 +49,11 @@ def import_project(store, content):
             assets = []
             for asset in original_job["assets"]:
                 if asset["segment_id"] not in selected: raise ValueError("Audio points outside the selected source spans")
-                audio = archive.read("audio/" + asset["id"] + ".wav")
-                if digest(audio) != asset["sha256"]: raise ValueError("Project audio failed checksum validation")
                 asset_id = str(uuid.uuid4())
                 path = store.root / "assets" / (asset_id + ".wav")
-                path.write_bytes(audio)
                 staged.append(path)
+                size, checksum = copy_member(archive, "audio/" + asset["id"] + ".wav", path, MAX_ASSET)
+                if checksum != asset["sha256"]: raise ValueError("Project audio failed checksum validation")
                 duration = validate_wav(path)
                 previous = 0.0
                 for timing in asset.get("timings", []):
@@ -59,7 +61,7 @@ def import_project(store, content):
                             and 0 <= timing["start_offset"] < timing["end_offset"] <= len(segments[asset["segment_id"]]["text"])):
                         raise ValueError("Project timings fall outside the original text or audio")
                     previous = timing["end"]
-                metadata = {**asset, "id": asset_id, "duration": duration, "bytes": len(audio), "url": "/v1/assets/" + asset_id}
+                metadata = {**asset, "id": asset_id, "duration": duration, "bytes": size, "url": "/v1/assets/" + asset_id}
                 assets.append((metadata, path))
             if len(assets) != len(selected) or {a[0]["segment_id"] for a in assets} != set(selected):
                 raise ValueError("Project is missing required recordings")

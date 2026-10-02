@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from bookpocket_companion.app import create_app
 from bookpocket_companion.models import Config
 from bookpocket_companion.casting import source_assignment
+from bookpocket_companion.casting import dialogue_units, resolve_utterances
 import pytest
 
 def client(tmp_path):
@@ -43,3 +44,65 @@ def test_verbatim_source_anchors_resolve_scalar_offsets_without_rewriting():
         source_assignment({"segment_id": "s", "source_text": '"Hello,"', "character_id": "leo", "confidence": .8}, {"s": text})
     with pytest.raises(ValueError, match="missing"):
         source_assignment({"segment_id": "s", "source_text": 'Rewritten words', "character_id": "leo", "confidence": .8}, {"s": text})
+
+
+def test_utterance_boundaries_and_strict_model_identity():
+    text = 'A 🧭. “Hello,” said Mia. "Hello," said Leo. «Goodbye.»'
+    units = dialogue_units([{"segment_id": "s", "text": text}])
+    assert [u["source_text"] for u in units] == ['“Hello,”', '"Hello,"', '«Goodbye.»']
+    result = {"assignments": [{"utterance_id": u["utterance_id"], "source_text": u["source_text"], "character_id": c, "confidence": .8} for u, c in zip(units, ["mia", "leo", "mia"])]}
+    resolved = resolve_utterances(result, units, {"mia", "leo"})
+    assert [text[a.start_offset:a.end_offset] for a in resolved] == [u["source_text"] for u in units]
+    assert all(not a.reviewed for a in resolved)
+    result["assignments"][0]["utterance_id"] = "invented"
+    with pytest.raises(ValueError, match="unknown"): resolve_utterances(result, units, {"mia", "leo"})
+    result["assignments"][0]["utterance_id"] = units[0]["utterance_id"]
+    result["assignments"][0]["source_text"] = "Rewritten"
+    with pytest.raises(ValueError, match="exact"): resolve_utterances(result, units, {"mia", "leo"})
+    with pytest.raises(ValueError, match="omitted"): resolve_utterances({"assignments": []}, units, {"mia", "leo"})
+
+
+@pytest.mark.parametrize("text", ['“Not closed', '“She said ‘go’.”', '‘Single quoted speech.’', '"She said \'go\'."'])
+def test_unsupported_dialogue_requires_review(text):
+    with pytest.raises(ValueError, match="review"):
+        dialogue_units([{"segment_id": "s", "text": text}])
+
+
+def test_analysis_preserves_reviewed_edits_and_reports_unsupported(tmp_path, monkeypatch):
+    import httpx
+    c = client(tmp_path)
+    book = c.post("/v1/books", files={"file": ("story.txt", 'A 🧭. “Hello,” said Mia. “Goodbye,” said Leo.')}).json()
+    segment = book["chapters"][0]["segments"][0]
+    units = dialogue_units([{"segment_id": segment["id"], "text": segment["text"]}])
+    reviewed = {"id": "reviewed", "segment_id": segment["id"], "start_offset": units[0]["start_offset"], "end_offset": units[0]["end_offset"], "character_id": "corrected", "confidence": 1, "reviewed": True}
+    saved = {"characters": [{"id": "corrected", "name": "My correction", "voice_id": "my-voice"}], "assignments": [reviewed]}
+    c.put(f"/v1/books/{book['id']}/cast", json=saved)
+    c.put("/v1/admin/analyzer", json={"url": "http://127.0.0.1:1234/v1", "model": "fixture-transport"})
+    original = httpx.Client.post
+    def respond(self, url, **kwargs):
+        if str(url).endswith("/chat/completions"):
+            prompt = json.loads(kwargs["json"]["messages"][1]["content"])
+            result = {"characters": [{"id": "mia", "name": "Mia"}, {"id": "leo", "name": "Leo"}], "assignments": [{"utterance_id": u["utterance_id"], "source_text": u["source_text"], "character_id": name, "confidence": .9} for u, name in zip(prompt["utterances"], ["mia", "leo"])]}
+            return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(result)}}]})
+        return original(self, url, **kwargs)
+    monkeypatch.setattr(httpx.Client, "post", respond)
+    job = c.post(f"/v1/books/{book['id']}/analyze", json={}).json()
+    for _ in range(100):
+        job = c.get('/v1/analyses/'+job['id']).json()
+        if job["status"] not in {"queued", "running"}: break
+        time.sleep(.02)
+    assert job["status"] == "completed", job
+    assert job["warnings"]
+    cast = c.get(f"/v1/books/{book['id']}/cast").json()
+    assert reviewed in cast["assignments"]
+    assert next(c for c in cast["characters"] if c["id"] == "corrected")["voice_id"] == "my-voice"
+    assert len(cast["assignments"]) == 2
+    assert next(a for a in cast["assignments"] if not a["reviewed"])["character_id"] == "leo"
+    unquoted = c.post("/v1/books", files={"file": ("script.txt", "MIA: Hello there.")}).json()
+    job = c.post(f"/v1/books/{unquoted['id']}/analyze", json={}).json()
+    for _ in range(100):
+        job = c.get('/v1/analyses/'+job['id']).json()
+        if job["status"] not in {"queued", "running"}: break
+        time.sleep(.02)
+    assert job["status"] == "failed"
+    assert "unquoted" in job["error"]

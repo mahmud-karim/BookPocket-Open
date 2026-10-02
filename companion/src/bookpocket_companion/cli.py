@@ -6,6 +6,8 @@ from pathlib import Path
 import socket
 import threading
 import webbrowser
+import atexit
+import os
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from cryptography import x509
@@ -15,6 +17,37 @@ from cryptography.x509.oid import NameOID
 import uvicorn
 from .models import Config
 from .app import create_app
+
+
+class InstanceGuard:
+    """OS-held lock: process death releases ownership without trusting a stale PID file."""
+    def __init__(self, data_dir):
+        data_dir.mkdir(parents=True, exist_ok=True)
+        self.file = (data_dir / "companion.lock").open("a+b")
+        if self.file.tell() == 0:
+            self.file.write(b"0"); self.file.flush()
+        self.file.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(self.file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.file.close()
+            raise RuntimeError("Book Pocket Open is already running for this data folder. Open the studio from its tray icon") from None
+
+    def close(self):
+        if self.file.closed: return
+        self.file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(self.file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(self.file.fileno(), fcntl.LOCK_UN)
+        self.file.close()
 
 
 def certificate(config):
@@ -76,6 +109,11 @@ def main():
         from .engines import ManagedEngine
         ManagedEngine(config.data_dir / "engines", args.engine).install()
         return
+    try:
+        instance = InstanceGuard(config.data_dir)
+    except RuntimeError as exc:
+        parser.exit(1, str(exc) + "\n")
+    atexit.register(instance.close)
     tls = {}
     if not args.dev:
         cert, key = certificate(config)

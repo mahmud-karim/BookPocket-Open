@@ -87,6 +87,28 @@ def test_cancellation_during_generation_never_publishes(setup):
     assert result["assets"] == []
 
 
+def test_project_audio_import_and_export_never_use_whole_file_reads(setup, monkeypatch):
+    app, client, _, _, request = setup
+    job = client.post("/v1/jobs", json=request).json()
+    app.state.worker.run(job["id"])
+    original_read_bytes = Path.read_bytes
+    original_zip_read = zipfile.ZipFile.read
+    def bounded_path(path):
+        assert path.suffix not in {".wav", ".zip"}, "recording/export must be streamed"
+        return original_read_bytes(path)
+    def bounded_zip(archive, name, *args, **kwargs):
+        assert not str(name).startswith("audio/"), "recording member must be streamed"
+        return original_zip_read(archive, name, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_bytes", bounded_path)
+    monkeypatch.setattr(zipfile.ZipFile, "read", bounded_zip)
+    result = client.post(f"/v1/jobs/{job['id']}/export", json={"format": "project"})
+    assert result.status_code == 200, result.text
+    content = client.get(result.json()["url"]).content
+    imported = client.post("/v1/projects/import", files={"file": ("book.zip", content)})
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["job"]["completed_segments"] == 2
+
+
 def test_corrupt_cache_is_regenerated(setup):
     app, client, engine, _, request = setup
     job = client.post("/v1/jobs", json=request).json()

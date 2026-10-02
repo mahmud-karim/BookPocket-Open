@@ -1,5 +1,4 @@
 """Explicit legacy archive migration; unmatched recordings remain labelled legacy."""
-import io
 import json
 from pathlib import Path, PurePosixPath
 import tempfile
@@ -9,8 +8,9 @@ import subprocess
 from .media import normalize_reference
 from .models import Pronunciation
 from .publication import normalize, parse_book
-from .store import canonical, digest, now
+from .store import canonical, now
 from .worker import validate_wav
+from .archiveio import stream_for, file_digest, copy_member, require_disk
 
 def initialize(store):
     with store.db() as db:
@@ -19,7 +19,8 @@ def initialize(store):
                           CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT);""")
 
 def import_legacy(store, content, ffmpeg):
-    identity = digest(content)
+    content = stream_for(content)
+    identity = file_digest(content)
     with store.db() as db:
         previous = db.execute("SELECT data FROM migrations WHERE id=?", (identity,)).fetchone()
     if previous: return json.loads(previous[0])
@@ -27,10 +28,11 @@ def import_legacy(store, content, ffmpeg):
     files = []
     rows = {"books": [], "assets": [], "voices": [], "recordings": []}
     try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        with zipfile.ZipFile(content) as archive:
             members = archive.infolist()
             if len(members) > 10000 or len({m.filename for m in members}) != len(members) or sum(m.file_size for m in members) > 1024**3:
                 raise ValueError("Legacy archive exceeds limits or contains duplicate entries")
+            require_disk(store.root, 2 * sum(m.file_size for m in members))
             for m in members:
                 if m.filename.startswith(("/", "\\")) or ".." in PurePosixPath(m.filename).parts or "\\" in m.filename or ":" in m.filename or m.flag_bits & 1:
                     raise ValueError("Unsafe legacy archive path")
@@ -57,11 +59,11 @@ def import_legacy(store, content, ffmpeg):
                 if not book: raise ValueError("A legacy recording references a missing original book")
                 name = item["path"]
                 if archive.getinfo(name).file_size > 500 * 1024**2: raise ValueError("Legacy recording exceeds 500 MiB")
-                audio = archive.read(name)
                 recording_id, asset_id = str(uuid.uuid4()), str(uuid.uuid4())
                 original_path = store.root / "assets" / (asset_id + ".original")
                 path = store.root / "assets" / (asset_id + ".wav")
-                original_path.write_bytes(audio); files.append(original_path)
+                files.append(original_path)
+                copy_member(archive, name, original_path, 500 * 1024**2)
                 files.append(path)
                 subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-protocol_whitelist", "file,pipe", "-format_whitelist", "wav,mp3,flac,ogg,mov,aac,aiff", "-i", str(original_path), "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(path)], check=True, capture_output=True, timeout=600)
                 duration = validate_wav(path)
@@ -74,7 +76,7 @@ def import_legacy(store, content, ffmpeg):
                             if start >= 0 and segment["text"].find(text, start+1) < 0:
                                 matches.append({"segment_id": segment["id"], "start_offset": start, "end_offset": start+len(text), "locator": segment["locator"]})
                 asset = {"id": asset_id, "segment_id": matches[0]["segment_id"] if len(matches) == 1 else None, "media_type": "audio/wav", "duration": duration,
-                         "sha256": digest(path.read_bytes()), "bytes": path.stat().st_size, "url": "/v1/assets/" + asset_id, "timings": [], "alignment": "unmapped"}
+                         "sha256": file_digest(path), "bytes": path.stat().st_size, "url": "/v1/assets/" + asset_id, "timings": [], "alignment": "unmapped"}
                 recording = {"id": recording_id, "book_id": book["id"], "title": str(item.get("title", "Legacy recording")), "asset": asset,
                              "mapping": "text_match_without_timings" if len(matches) == 1 else "unmapped", "source_match": matches[0] if len(matches) == 1 else None,
                              "source_text": text, "legacy_metadata": item, "imported_at": now()}
