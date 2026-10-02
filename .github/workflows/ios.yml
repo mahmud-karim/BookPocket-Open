@@ -2,9 +2,9 @@ name: iOS tests and device package
 on:
   push:
     branches: [main]
-    paths: ['ios/**', 'tests/fixtures/**', 'scripts/**', '.github/workflows/ios.yml']
+    paths: ['ios/**', 'tests/fixtures/**', 'scripts/verify_ipa.py', 'scripts/select_xcode.py', 'scripts/select_simulator.py', 'scripts/boot_simulator.py', '.github/workflows/ios.yml']
   pull_request:
-    paths: ['ios/**', 'tests/fixtures/**', 'scripts/**', '.github/workflows/ios.yml']
+    paths: ['ios/**', 'tests/fixtures/**', 'scripts/verify_ipa.py', 'scripts/select_xcode.py', 'scripts/select_simulator.py', 'scripts/boot_simulator.py', '.github/workflows/ios.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -91,3 +91,4 @@ jobs:
           name: ios-device-package
           path: artifacts/
           retention-days: 3
+
