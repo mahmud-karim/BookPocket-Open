@@ -84,11 +84,14 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/Package/Payload" artifacts/BookPocketOpen.ipa
           cd artifacts
           shasum -a 256 BookPocketOpen.ipa > BookPocketOpen.ipa.sha256
-          python3 ../scripts/verify_ipa.py BookPocketOpen.ipa --report ipa-verification.json
+          VERSION=$(sed -n "s/.*MARKETING_VERSION: '\([^']*\)'.*/\1/p" ../ios/project.yml)
+          test -n "$VERSION"
+          python3 ../scripts/verify_ipa.py BookPocketOpen.ipa --version "$VERSION" --report ipa-verification.json
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ios-device-package
           path: artifacts/
           retention-days: 3
+
 

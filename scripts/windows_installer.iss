@@ -1,3 +1,9 @@
+#ifndef AppVersion
+  #define AppVersion "0.1.0"
+#endif
+#ifndef OutputBaseName
+  #define OutputBaseName "BookPocketOpen-Setup-x64"
+#endif
 #ifndef BundleDir
   #define BundleDir "..\artifacts\windows\BookPocketOpen"
 #endif
@@ -7,7 +13,7 @@
 [Setup]
 AppId={{DA314F97-783A-4E21-9038-5A4C93933EB9}
 AppName=Book Pocket Open
-AppVersion=0.1.0
+AppVersion={#AppVersion}
 AppPublisher=Book Pocket Open Contributors
 AppPublisherURL=https://github.com/mahmud-karim/BookPocket-Open
 DefaultDirName={localappdata}\Programs\BookPocketOpen
@@ -16,7 +22,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
-OutputBaseFilename=BookPocketOpen-Setup-x64
+OutputBaseFilename={#OutputBaseName}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -35,6 +41,12 @@ Name: "{group}\Uninstall Book Pocket Open"; Filename: "{uninstallexe}"
 [Run]
 Filename: "{app}\runtime\pythonw.exe"; Parameters: "-I ""{app}\launcher.py"""; Description: "Open Book Pocket Open"; Flags: nowait postinstall skipifsilent
 
+[UninstallDelete]
+Type: files; Name: "{app}\tools\ffmpeg.exe"
+Type: files; Name: "{app}\tools\ffprobe.exe"
+Type: files; Name: "{app}\tools\FFmpeg-LICENSE.txt"
+Type: files; Name: "{app}\tools\ffmpeg-provenance.json"
+Type: dirifempty; Name: "{app}\tools"
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
 var
@@ -51,4 +63,5 @@ begin
       RaiseException('Media setup failed. Check your internet connection and run Setup Media.cmd from the installation folder.');
   end;
 end;
+
 

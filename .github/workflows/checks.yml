@@ -53,7 +53,12 @@ jobs:
           cache-dependency-path: studio/package-lock.json
       - run: npm ci
         working-directory: studio
+      - run: npm test
+        working-directory: studio
+      - run: npm run format:check
+        working-directory: studio
       - run: npm run build
         working-directory: studio
+
 
 

@@ -46,6 +46,16 @@ jobs:
           if ($process.ExitCode) { throw "Installer returned $($process.ExitCode)" }
           & "$install\runtime\python.exe" -I scripts/smoke_windows.py --bundle "$install" --report artifacts/windows/installed-smoke.json
           if ($LASTEXITCODE) { throw 'Installed package smoke failed' }
+      - name: Verify in-place upgrade and uninstall preserve personal data
+        shell: pwsh
+        run: |
+          $baseline = Join-Path $env:RUNNER_TEMP 'BookPocketBaseline'
+          New-Item -ItemType Directory -Force -Path $baseline | Out-Null
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $compiler "/DBundleDir=$pwd\artifacts\windows\BookPocketOpen" "/DOutputDir=$baseline" '/DAppVersion=0.0.0' '/DOutputBaseName=BookPocketOpen-Baseline' scripts/windows_installer.iss
+          if ($LASTEXITCODE) { throw 'Baseline installer compilation failed' }
+          & artifacts/windows/BookPocketOpen/runtime/python.exe -I scripts/smoke_windows_lifecycle.py --baseline "$baseline\BookPocketOpen-Baseline.exe" --installer artifacts/windows/BookPocketOpen-Setup-x64.exe --fixtures tests/fixtures --report artifacts/windows/lifecycle-smoke.json
+          if ($LASTEXITCODE) { throw 'Upgrade/uninstall preservation smoke failed' }
       - name: Preserve package and verification reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -57,3 +67,4 @@ jobs:
             artifacts/windows/*.sha256
             artifacts/windows/*smoke.json
           retention-days: 3
+
