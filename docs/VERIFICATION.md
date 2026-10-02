@@ -37,3 +37,11 @@ All real-system gates are **NOT RUN** until an evidence entry records an actual 
 Windows project environment: 31 tests passed across companion/tests and tests, with one upstream Starlette TestClient deprecation warning. FFmpeg/FFprobe executed actual normalization and encoding; no speech engine or cloned voice was used. GitHub workflow YAML parsed locally; cloud execution has not yet been observed. Public-source preflight passed.
 
 
+
+## Windows package verification - 2026-10-02
+
+A portable Windows package was built using checksum-pinned official CPython 3.12.10 with companion dependencies and the built studio. `scripts/smoke_windows.py` passed using only this runtime with developer tools removed from PATH: API health, studio serving, protected library access, relocated-runtime engine virtual-environment creation and verified FFmpeg execution. No actual speech model was installed during this package smoke.
+
+`windows-package.yml` builds a per-user Inno Setup installer and installs it into an isolated directory on a standard Windows runner before repeating that smoke. Installer execution is pending until its workflow evidence is recorded. The app is unsigned. FFmpeg is downloaded directly from its upstream publisher during setup using a fixed SHA256; our installer excludes downloaded media binaries. Python/package notices are retained, and installed FFmpeg retains its LGPL license and provenance.
+
+Current local combined suite: 38 passing tests. Full-cast privacy opt-in, scalar-span validation and selective rerender cache tests now pass. This does not prove actual LLM attribution quality or real multi-voice speech quality.

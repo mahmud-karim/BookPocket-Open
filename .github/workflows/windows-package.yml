@@ -1,0 +1,59 @@
+name: Windows standalone package
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: windows-package-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+        working-directory: studio
+      - run: npm run build
+        working-directory: studio
+      - name: Build portable app with private Python runtime
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Install Inno Setup compiler
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+      - name: Compile per-user unsigned installer
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $compiler "/DBundleDir=$pwd\artifacts\windows\BookPocketOpen" "/DOutputDir=$pwd\artifacts\windows" scripts/windows_installer.iss
+          if ($LASTEXITCODE) { throw 'Installer compilation failed' }
+          $installer = Resolve-Path artifacts/windows/BookPocketOpen-Setup-x64.exe
+          $digest = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$digest  BookPocketOpen-Setup-x64.exe" | Set-Content artifacts/windows/BookPocketOpen-Setup-x64.exe.sha256 -Encoding ascii
+      - name: Install into an isolated directory and verify clean-runtime operation
+        shell: pwsh
+        run: |
+          $install = Join-Path $env:RUNNER_TEMP 'BookPocketInstalled'
+          $process = Start-Process -FilePath artifacts/windows/BookPocketOpen-Setup-x64.exe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$install") -WindowStyle Hidden -PassThru -Wait
+          if ($process.ExitCode) { throw "Installer returned $($process.ExitCode)" }
+          & "$install\runtime\python.exe" -I scripts/smoke_windows.py --bundle "$install" --report artifacts/windows/installed-smoke.json
+          if ($LASTEXITCODE) { throw 'Installed package smoke failed' }
+      - name: Preserve package and verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-standalone
+          path: |
+            artifacts/windows/*.zip
+            artifacts/windows/*.exe
+            artifacts/windows/*.sha256
+            artifacts/windows/*smoke.json
+          retention-days: 3
