@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ArrowDownToLine, Play } from "lucide-react";
-import { api, saveAsset } from "./api";
+import { api, chooseSaveDestination, saveAsset } from "./api";
 import { duration } from "./format";
 import type { Asset, Book } from "./types";
 type LegacyRecording = {
@@ -80,12 +80,19 @@ export function LegacyShelf({
                 )}
                 <button
                   className="secondary"
-                  onClick={() =>
-                    void saveAsset(
-                      recording.asset.url,
-                      "legacy-recording.wav",
-                    ).catch((e) => onError(e.message))
-                  }
+                  onClick={() => {
+                    void (async () => {
+                      const destination = await chooseSaveDestination(
+                        "legacy-recording.wav",
+                      );
+                      if (destination === null) return;
+                      await saveAsset(
+                        recording.asset.url,
+                        "legacy-recording.wav",
+                        destination,
+                      );
+                    })().catch((e) => onError(e.message));
+                  }}
                 >
                   <ArrowDownToLine size={15} />
                   Download audio

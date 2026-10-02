@@ -40,7 +40,14 @@ import { LegacyShelf } from "./LegacyShelf";
 import { EngineList, AnalyzerSettings } from "./EngineSettings";
 import { CastEditor } from "./CastEditor";
 import { narrationPlan, type Cast } from "./casting";
-import { api, bootstrapSession, post, saveAsset, submitJob } from "./api";
+import {
+  api,
+  bootstrapSession,
+  chooseSaveDestination,
+  post,
+  saveAsset,
+  submitJob,
+} from "./api";
 import { Cover, Empty, Modal, Player, type Playback } from "./components";
 import { duration, initials, jobProgress } from "./format";
 import type {
@@ -485,13 +492,18 @@ export function App() {
                                 if (
                                   ["mp3", "m4b", "project"].includes(action)
                                 ) {
+                                  const filename = `audiobook.${action === "project" ? "zip" : action}`;
+                                  const destination =
+                                    await chooseSaveDestination(filename);
+                                  if (destination === null) return;
                                   const asset = await post<Asset>(
                                     `/v1/jobs/${j.id}/export`,
                                     { format: action },
                                   );
                                   await saveAsset(
                                     asset.url,
-                                    `audiobook.${action === "project" ? "zip" : action}`,
+                                    filename,
+                                    destination,
                                   );
                                 } else await post(`/v1/jobs/${j.id}/${action}`);
                                 await refresh();
@@ -568,13 +580,18 @@ export function App() {
                                 if (
                                   ["mp3", "m4b", "project"].includes(action)
                                 ) {
+                                  const filename = `audiobook.${action === "project" ? "zip" : action}`;
+                                  const destination =
+                                    await chooseSaveDestination(filename);
+                                  if (destination === null) return;
                                   const asset = await post<Asset>(
                                     `/v1/jobs/${j.id}/export`,
                                     { format: action },
                                   );
                                   await saveAsset(
                                     asset.url,
-                                    `audiobook.${action === "project" ? "zip" : action}`,
+                                    filename,
+                                    destination,
                                   );
                                 } else await post(`/v1/jobs/${j.id}/${action}`);
                                 await refresh();

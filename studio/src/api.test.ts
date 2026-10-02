@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { submitJob } from "./api";
+import { chooseSaveDestination, saveAsset, submitJob } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 it.each([false, true])(
@@ -55,3 +55,78 @@ it.each([false, true])(
     expect(values.size).toBe(0);
   },
 );
+
+it("streams an authenticated export to disk without buffering a blob", async () => {
+  vi.stubGlobal("sessionStorage", { getItem: () => "test-session" });
+  const chunks: Uint8Array[] = [];
+  let closed = false;
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+        controller.enqueue(new Uint8Array([3, 4]));
+        controller.close();
+      },
+    }),
+  );
+  const blob = vi.spyOn(response, "blob");
+  const fetch = vi.fn(async (_path: string, options: RequestInit) => {
+    expect(new Headers(options.headers).get("Authorization")).toBe(
+      "Bearer test-session",
+    );
+    return response;
+  });
+  vi.stubGlobal("fetch", fetch);
+  await saveAsset("/v1/assets/export", "book.m4b", {
+    createWritable: async () =>
+      new WritableStream({
+        write(chunk) {
+          chunks.push(chunk);
+        },
+        close() {
+          closed = true;
+        },
+      }),
+  });
+  expect(Array.from(chunks.flatMap((chunk) => Array.from(chunk)))).toEqual([
+    1, 2, 3, 4,
+  ]);
+  expect(closed).toBe(true);
+  expect(blob).not.toHaveBeenCalled();
+});
+
+it("cancels a save selection without starting a download", async () => {
+  vi.stubGlobal("window", {
+    showSaveFilePicker: async () => {
+      throw new DOMException("Cancelled", "AbortError");
+    },
+  });
+  expect(await chooseSaveDestination("book.m4b")).toBeNull();
+});
+
+it("aborts a partial disk download when the source stream fails", async () => {
+  vi.stubGlobal("sessionStorage", { getItem: () => null });
+  let aborted = false;
+  vi.stubGlobal(
+    "fetch",
+    async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error("Connection interrupted"));
+          },
+        }),
+      ),
+  );
+  await expect(
+    saveAsset("/v1/assets/export", "book.m4b", {
+      createWritable: async () =>
+        new WritableStream({
+          abort() {
+            aborted = true;
+          },
+        }),
+    }),
+  ).rejects.toThrow("Connection interrupted");
+  expect(aborted).toBe(true);
+});

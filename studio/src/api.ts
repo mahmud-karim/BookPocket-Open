@@ -93,7 +93,41 @@ export async function mediaURL(path: string): Promise<string> {
   if (!path.startsWith("/v1/")) throw new Error("Invalid media location.");
   return URL.createObjectURL(await (await request(path)).blob());
 }
-export async function saveAsset(path: string, filename: string) {
+export type SaveDestination = {
+  createWritable(): Promise<WritableStream<Uint8Array>>;
+};
+// Call from the click before requesting an export: browsers require user activation.
+export async function chooseSaveDestination(
+  filename: string,
+): Promise<SaveDestination | null | undefined> {
+  const picker = (
+    window as Window & {
+      showSaveFilePicker?: (options: {
+        suggestedName: string;
+      }) => Promise<SaveDestination>;
+    }
+  ).showSaveFilePicker;
+  if (!picker) return undefined;
+  try {
+    return await picker.call(window, { suggestedName: filename });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError")
+      return null;
+    throw error;
+  }
+}
+export async function saveAsset(
+  path: string,
+  filename: string,
+  destination?: SaveDestination,
+) {
+  if (!path.startsWith("/v1/")) throw new Error("Invalid media location.");
+  if (destination) {
+    const response = await request(path);
+    if (!response.body) throw new Error("The download did not contain audio.");
+    await response.body.pipeTo(await destination.createWritable());
+    return;
+  }
   const url = await mediaURL(path);
   const a = document.createElement("a");
   a.href = url;
