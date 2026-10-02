@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import httpx
+import hashlib
 
 
 def python_in(root):
@@ -17,15 +18,31 @@ class ManagedEngine:
         self.id = engine_id
         self.root = root / engine_id
         self.python = python_in(self.root / "venv")
-        self.version = "2"
         self.process = None
         self.log_handle = None
+
+    @property
+    def version(self):
+        marker = self.root / "ready.json"
+        provenance = json.loads(marker.read_text(encoding="utf-8")).get("provenance", {}) if marker.exists() else {}
+        fingerprint = hashlib.sha256(json.dumps(provenance, sort_keys=True).encode()).hexdigest()[:16]
+        return "adapter-3:" + fingerprint
+
+    def record_provenance(self, **extra):
+        result = subprocess.run([str(self.python), "-c", "import importlib.metadata,json; print(json.dumps({d.metadata['Name']:d.version for d in importlib.metadata.distributions()}))"], capture_output=True, text=True, check=True, timeout=30)
+        snapshots = sorted(str(path.relative_to(self.root / "models" / "hub")).replace("\\", "/") for path in (self.root / "models" / "hub").glob("models--*/snapshots/*") if path.is_dir())
+        provenance = {"packages": json.loads(result.stdout), "model_snapshots": snapshots, "adapter": 3}
+        marker = {"provenance": provenance, **extra}
+        temporary = self.root / "ready.tmp"
+        temporary.write_text(json.dumps(marker, sort_keys=True), encoding="utf-8")
+        temporary.replace(self.root / "ready.json")
 
     def info(self):
         available = self.python.exists() and (self.root / "ready.json").exists()
         return {"id": self.id, "name": "Kokoro" if self.id == "kokoro" else "Qwen3 TTS 0.6B",
                 "available": available, "supports_cloning": self.id == "qwen3",
-                "languages": ["en"], "license": "Apache-2.0",
+                "languages": ["en"] if self.id == "kokoro" else ["en", "zh", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"], "license": "Apache-2.0",
+                "requires_reference": self.id == "qwen3",
                 "reason": None if available else "Install and validate this engine in Settings"}
 
     def voices(self):
@@ -96,7 +113,7 @@ class ManagedEngine:
             probe = {"engine": self.id, "probe": True, "output": str(self.root / "probe.wav"), "text": "Your audiobook studio is ready.", "voice": {"id": "kokoro:af_heart"}, "language": "en"}
             subprocess.run([str(self.python), str(Path(__file__).with_name("engine_worker.py"))], input=json.dumps(probe), text=True,
                            check=True, stdout=out, stderr=out, env=self.environment(), timeout=1800)
-        (self.root / "ready.json").write_text(json.dumps({"version": self.version}), encoding="utf-8")
+        self.record_provenance(validated_synthesis=self.id == "kokoro", validated_model_load=True)
 
 
 class VoiceStudioEngine:
@@ -113,8 +130,10 @@ class VoiceStudioEngine:
 
     def info(self):
         try:
-            self.inventory()
-            available, reason = True, None
+            inventory = self.inventory()
+            configured = next((e for e in inventory.get("engines", []) if e.get("id") == "omnivoice"), None)
+            available = bool(configured and configured.get("available"))
+            reason = None if available else "Start the OmniVoice engine in VoiceStudio"
         except Exception:
             available, reason = False, "VoiceStudio is not configured or is not running"
         return {"id": self.id, "name": "VoiceStudio (external)", "available": available, "supports_cloning": False,
@@ -125,11 +144,11 @@ class VoiceStudioEngine:
         except Exception: return []
         items = result if isinstance(result, list) else result.get("voices", result.get("data", []))
         return [{"id": "voicestudio:" + str(v.get("id", v.get("voice_id"))), "name": v.get("name", "VoiceStudio voice"),
-                 "engine": self.id, "kind": "clone", "language": "en", "created_at": v.get("created_at", "2026-01-01T00:00:00Z")}
-                for v in items if isinstance(v, dict) and (v.get("id") or v.get("voice_id"))]
+                 "engine": self.id, "kind": "clone" if v.get("type") == "profile" else "preset", "language": "en", "created_at": v.get("created_at", "2026-01-01T00:00:00Z")}
+                for v in items if isinstance(v, dict) and (v.get("id") or v.get("voice_id")) and v.get("type") != "openai_alias"]
 
     def synthesize(self, text, voice, output, language="en"):
-        with httpx.stream("POST", self.url + "/v1/audio/speech", json={"model": "tts-1", "input": text,
+        with httpx.stream("POST", self.url + "/v1/audio/speech", json={"model": "omnivoice", "input": text, "language": language,
                           "voice": voice["id"].removeprefix("voicestudio:"), "response_format": "wav"}, timeout=1800) as response:
             response.raise_for_status()
             with output.open("wb") as f:

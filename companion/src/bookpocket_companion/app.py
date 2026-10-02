@@ -28,6 +28,8 @@ from .worker import Worker
 def create_app(config=None, engines=None, start_worker=True):
     config = config or Config()
     store = Store(config.data_dir)
+    from .legacy import initialize as initialize_legacy
+    initialize_legacy(store)
     engines = engines if engines is not None else engines_for(config)
     worker = Worker(store, engines, config)
     key_file = store.root / "pairing.key"
@@ -86,7 +88,7 @@ def create_app(config=None, engines=None, start_worker=True):
             return JSONResponse({"detail": "Unrecognized browser origin"}, status_code=403)
         if request.method in {"POST", "PUT"}:
             # Reject oversized multipart bodies before Starlette spools uploaded files.
-            limit = config.max_import_bytes + 2 * 1024 * 1024 if request.url.path == "/v1/books" else (22 * 1024 * 1024 if request.url.path == "/v1/voices" else 20 * 1024 * 1024)
+            limit = 512 * 1024 * 1024 if request.url.path == "/v1/projects/import" else (config.max_import_bytes + 2 * 1024 * 1024 if request.url.path == "/v1/books" else (22 * 1024 * 1024 if request.url.path == "/v1/voices" else 20 * 1024 * 1024))
             raw_length = request.headers.get("content-length")
             if request.headers.get("transfer-encoding"):
                 return JSONResponse({"detail": "Send a bounded request with Content-Length"}, status_code=411)
@@ -204,20 +206,25 @@ def create_app(config=None, engines=None, start_worker=True):
         return voice
 
     @app.post("/v1/voices", dependencies=[Depends(auth)])
-    async def add_voice(name: str = Form(...), engine: str = Form(...), language: str = Form("en"), reference: UploadFile = File(...), transcript: str = Form("")):
+    async def add_voice(name: str = Form(...), engine: str = Form(...), language: str = Form("en"), reference: UploadFile = File(...), transcript: str = Form(""), trim_start: float = Form(0), trim_end: float | None = Form(None)):
         if engine not in engines or not engines[engine].info()["supports_cloning"]: raise HTTPException(400, "This engine does not support importing voice references")
-        if language != "en": raise HTTPException(400, "The initial companion supports English voices")
+        if language not in engines[engine].info()["languages"]: raise HTTPException(400, "Choose a language supported by this voice engine")
         if not name.strip() or len(name) > 120: raise HTTPException(400, "Voice name must contain 1–120 characters")
         content = await reference.read(20 * 1024 * 1024 + 1)
         if len(content) > 20 * 1024 * 1024: raise HTTPException(413, "Voice reference exceeds 20 MiB")
         from .media import normalize_reference
         identity = str(uuid.uuid4())
         path = store.root / "voices" / (identity + ".wav")
-        try: normalize_reference(content, path, config.ffmpeg)
+        try: normalize_reference(content, path, config.ffmpeg, trim_start, trim_end)
         except Exception as exc: raise HTTPException(400, str(exc))
         voice = {"id": identity, "name": name.strip(), "engine": engine, "kind": "clone", "language": language, "created_at": now()}
         with store.db() as db: db.execute("INSERT INTO voices VALUES(?,?,?,?)", (identity, canonical(voice), str(path), transcript[:10000]))
         return voice
+
+    @app.get("/v1/voices/{identity}/reference", dependencies=[Depends(auth)])
+    def voice_reference(identity: str):
+        row = require("voices", identity)
+        return FileResponse(row["reference"], media_type="audio/wav")
 
     @app.delete("/v1/voices/{identity}", dependencies=[Depends(auth)])
     def delete_voice(identity: str):
@@ -250,7 +257,7 @@ def create_app(config=None, engines=None, start_worker=True):
         if existing: return json.loads(existing["data"])
         extension = ".epub" if (file.filename or "").lower().endswith(".epub") else ".txt"
         path = store.root / "books" / (book["id"] + extension)
-        temporary = path.with_suffix(extension + ".tmp")
+        temporary = path.with_suffix(extension + "." + str(uuid.uuid4()) + ".tmp")
         temporary.write_bytes(content)
         temporary.replace(path)
         if extension == ".epub":
@@ -354,7 +361,7 @@ def create_app(config=None, engines=None, start_worker=True):
         from .media import export_job
         job = get_job(identity)
         if job["status"] != "completed": raise HTTPException(409, "Finish generation before exporting")
-        try: return export_job(store, job, body.format, config.ffmpeg)
+        try: return export_job(store, job, body.format, config.ffmpeg, body.include_voice_references)
         except Exception as exc: raise HTTPException(400, "Export failed: " + str(exc))
     export_route = app.router.routes.pop()
     generic_index = next(i for i, route in enumerate(app.router.routes) if getattr(route, "path", "") == "/v1/jobs/{identity}/{action}")
@@ -380,6 +387,31 @@ def create_app(config=None, engines=None, start_worker=True):
 
     @app.get("/v1/admin/engines/installations", dependencies=[Depends(admin)])
     def installations(): return {"installations": list(installs.values())}
+
+    @app.post("/v1/projects/import", dependencies=[Depends(auth)])
+    async def project_import(file: UploadFile = File(...)):
+        from .project import import_project
+        content = await file.read(510 * 1024 * 1024 + 1)
+        if len(content) > 510 * 1024 * 1024: raise HTTPException(413, "Project exceeds the 510 MiB import limit")
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                legacy = "legacy.json" in archive.namelist()
+            if legacy:
+                from .legacy import import_legacy
+                return import_legacy(store, content, config.ffmpeg)
+            return import_project(store, content)
+        except Exception as exc: raise HTTPException(400, "Cannot import project: " + str(exc))
+
+    @app.get("/v1/legacy-recordings", dependencies=[Depends(auth)])
+    def legacy_recordings(book_id: str | None = None):
+        with store.db() as db:
+            rows = db.execute("SELECT data FROM legacy_recordings" + (" WHERE book_id=?" if book_id else ""), (book_id,) if book_id else ()).fetchall()
+        return {"recordings": [json.loads(r[0]) for r in rows]}
+
+    @app.get("/v1/pronunciations", dependencies=[Depends(auth)])
+    def imported_pronunciations():
+        with store.db() as db: row = db.execute("SELECT value FROM preferences WHERE key='pronunciation_rules'").fetchone()
+        return {"pronunciation_rules": json.loads(row[0]) if row else []}
 
     from .casting import register_casting
     register_casting(app, store, auth, admin, get_book)

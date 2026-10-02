@@ -47,3 +47,4 @@ class PairRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     format: str = Field(pattern="^(m4b|mp3|project)$")
+    include_voice_references: bool = False

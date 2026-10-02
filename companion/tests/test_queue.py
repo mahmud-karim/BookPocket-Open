@@ -1,4 +1,6 @@
 import json
+import io
+import zipfile
 from pathlib import Path
 import shutil
 import wave
@@ -6,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from bookpocket_companion.app import create_app
 from bookpocket_companion.models import Config
+from bookpocket_companion.store import canonical, now
 from bookpocket_companion.worker import sentences, spoken, spoken_mapping, word_timings
 
 
@@ -63,7 +66,14 @@ def test_failure_retry_preserves_segments_and_original_offsets(setup):
     assert audio.content[:4] == b"RIFF"
     exported = client2.post(f"/v1/jobs/{job['id']}/export", json={"format": "project"})
     assert exported.status_code == 200, exported.text
-    assert client2.get(exported.json()["url"]).content[:2] == b"PK"
+    archive = client2.get(exported.json()["url"]).content
+    assert archive[:2] == b"PK"
+    imported = client2.post("/v1/projects/import", files={"file": ("project.zip", archive)})
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["book"]["source_sha256"] == request["book_id"]
+    assert imported.json()["job"]["completed_segments"] == 2
+    again = client2.post("/v1/projects/import", files={"file": ("project.zip", archive)})
+    assert again.json()["job"]["id"] == imported.json()["job"]["id"]
 
 
 def test_cancellation_during_generation_never_publishes(setup):
@@ -114,3 +124,32 @@ def test_multiple_speakers_in_one_segment_and_overlap_validation(setup):
     assert result["status"] == "completed"
     assert result["assets"][0]["cast_spans"] == request["narration_plan"]
     assert any(t["start_offset"] == 2 and t["end_offset"] == 9 for t in result["assets"][0]["timings"])
+
+def test_project_cast_and_voice_reference_opt_in(setup, tmp_path):
+    app, client, engine, config, request = setup
+    reference = config.data_dir / "voices" / "reference.wav"
+    with wave.open(str(reference), "wb") as wav:
+        wav.setparams((1, 2, 24000, 0, "NONE", "not compressed")); wav.writeframes(b"\0\0" * 24000 * 4)
+    voice = {"id": "owned-clone", "name": "Owned reference", "engine": "fixture", "kind": "clone", "language": "en", "created_at": now()}
+    with app.state.store.db() as db:
+        db.execute("INSERT INTO voices VALUES(?,?,?,?)", (voice["id"], canonical(voice), str(reference), "private reference transcript"))
+    request["voice_id"] = voice["id"]
+    job = client.post("/v1/jobs", json=request).json()
+    app.state.worker.run(job["id"])
+    cast = {"characters": [{"id": "narrator", "name": "Narrator", "aliases": ["keeper"], "voice_id": voice["id"]}], "assignments": []}
+    assert client.put(f"/v1/books/{request['book_id']}/cast", json=cast).status_code == 200
+    for include in (False, True):
+        asset = client.post(f"/v1/jobs/{job['id']}/export", json={"format": "project", "include_voice_references": include}).json()
+        content = client.get(asset["url"]).content
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            manifest = json.loads(archive.read("project.json"))
+            assert manifest["cast"]["characters"][0]["aliases"] == ["keeper"]
+            assert bool([n for n in archive.namelist() if n.startswith("voices/")]) is include
+            if not include: assert "private reference transcript" not in archive.read("project.json").decode()
+        target = create_app(Config(data_dir=tmp_path / ("with-voice" if include else "without-voice"), admin_token="target", dev=True), engines={}, start_worker=False)
+        other = TestClient(target, client=("127.0.0.1", 7777), headers={"Authorization": "Bearer target"})
+        imported = other.post("/v1/projects/import", files={"file": ("project.zip", content)})
+        assert imported.status_code == 200, imported.text
+        assert bool(imported.json()["unresolved_voices"]) is not include
+        assert len(other.get("/v1/voices").json()["voices"]) == (1 if include else 0)
+        assert other.get(f"/v1/books/{request['book_id']}/cast").json()["characters"][0]["aliases"] == ["keeper"]

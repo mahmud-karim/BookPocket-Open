@@ -34,13 +34,14 @@ def generate(data):
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         if qwen_model is None:
             qwen_model = Qwen3TTSModel.from_pretrained("Qwen/Qwen3-TTS-12Hz-0.6B-Base", device_map=device,
-                        dtype=torch.float16 if device != "cpu" else torch.float32, attn_implementation="sdpa")
+                        dtype=torch.bfloat16 if device != "cpu" and torch.cuda.is_bf16_supported() else torch.float32, attn_implementation="sdpa")
         if data.get("probe"):
             # The Base model requires user reference audio; successful model load validates setup.
             return
         voice = data["voice"]
         if not voice.get("reference"): raise ValueError("Choose a cloned voice with reference audio")
-        wavs, sr = qwen_model.generate_voice_clone(text=data["text"], language="English", ref_audio=voice["reference"],
+        languages = {"en": "English", "zh": "Chinese", "ja": "Japanese", "ko": "Korean", "de": "German", "fr": "French", "ru": "Russian", "pt": "Portuguese", "es": "Spanish", "it": "Italian"}
+        wavs, sr = qwen_model.generate_voice_clone(text=data["text"], language=languages[data["language"]], ref_audio=voice["reference"],
                     ref_text=voice.get("transcript") or None, x_vector_only_mode=not bool(voice.get("transcript")))
         sf.write(data["output"], wavs[0], sr, subtype="PCM_16")
 

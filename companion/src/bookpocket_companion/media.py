@@ -8,12 +8,15 @@ import zipfile
 from .store import canonical, digest
 
 
-def normalize_reference(content, path, ffmpeg):
+def normalize_reference(content, path, ffmpeg, trim_start=0.0, trim_end=None):
+    if trim_start < 0 or (trim_end is not None and trim_end <= trim_start):
+        raise ValueError("Choose a valid reference trim range")
+    duration_limit = min(121, trim_end - trim_start) if trim_end is not None else 121
     with tempfile.TemporaryDirectory(dir=path.parent) as temporary:
         source = Path(temporary) / "reference"
         source.write_bytes(content)
         output = Path(temporary) / "normalized.wav"
-        result = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-protocol_whitelist", "file,pipe", "-format_whitelist", "wav,mp3,flac,ogg,mov,aac,aiff", "-i", str(source), "-t", "121", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(output)], capture_output=True, timeout=60)
+        result = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-protocol_whitelist", "file,pipe", "-format_whitelist", "wav,mp3,flac,ogg,mov,aac,aiff", "-i", str(source), "-ss", str(trim_start), "-t", str(duration_limit), "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(output)], capture_output=True, timeout=60)
         if result.returncode: raise ValueError("Choose a decodable audio recording")
         with wave.open(str(output), "rb") as audio:
             duration = audio.getnframes() / audio.getframerate()
@@ -21,7 +24,7 @@ def normalize_reference(content, path, ffmpeg):
         output.replace(path)
 
 
-def export_job(store, job, format, ffmpeg):
+def export_job(store, job, format, ffmpeg, include_voice_references=False):
     book_row = store.item("books", job["book_id"])
     if not book_row: raise ValueError("The original book has been deleted")
     book = json.loads(book_row["data"])
@@ -37,10 +40,25 @@ def export_job(store, job, format, ffmpeg):
         for a in assets:
             if digest(Path(a["path"]).read_bytes()) != json.loads(a["data"])["sha256"]: raise ValueError("A required audio segment failed its checksum")
         if format == "project":
+            with store.db() as db:
+                cast_row = db.execute("SELECT data FROM casts WHERE book_id=?", (book["id"],)).fetchone()
+            cast = json.loads(cast_row[0]) if cast_row else {"characters": [], "assignments": []}
+            voice_ids = {request.get("voice_id"), *request.get("cast", {}).values(), *(p["voice_id"] for p in request.get("narration_plan", [])), *(c.get("voice_id") for c in cast.get("characters", []))} - {None}
+            voices, references = [], []
+            for voice_id in sorted(voice_ids):
+                row = store.item("voices", voice_id)
+                metadata = json.loads(row["data"]) if row else {"id": voice_id, "name": voice_id, "engine": job["engine"], "kind": "preset" if voice_id.startswith("kokoro:") else "clone", "language": request.get("language", "en")}
+                metadata["reference_included"] = bool(include_voice_references and row and row["reference"] and Path(row["reference"]).exists())
+                if metadata["reference_included"]:
+                    reference_name = "voices/" + voice_id + ".wav"
+                    metadata.update(reference=reference_name, reference_sha256=digest(Path(row["reference"]).read_bytes()), transcript=row["transcript"])
+                    references.append((row["reference"], reference_name))
+                voices.append(metadata)
             with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                archive.writestr("project.json", canonical({"format_version": 1, "book": book, "job": job, "generation": request}))
+                archive.writestr("project.json", canonical({"format_version": 1, "book": book, "job": job, "generation": request, "cast": cast, "voices": voices}))
                 archive.write(book_row["source"], "source" + Path(book_row["source"]).suffix)
                 for a in assets: archive.write(a["path"], "audio/" + a["id"] + ".wav")
+                for path, name in references: archive.write(path, name)
         else:
             # Build one stream instead of trusting arbitrary concat paths or loading the book in RAM.
             joined = temp / "joined.wav"
