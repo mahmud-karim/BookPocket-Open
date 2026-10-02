@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { VoiceSampleInput, ReferencePreview } from "./VoiceSample";
+import { LegacyShelf } from "./LegacyShelf";
 import { EngineList, AnalyzerSettings } from "./EngineSettings";
 import { CastEditor } from "./CastEditor";
 import { narrationPlan, type Cast } from "./casting";
@@ -130,14 +131,28 @@ export function App() {
     await run(async () => {
       const body = new FormData();
       body.append("file", file);
-      const book = file.name.toLowerCase().endsWith(".zip")
-        ? (
-            await api<{ book: Book; job: Job }>("/v1/projects/import", {
-              method: "POST",
-              body,
-            })
-          ).book
-        : await api<Book>("/v1/books", { method: "POST", body });
+      let book: Book;
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        const imported = await api<{
+          kind?: "legacy";
+          book?: Book;
+          books?: Book[];
+          recordings?: unknown[];
+        }>("/v1/projects/import", { method: "POST", body });
+        if (imported.kind === "legacy") {
+          await refresh();
+          setSelected(undefined);
+          setTab("listen");
+          setModal(null);
+          setNotice(
+            `Imported ${imported.books?.length ?? 0} books and ${imported.recordings?.length ?? 0} legacy recordings. Older page positions remain separate from synchronized reading.`,
+          );
+          return;
+        }
+        if (!imported.book)
+          throw new Error("The imported project did not include a book.");
+        book = imported.book;
+      } else book = await api<Book>("/v1/books", { method: "POST", body });
       await refresh();
       setSelected(book.id);
       setTab("library");
@@ -489,7 +504,7 @@ export function App() {
                   ) : (
                     <Empty
                       icon={<Headphones size={40} />}
-                      title="A listening shelf of your own"
+                      title="No new recordings yet"
                       action={
                         <button
                           className="secondary"
@@ -504,6 +519,13 @@ export function App() {
                       recordings will appear here.
                     </Empty>
                   )}
+                  <LegacyShelf
+                    books={data.books}
+                    onError={setError}
+                    onPlay={(book, assets) =>
+                      setPlayback({ book, assets, index: 0 })
+                    }
+                  />
                 </>
               )}
               {tab === "studio" && !book && (
@@ -1097,6 +1119,7 @@ function BookStudio({
     loadPreference(`bp.rules.${book.id}`, []),
   );
   const [announce, setAnnounce] = useState(true);
+  const [freshTake, setFreshTake] = useState(false);
   const [surface, setSurface] = useState(() =>
     loadPreference("bp.reader.surface", "dark"),
   );
@@ -1104,11 +1127,28 @@ function BookStudio({
   const [fullCast, setFullCast] = useState(false);
   const [cast, setCast] = useState<Cast>();
   const [castSaved, setCastSaved] = useState(false);
+  const [savedRules, setSavedRules] = useState<PronunciationRule[]>([]);
+  useEffect(() => {
+    let active = true;
+    void api<{ pronunciation_rules: PronunciationRule[] }>("/v1/pronunciations")
+      .then((result) => {
+        if (active) setSavedRules(result.pronunciation_rules);
+      })
+      .catch((e) => {
+        if (active) onError(e.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [onError]);
   const receiveCast = useCallback((value: Cast | undefined, saved: boolean) => {
     setCast(value);
     setCastSaved(saved);
   }, []);
   const current = book.chapters[chapter];
+  const opensWithTitle =
+    current?.segments[0]?.kind === "heading" &&
+    current.segments[0].text.trim() === current.title.trim();
   const availableVoices = voices.filter((v) => v.engine === engine);
   const chosenVoice = availableVoices.some((v) => v.id === voice)
     ? voice
@@ -1140,10 +1180,14 @@ function BookStudio({
         if (!cast || !castSaved)
           throw new Error("Save your cast before generating.");
         plan = narrationPlan(cast, segments, voices, engine);
-        const override = cast.characters.find(c => c.id === "narrator")?.voice_id;
+        const override = cast.characters.find(
+          (c) => c.id === "narrator",
+        )?.voice_id;
         if (override) {
-          if (!voices.some(v => v.id === override && v.engine === engine)) {
-            throw new Error("Choose a narrator voice from the selected engine in your cast.");
+          if (!voices.some((v) => v.id === override && v.engine === engine)) {
+            throw new Error(
+              "Choose a narrator voice from the selected engine in your cast.",
+            );
           }
           narrator = override;
         }
@@ -1154,6 +1198,7 @@ function BookStudio({
     }
     await onGenerate({
       narration_plan: plan ?? [],
+      take_id: freshTake ? crypto.randomUUID() : undefined,
       request_id: crypto.randomUUID(),
       book_id: book.id,
       segment_ids: segments.map((s) => s.id),
@@ -1224,9 +1269,13 @@ function BookStudio({
           </div>
           <div className="manuscript-body" style={{ fontSize }}>
             <p className="chapter-number">CHAPTER {chapter + 1}</p>
-            <h2>{current?.title}</h2>
-            <div className="chapter-divider">· · ·</div>
-            {current?.segments.map((s) => (
+            {!opensWithTitle && (
+              <>
+                <h2>{current?.title}</h2>
+                <div className="chapter-divider">· · ·</div>
+              </>
+            )}
+            {current?.segments.map((s, index) => (
               <div
                 key={s.id}
                 className={`source-segment ${selected.has(s.id) ? "selected" : ""}`}
@@ -1246,7 +1295,18 @@ function BookStudio({
                     }
                   />
                 )}{" "}
-                {s.kind === "heading" ? <h3>{s.text}</h3> : <p>{s.text}</p>}
+                {s.kind === "heading" ? (
+                  index === 0 && opensWithTitle ? (
+                    <div>
+                      <h2>{s.text}</h2>
+                      <div className="chapter-divider">· · ·</div>
+                    </div>
+                  ) : (
+                    <h3>{s.text}</h3>
+                  )
+                ) : (
+                  <p>{s.text}</p>
+                )}
               </div>
             ))}
           </div>
@@ -1342,6 +1402,20 @@ function BookStudio({
                 />
                 Announce chapter titles
               </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={freshTake}
+                  onChange={(e) => setFreshTake(e.target.checked)}
+                />
+                Create a fresh take
+              </label>
+              {freshTake && (
+                <p className="field-help">
+                  Render new audio instead of reusing an existing recording.
+                  Some voices may sound the same between takes.
+                </p>
+              )}
               <div className="generation-estimate">
                 <span>{segments.length} passages</span>
                 <span>
@@ -1397,6 +1471,22 @@ function BookStudio({
                 <Plus size={18} />
               </button>
             </div>
+            {savedRules.length > 0 && (
+              <button
+                className="small-button"
+                onClick={() =>
+                  setRules((old) => [
+                    ...old,
+                    ...savedRules.filter(
+                      (rule) =>
+                        !old.some((existing) => existing.term === rule.term),
+                    ),
+                  ])
+                }
+              >
+                Import saved corrections ({savedRules.length})
+              </button>
+            )}
             {rules.length === 0 ? (
               <p className="muted">
                 Give unusual names and words the right sound. Your book text
@@ -1405,6 +1495,20 @@ function BookStudio({
             ) : (
               rules.map((r, i) => (
                 <div className="pronunciation-row" key={i}>
+                  <input
+                    type="checkbox"
+                    checked={r.enabled}
+                    aria-label={`Enable correction ${i + 1}`}
+                    onChange={(e) =>
+                      setRules((old) =>
+                        old.map((rule, j) =>
+                          j === i
+                            ? { ...rule, enabled: e.target.checked }
+                            : rule,
+                        ),
+                      )
+                    }
+                  />
                   <input
                     aria-label={`Original word ${i + 1}`}
                     placeholder="Written word"

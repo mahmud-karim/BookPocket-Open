@@ -66,7 +66,7 @@ export function VoiceSampleInput() {
                 type="number"
                 min="0"
                 max={Math.max(0, end - 3)}
-                step="0.1"
+                step="any"
                 required
                 value={start}
                 onChange={(e) => setStart(Number(e.target.value))}
@@ -79,7 +79,7 @@ export function VoiceSampleInput() {
                 type="number"
                 min={start + 3}
                 max={Math.min(duration, start + 120)}
-                step="0.1"
+                step="any"
                 required
                 value={end}
                 onChange={(e) => setEnd(Number(e.target.value))}

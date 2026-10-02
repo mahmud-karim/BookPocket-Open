@@ -20,7 +20,8 @@ Requirements: Python 3.11 or later, Node.js 22.12 or later, and FFmpeg/FFprobe o
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e './companion[test]'
+.\.venv\Scripts\python.exe -m pip install --require-hashes -r tests/requirements-test.lock -r scripts/build-requirements.lock
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e './companion'
 cd studio
 npm ci
 npm run build
