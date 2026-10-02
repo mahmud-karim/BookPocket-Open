@@ -139,12 +139,14 @@ export function App() {
       const body = new FormData();
       body.append("file", file);
       let book: Book;
+      let unresolvedVoices = 0;
       if (file.name.toLowerCase().endsWith(".zip")) {
         const imported = await api<{
           kind?: "legacy";
           book?: Book;
           books?: Book[];
           recordings?: unknown[];
+          unresolved_voices?: unknown[];
         }>("/v1/projects/import", { method: "POST", body });
         if (imported.kind === "legacy") {
           await refresh();
@@ -159,12 +161,15 @@ export function App() {
         if (!imported.book)
           throw new Error("The imported project did not include a book.");
         book = imported.book;
+        unresolvedVoices = imported.unresolved_voices?.length ?? 0;
       } else book = await api<Book>("/v1/books", { method: "POST", body });
       await refresh();
       setSelected(book.id);
       setTab("library");
       setModal(null);
-      setNotice(`“${book.title}” is in your library.`);
+      setNotice(
+        `“${book.title}” is in your library.${unresolvedVoices ? ` ${unresolvedVoices} imported voices need a reference or reassignment before generating new audio. Saved recordings can still play.` : ""}`,
+      );
     });
   }
   function play(job: Job) {
