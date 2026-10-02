@@ -39,12 +39,18 @@ The real cached MiMo 9B Q5_K_M local analyzer completed the eight-segment Lanter
 
 CI uses standard GitHub-hosted runners. Untrusted pull requests have no access to private credentials or the user's computer. Local validation data, generated speech and screenshots remain excluded from public source.
 
-## iOS and release gates still open
+## Native and published release verification
 
-- Run native unit/UI tests, including shared contract parsing and scalar-to-UTF16 mapping; inspect actual simulator screenshots across dark/light/cream reader modes, small/large devices and enlarged text.
+- [Native run 37070374634](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37070374634) passed ten unit tests and one UI test, including shared API decoding, Unicode offsets, persistent request identity, percentage-to-Readium font conversion, visibly painted EPUB text, chapter navigation and saved-chapter reopening. Root inspected Library, Studio and cream-reader screenshots. The earlier blank view was a real bug: Readium expected 1.1 for 110% text, while the application supplied 110. The conversion is now tested.
+- The same run produced an unsigned ARM64 iPhoneOS IPA. Independent download verification passed ZIP integrity, bundle ID `org.bookpocket.open`, app version 0.1.0, build 1 and minimum iOS 18.0. Direct executable inspection confirmed no code-signature load command and no provisioning profile. Native build inputs at `b48c56b` are byte-identical to the frozen release source `2956fac`.
+- [Final cross-platform checks 37070775027](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37070775027) passed Windows, Ubuntu and studio on `2956fac`. [Final installer run 37070774054](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37070774054) passed the installed/tray/media/runtime and lifecycle gates. The portable ZIP passed independent CRC, safe-path, required-component and personal-data exclusion inspection. Installer Authenticode status is NotSigned.
+- [Published preview v0.1.0-preview.1](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.0-preview.1) assets were downloaded again from the release. Checksums matched: IPA `3d4e815d56be397b80292ea3c5b23cf0439bf739d0fc042adfe8497e5b9ae7a6`; Windows installer `1cf292458a1942decf894944d64bfa89f1433f729daca14e4a41f4b7d5067d9d`; portable ZIP `eba55ab0b12d666477495262849e44a090de969172ea2c4a48d75dfd2d027e38`. Published IPA metadata and archive integrity passed the verifier again.
+
+## Physical iPhone and broader reader gates still open
+
+- Inspect dark/light/cream modes, small/large physical devices and enlarged text; simulator screenshots above cover their stated fixture and configuration only.
 - Verify original EPUB formatting, Files/share import, bookmarks/highlights/search, persistent position across font changes/rotation/relaunch and PC-independent offline reading.
 - Verify phone certificate pinning, Keychain persistence, interrupted-download recovery, checksum checks, original-text alignment and offline listening.
-- Build a real unsigned iPhoneOS ARM64 IPA. The verifier's rejection tests pass, but a simulator build is not a device package. Download the published IPA, compare its SHA256 and inspect archive/executable metadata before release handoff.
 - Physical iPhone: LiveContainer installation, Files import, Keychain persistence, Bluetooth/lock-screen controls, interruptions/reconnection and at least one hour of screen-locked playback remain unverified.
 
 ## Remaining product-level validation

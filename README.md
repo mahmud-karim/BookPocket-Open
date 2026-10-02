@@ -2,7 +2,19 @@
 
 A local-first EPUB reader and audiobook studio. Read on iPhone, generate narration on your Windows PC, and keep your original books and audio.
 
-**Development preview.** The first implementation is under active integration. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and outstanding device checks. Do not interpret the feature scope below as a completed release.
+**Development preview available:** [download the Windows installer and unsigned iOS IPA](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.0-preview.1). Both published downloads were retrieved and checksum-verified. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
+
+## Obsidian in the actual app
+
+Simulator screenshots show the original public test book. These are rendered application screens, not design mockups.
+
+<p>
+<img src="docs/screenshots/ios-library.png" alt="Native Obsidian library" width="220">
+<img src="docs/screenshots/ios-reader.png" alt="Native cream EPUB reader" width="220">
+<img src="docs/screenshots/ios-studio.png" alt="Native Obsidian audiobook studio" width="220">
+</p>
+
+![Windows Obsidian library](docs/screenshots/windows-library.png)
 
 ## The experience
 
