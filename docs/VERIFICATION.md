@@ -21,6 +21,8 @@ Evidence current as of 2026-10-02. Deterministic fixtures, real speech synthesis
 
 Real-engine timings above are individual smoke measurements, not comparative benchmarks. Omission/repetition accuracy, long-form voice consistency and quality rankings require a larger listening evaluation.
 
+The real cached MiMo 9B Q5_K_M local analyzer completed the eight-segment Lantern fixture in 32.41 seconds. It attributed three of four double-quoted utterances to the expected named speakers and left the deliberately unidentified reply as a separate speaker at confidence 0.45. Every assignment remained unreviewed. Earlier local-model attempts produced wrong or malformed output and did not qualify as successful attribution. Separating immutable dialogue boundaries from speaker inference, requiring structured output and validating all utterance IDs repaired this narrow fixture gate. This is not a general literary-dialogue benchmark: nested, unquoted and other quotation conventions require explicit manual review or assignment.
+
 ## Windows distribution and reproducibility
 
 - [Lifecycle run 37068591720](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37068591720) passed fresh installation, windowless tray launch, an in-place upgrade and uninstall. It seeded an actual original EPUB, tone voice reference, TLS identity and settings, reopened the library after upgrade, and verified seven personal-data files survived uninstall. The baseline used the same source packaged as version 0.0.0; this is installer lifecycle evidence, not migration from the old application. Its artifacts still require rebuilding after later source changes.

@@ -18,6 +18,7 @@ type Analysis = {
   completed_segments: number;
   total_segments: number;
   error?: string;
+  warnings?: string[];
 };
 type Analyzer = {
   configured: boolean;
@@ -310,6 +311,10 @@ export function CastEditor({
               ? `Analyze with ${analyzer.model}. Every suggestion needs your review.`
               : "Connect an analysis model in Settings, or assign passages yourself below."}
           </p>
+          <p className="field-help">
+            Suggestions cover dialogue in double quotation marks. Assign other
+            speech manually and review each suggested speaker.
+          </p>
           {analyzer?.hosted && (
             <label className="checkbox">
               <input
@@ -346,6 +351,15 @@ export function CastEditor({
           </p>
         )}
       </div>
+      {!!analysis?.warnings?.length && (
+        <div aria-live="polite">
+          {analysis.warnings.map((warning) => (
+            <p className="field-help" key={warning}>
+              {warning}
+            </p>
+          ))}
+        </div>
+      )}
       <div className="section-heading">
         <h3>Passage assignments</h3>
         <select
