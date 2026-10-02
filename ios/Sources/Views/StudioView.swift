@@ -159,7 +159,7 @@ struct PairingView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section { Button("Scan companion QR", systemImage: "qrcode.viewfinder") { scanner = true } } footer: { Text("Open Settings → Pair device in your PC Studio. The QR verifies your companion's HTTPS identity.") }
+                Section { Button("Scan companion QR", systemImage: "qrcode.viewfinder") { scanner = true } } footer: { Text("Open Devices in your PC Studio, create a pairing code, and scan its QR. The QR verifies your companion's HTTPS identity.") }
                 Section("Or enter pairing details") {
                     TextField("https://your-pc:8765", text: $url).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                     TextField("Pairing code", text: $code).textInputAutocapitalization(.characters).autocorrectionDisabled()
