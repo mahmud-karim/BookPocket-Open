@@ -137,6 +137,7 @@ class Worker:
                 key = digest(canonical({"segment": segment_id, "engine": engine.id, "version": engine.version,
                                         "voice": voice_id, "voice_revision": digest(Path(voice["reference"]).read_bytes()) if voice.get("reference") else (request["request_id"] if engine.id == "voicestudio" else engine.version),
                                         "transcript": voice.get("transcript"), "narration_plan": span_plan, "voice_revisions": voice_revisions,
+                                        "take_id": request.get("take_id"),
                                         "rules": request["pronunciation_rules"], "language": request["language"], "announce": announce}))
                 with self.store.db() as db:
                     cached = db.execute("SELECT data,path FROM assets WHERE cache_key=?", (key,)).fetchone()

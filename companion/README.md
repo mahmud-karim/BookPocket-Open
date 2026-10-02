@@ -15,6 +15,8 @@ python -m venv .venv
 
 The normal launcher opens the studio on loopback HTTP port 8782 and serves paired phones over HTTPS port 8783. The launch URL contains an ephemeral session token in its fragment; the studio removes that fragment and retains the token only in session storage. Admin access requires the token, a loopback peer, and an allowed browser origin. HTTPS identity fingerprints are paired through the QR payload. Proxy headers are not trusted. `--dev` is loopback-only HTTP; `--studio-port`, `--port`, and `--public-url` support explicit setup.
 
+On first launch, the phone connection URL uses an available LAN address. Keep the phone and PC on the same network, open Devices in the desktop studio, scan the QR, and approve the named phone on the PC. For a PC with several network adapters, set `--public-url https://<reachable-PC-address>:8783` explicitly. The local desktop studio remains loopback-only. Optional remote access needs a user-configured HTTPS or Tailscale route; this app does not publish a public tunnel.
+
 Configuration and all books, cloned references, SQLite data, models, and TLS keys default to `%LOCALAPPDATA%/BookPocketOpen`. Override with `--data-dir`. Optional `config.json` fields are `public_url`, `voicestudio_url`, and `ffmpeg`. API keys belong in the private data folder; never copy it into a source release.
 
 ## Engines and jobs
@@ -27,9 +29,19 @@ Queue changes are transactional. Recovery returns interrupted running jobs to th
 
 Optional VoiceStudio integration uses its public `/v1/audio/voices` and `/v1/audio/speech` endpoints with the explicit `omnivoice` engine. It exposes real profiles, not OpenAI aliases. VoiceStudio is separately installed; its implementation is not bundled. OmniVoice weights are noncommercial.
 
+| Component | License / distribution |
+| --- | --- |
+| Original companion code | Apache-2.0 |
+| Kokoro 82M weights | Apache-2.0; downloaded into the user's model cache |
+| Qwen3-TTS 0.6B Base weights | Apache-2.0; downloaded into the user's model cache |
+| VoiceStudio / OmniVoice | Separate optional service; OmniVoice pretrained weights have noncommercial terms |
+| Casting analysis model | User-selected local model or explicit hosted provider; its own license applies |
+
+An explicit `take_id` on a generation request bypasses previous takes' cached audio. Retry retains the same take ID and reuses its completed segments. A new take can vary with sampling engines; deterministic engines may produce the same waveform.
+
 ## Portable projects and migration
 
-Completed jobs export M4B, MP3, or a portable ZIP. `POST /v1/projects/import` accepts a multipart `file`. A native project ZIP contains `project.json`, `source.epub` or `source.txt`, and `audio/<asset-id>.wav`. Import validates original and audio hashes, source ranges, and archive limits. Re-importing the same archive is idempotent.
+Completed jobs export M4B, MP3, or a portable ZIP. `POST /v1/projects/import` accepts a multipart `file`. A native project ZIP contains `project.json`, `source.epub` or `source.txt`, and `audio/<asset-id>.wav`. Cast characters, aliases, exact assignments, and voice metadata are included. Private voice reference files and transcripts are excluded unless the export request explicitly sets `include_voice_references: true`. Import validates original and audio hashes, source ranges, and archive limits. Missing references are returned as `unresolved_voices`, never advertised as usable clones. An existing library cast is preserved; the imported cast also remains attached to the imported production metadata. Re-importing the same archive is idempotent.
 
 The same route accepts an explicitly prepared legacy ZIP with this `legacy.json` format:
 
@@ -50,4 +62,4 @@ The legacy app needs an authenticated export or local original files to prepare 
 
 ## Casting analysis
 
-Configure a local OpenAI-compatible endpoint and model through `PUT /v1/admin/analyzer`. An HTTPS hosted endpoint requires explicit `allow_hosted` consent on each book-analysis request. API keys are write-only and are cleared when the endpoint origin changes. Analysis runs asynchronously, persists status, validates exact scalar ranges, and preserves reviewed edits. The model cannot replace publication text. All generated speaker suggestions require user review before production narration.
+Configure a local OpenAI-compatible endpoint and model through `PUT /v1/admin/analyzer`, for example `http://127.0.0.1:1234/v1` for an already running local server. An HTTPS hosted endpoint requires explicit `allow_hosted` consent on each book-analysis request. API keys are write-only and are cleared when the endpoint origin changes. Analysis runs asynchronously, persists status, validates exact scalar ranges, and preserves reviewed edits. The analyzer returns verbatim source anchors; the companion computes offsets and rejects missing or ambiguous anchors. The model cannot replace publication text. All generated speaker suggestions require user review before production narration.

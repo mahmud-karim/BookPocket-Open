@@ -32,6 +32,7 @@ class GenerationRequest(BaseModel):
     announce_chapters: bool = False
     cast: dict[str, str] = Field(default_factory=dict)
     narration_plan: list["NarrationSpan"] = Field(default_factory=list)
+    take_id: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 class NarrationSpan(BaseModel):
     segment_id: str

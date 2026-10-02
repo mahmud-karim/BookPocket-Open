@@ -1,6 +1,7 @@
 import json
 import io
 import zipfile
+import uuid
 from pathlib import Path
 import shutil
 import wave
@@ -98,6 +99,26 @@ def test_corrupt_cache_is_regenerated(setup):
     app.state.worker.run(retry["id"])
     assert client.get("/v1/jobs/"+retry["id"]).json()["status"] == "completed"
     assert len(engine.calls) == 5
+
+def test_new_take_bypasses_cache_but_retry_keeps_completed_audio(setup):
+    app, client, engine, _, request = setup
+    original = client.post("/v1/jobs", json=request).json()
+    app.state.worker.run(original["id"])
+    original = client.get("/v1/jobs/"+original["id"]).json()
+    request.update(request_id="new-take", take_id=str(uuid.uuid4()))
+    engine.fail_on = 6
+    take = client.post("/v1/jobs", json=request).json()
+    app.state.worker.run(take["id"])
+    partial = client.get("/v1/jobs/"+take["id"]).json()
+    assert partial["status"] == "failed"
+    assert partial["assets"][0]["id"] != original["assets"][0]["id"]
+    engine.fail_on = None
+    client.post(f"/v1/jobs/{take['id']}/retry")
+    app.state.worker.run(take["id"])
+    final = client.get("/v1/jobs/"+take["id"]).json()
+    assert final["status"] == "completed"
+    assert final["assets"][0]["id"] == partial["assets"][0]["id"]
+    assert len(engine.calls) == 7
 
 
 def test_sentence_offsets_and_substitution():

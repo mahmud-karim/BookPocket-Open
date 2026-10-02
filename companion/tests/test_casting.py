@@ -3,6 +3,8 @@ import time
 from fastapi.testclient import TestClient
 from bookpocket_companion.app import create_app
 from bookpocket_companion.models import Config
+from bookpocket_companion.casting import source_assignment
+import pytest
 
 def client(tmp_path):
     app = create_app(Config(data_dir=tmp_path, admin_token="secret", dev=True), engines={}, start_worker=False)
@@ -30,3 +32,14 @@ def test_api_key_never_follows_different_origin(tmp_path):
     assert not c.get("/v1/admin/analyzer").json()["has_api_key"]
     assert json.loads((tmp_path / "analyzer.json").read_text())["api_key"] is None
     assert c.put("/v1/admin/analyzer", json={"url": "http://remote.example/v1", "model": "bad"}).status_code == 400
+
+def test_verbatim_source_anchors_resolve_scalar_offsets_without_rewriting():
+    text = 'A 🧭. "Hello," said Mia. "Hello," said Leo.'
+    assignment = source_assignment({"segment_id": "s", "source_text": '"Hello,"', "occurrence": 2, "character_id": "leo", "confidence": .8}, {"s": text})
+    assert assignment.start_offset == text.rfind('"Hello,"')
+    assert text[assignment.start_offset:assignment.end_offset] == '"Hello,"'
+    assert not assignment.reviewed
+    with pytest.raises(ValueError, match="ambiguous"):
+        source_assignment({"segment_id": "s", "source_text": '"Hello,"', "character_id": "leo", "confidence": .8}, {"s": text})
+    with pytest.raises(ValueError, match="missing"):
+        source_assignment({"segment_id": "s", "source_text": 'Rewritten words', "character_id": "leo", "confidence": .8}, {"s": text})
