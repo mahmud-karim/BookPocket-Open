@@ -1,53 +1,48 @@
 # Verification ledger
 
-Evidence is recorded separately for deterministic tests, real synthesis, simulator checks, and physical hardware. A tone fixture never proves speech quality, model installation, cloning, or audiobook completion.
+Evidence current as of 2026-10-02. Deterministic fixtures, real speech synthesis, browser checks, installed Windows packages, iOS Simulator and physical iPhone checks are separate gates. A passing check in one category does not imply the others passed.
 
-## Automated acceptance matrix
+## Verified behavior
 
-| Boundary | Required outcome | Evidence / current state |
-| --- | --- | --- |
-| Public source | No private books, voice references, credentials, personal paths, private endpoints, runtime databases or models | `scripts/public_preflight.py` passed current source on 2026-10-02; rerun before publication |
-| Public fixtures | EPUB and PCM bytes reproducible; original prose and media provenance | `tests/test_release_tools.py` passed on Windows, 2026-10-02 |
-| IPA artifact | SHA256 match; valid ZIP; one Payload app; iPhoneOS ARM64 executable and embedded frameworks; expected bundle/version; iPad support | `scripts/verify_ipa.py`; rejection tests passed on Windows; real IPA not built |
-| API contract | Both clients parse `tests/fixtures/contract-v1.json`; emoji scalar offsets map to exactly the compass character | Python fixture identity/Unicode tests passed; Swift cross-client test pending |
-| Offline import | EPUB formatting, chapter order, original source bytes, TXT conversion, malformed/archive traversal rejection | Companion original-byte, chapter order, Unicode and hostile archive tests passed; iOS tests pending |
-| Pairing | Wrong/expired/reused code rejected; phone sees pending until local approval; revocation denies access | Pairing approval, exchange retry, expiry, code reuse and revocation tests passed |
-| Privacy and transport | Protected media; no bearer token in URLs; LAN certificate pin; loopback admin restriction and same-origin checks | Origin, remote HTTPS/admin restriction and spoofed forwarding tests passed; actual TLS pin/device checks pending |
-| Durable generation | Restart recovery, idempotent request reuse, conflict 409, cancellation prevents publication, retries reuse completed segments | Fixture-engine failure/restart/retry/cache corruption/cancellation tests passed; real-book render pending |
-| Reader location | Font change, rotation and relaunch preserve source location; pronunciation never edits display text | Simulator tests pending |
-| Audio download | Resume interrupted transfer; validate checksum; offline playback and timing/source association | Integration and simulator tests pending |
-| Studio | Import, voice creation, job controls, pairing decisions, exports, cast correction, empty/error states | Production build and browser tests pending |
-| Full cast | Exact source IDs, no model rewrite; uncertainty review; aliases; per-passage override; only changed segments rerender | Integration tests pending |
-| Exports | Real MP3/M4B decode, chapter metadata, portable archive with validated source/timings | Real FFmpeg MP3/M4B decode, duration/chapter metadata and project source/audio checksums passed with test-tone input |
-| Migration | Original EPUB preserved; voices/audio private; exact/approximate/unmatched mapping visibly distinguished | Real migration review pending |
+| Boundary | Evidence and limits |
+| --- | --- |
+| Public source and fixtures | Public-source preflight passed. Original EPUB/text and non-speech WAV provenance is checked. EPUB ZIP metadata is fixed across Windows/Linux; shared contract fixture hashes regenerate with the source. |
+| Core tests | Latest local locked environment: 39 tests passed. Authentication, expiry/reuse/revocation, source preservation, malformed and hostile EPUBs, Unicode scalar identities, idempotency conflicts, restart/retry, cache corruption, cancellation, casting and export boundaries are covered. One upstream TestClient deprecation warning remains. |
+| Pairing and API privacy | Local approval required; exchange is retryable; expired/reused codes fail; revocation prevents access. Tests cover protected source/media, loopback admin, browser origins and spoofed forwarding headers. Actual phone TLS-pinning verification remains pending. |
+| Original text and casting | Exact scalar ranges, overlap/bounds rejection and emoji offsets pass. Hosted analysis is rejected before any outbound request without explicit consent. Only a changed cast segment rerenders; unchanged segments reuse validated audio. Source text remains unchanged. These tests do not prove LLM speaker-attribution quality. |
+| Real Kokoro synthesis | Companion validation generated two segments: 6.925 seconds of speech in 12.141 seconds cold wall time. MP3, M4B and project exports succeeded with checksums. A separate pronunciation/alignment sample mapped “harbor” to spoken “harbour” while retaining eight original-text token ranges within offsets 0–43. |
+| Real Qwen cloning | Qwen3-TTS 0.6B Base on RTX 3080 with bfloat16 generated 2.48 seconds of speech in 22.672 seconds cold wall time. The reference was synthetic Kokoro speech, not a private human recording. Earlier float16 CUDA failure was repaired by using the documented bfloat16 configuration. |
+| External VoiceStudio | Public API demo profile produced 2.4 seconds of mono 24 kHz audio in 4.484 seconds wall time. OmniVoice's noncommercial weights remain explicitly identified; this is an optional external adapter. |
+| Real interrupted-book recovery | An eight-segment, two-chapter original fixture render was terminated after its first durable audio asset. A fresh worker finished 8/8, retained the original first asset ID and produced 32.8 seconds of audio; measured wall time including restart was 35.703 seconds. Independent database inspection confirmed completed status, 8/8 and retained first asset. Final M4B SHA256: `5125b6a359eea679dace072b56a6a5672a8d955e7cee9b977fc835e9e2c54c4e`. This is a complete short fixture book, not a novel-length endurance benchmark or full PC power-cycle test. |
+| Export correctness | Independent FFmpeg/FFprobe tests decode actual MP3/M4B output and verify codecs, duration and two contiguous chapter records. Portable projects preserve original EPUB bytes and every audio SHA256. Tone fixtures isolate transport/encoding tests from speech-quality claims. |
+| Desktop reader and studio | Browser verification imported The Lantern EPUB, switched chapters and reading preferences, selected exact dialogue, assigned Mira to Bella, saved the cast, generated 4/4 passages with real Kokoro, observed playback progress, changed speed to 1.5x and exported M4B through the UI. No browser page errors were observed. |
+| Obsidian visuals and accessibility | Root inspected dark/light desktop screenshots at 1440×1000 and mobile web at 390×844. Light-library accessibility scan reported zero violations; six gradient-text contrast checks were inconclusive automatically and received visual review. Known contrast defects were fixed. These web checks do not substitute for native iOS screenshots or VoiceOver/device testing. |
 
-## Required real-system gates
+Real-engine timings above are individual smoke measurements, not comparative benchmarks. Omission/repetition accuracy, long-form voice consistency and quality rankings require a larger listening evaluation.
 
-- Clean Windows installation and launcher works without a developer environment. Test tray lifecycle, updates, companion identity and engine installation.
-- Real Kokoro and Qwen narration on installed Windows hardware: measure omissions/repetitions, pronunciation, voice consistency, generation speed and memory. Confirm no silent substitution.
-- Interrupt a complete book render, restart the PC/companion, and verify every required segment appears once in final exports.
-- Inspect actual simulator screenshots in dark/light and cream reader modes, small/large devices and enlarged text. Compilation alone is insufficient.
-- Download the exact published release IPA, verify checksum and structure locally, and record its release URL and verification report.
-- Physical iPhone: LiveContainer import, Files import, Keychain persistence, offline opening, Bluetooth controls, incoming interruption, reconnection, and at least one hour of screen-locked playback.
+## Windows distribution and reproducibility
 
-All real-system gates are **NOT RUN** until an evidence entry records an actual result. CI runs only on standard GitHub-hosted runners. Pull requests cannot access private secrets or the user's computer.
+- The application includes its own checksum-pinned official CPython 3.12.10 runtime and built studio. It needs no preinstalled Python, Node.js, Git or developer tools.
+- [Hosted run 37041629940](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37041629940) compiled the unsigned per-user Inno installer, installed it into an isolated runner directory and passed installed-runtime checks. The downloaded installer and portable ZIP matched the CI SHA256 files.
+- [Hosted run 37042076790](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37042076790) additionally passed the real windowless tray-launch gate. Smoke removes developer tools from PATH, verifies API health, built-studio serving, library authentication, relocated-runtime engine virtual-environment creation and FFmpeg execution. Local Windows tray-launch smoke also passed.
+- FFmpeg downloads directly from its upstream publisher during setup with a pinned SHA256. Our installer excludes downloaded FFmpeg binaries. Upstream LGPL license and provenance remain with the installed tools; Python and package notices remain in the bundle. Initial setup requires internet. Installers are not code-signed.
+- `companion/uv.lock` resolves universal Python >=3.11 dependencies, preserving Windows-only markers. Production/test exports include hashes. CI checks exports for drift, installs with `--require-hashes`, then installs app code with `--no-deps --no-build-isolation`. Build tooling is separately hash-locked. Optional speech models use isolated environments and separate licenses.
+- Lock-based installer [run 37042794635](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37042794635) passed installation and actual tray launch. Cross-platform [run 37042795777](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37042795777) passed Windows, Ubuntu and studio checks. Every release must rebuild after final application changes.
 
-## Evidence — 2026-10-02
+CI uses standard GitHub-hosted runners. Untrusted pull requests have no access to private credentials or the user's computer. Local validation data, generated speech and screenshots remain excluded from public source.
 
-Windows project environment: 31 tests passed across companion/tests and tests, with one upstream Starlette TestClient deprecation warning. FFmpeg/FFprobe executed actual normalization and encoding; no speech engine or cloned voice was used. GitHub workflow YAML parsed locally; cloud execution has not yet been observed. Public-source preflight passed.
+## iOS and release gates still open
 
+- Run native unit/UI tests, including shared contract parsing and scalar-to-UTF16 mapping; inspect actual simulator screenshots across dark/light/cream reader modes, small/large devices and enlarged text.
+- Verify original EPUB formatting, Files/share import, bookmarks/highlights/search, persistent position across font changes/rotation/relaunch and PC-independent offline reading.
+- Verify phone certificate pinning, Keychain persistence, interrupted-download recovery, checksum checks, original-text alignment and offline listening.
+- Build a real unsigned iPhoneOS ARM64 IPA. The verifier's rejection tests pass, but a simulator build is not a device package. Download the published IPA, compare its SHA256 and inspect archive/executable metadata before release handoff.
+- Physical iPhone: LiveContainer installation, Files import, Keychain persistence, Bluetooth/lock-screen controls, interruptions/reconnection and at least one hour of screen-locked playback remain unverified.
 
+## Remaining product-level validation
 
-## Windows package verification - 2026-10-02
+- Novel-length rendering, actual PC sleep/power-cycle recovery, disk exhaustion, model memory pressure, cancellation during real synthesis and consistent voice quality across chapters.
+- Real LLM attribution across ambiguous/nested dialogue and aliases, user-review preservation during analysis, and full multi-voice listening evaluation. Current source-span/privacy/cache tests and manual cast UI checks cover only their stated boundaries.
+- Optional migration from old applications: original source preservation, private voice/reference handling and explicit exact/approximate/unmatched recording mapping require final real-data validation.
+- Installer upgrades/uninstall data preservation and production connection behavior on a second clean Windows machine require final checks. Hosted fresh installation and actual tray startup are already verified.
 
-A portable Windows package was built using checksum-pinned official CPython 3.12.10 with companion dependencies and the built studio. `scripts/smoke_windows.py` passed using only this runtime with developer tools removed from PATH: API health, studio serving, protected library access, relocated-runtime engine virtual-environment creation and verified FFmpeg execution. No actual speech model was installed during this package smoke.
-
-`windows-package.yml` builds a per-user Inno Setup installer and installs it into an isolated directory on a standard Windows runner before repeating that smoke. Installer execution is pending until its workflow evidence is recorded. The app is unsigned. FFmpeg is downloaded directly from its upstream publisher during setup using a fixed SHA256; our installer excludes downloaded media binaries. Python/package notices are retained, and installed FFmpeg retains its LGPL license and provenance.
-
-Current local combined suite: 38 passing tests. Full-cast privacy opt-in, scalar-span validation and selective rerender cache tests now pass. This does not prove actual LLM attribution quality or real multi-voice speech quality.
-
-Windows hosted installer gate passed: run `37041629940` compiled the unsigned Inno installer, installed it into an isolated directory, downloaded verified upstream media tools and passed installed-runtime checks. The downloaded installer and portable ZIP hashes matched their CI SHA256 files. A subsequent local smoke also exercised the actual pythonw tray launcher with isolated state and confirmed production studio serving; this launcher check is now part of CI smoke.
-
-Hosted run `37042076790` also passed installation plus the actual windowless tray-launch gate. Windows runtime dependency versions are now constrained to that tested package inventory in `scripts/windows-constraints.txt`; the official Python and upstream FFmpeg archives remain SHA256-pinned. Rebuild the installer after subsequent application changes before publishing a release.
-
-Reproducible core dependencies now use `companion/uv.lock` (universal Python >=3.11), hash-checked `companion/requirements.lock`, and `tests/requirements-test.lock`. The Windows-only constraint file was superseded. CI verifies exports agree with the uv lock, installs hash-checked dependencies and build tools, then installs app code with dependency/build isolation disabled to prevent implicit resolution. Windows packaging uses the same production hash lock. Local locked environment: 39 tests passed, public preflight passed.
