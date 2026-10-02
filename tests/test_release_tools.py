@@ -85,3 +85,25 @@ def test_privacy_preflight_detects_unapproved_recording(tmp_path, monkeypatch):
     auditor = module("public_preflight")
     monkeypatch.setattr(auditor.subprocess, "check_output", lambda *a, **k: b"private.wav\0")
     assert "non-fixture" in auditor.audit(tmp_path)[0]
+
+
+def test_media_setup_verifies_checksum_before_installing(tmp_path):
+    setup = module("setup_media")
+    archive = tmp_path / "media.zip"
+    with zipfile.ZipFile(archive, "w") as output:
+        output.writestr("upstream/bin/ffmpeg.exe", b"test binary fixture only")
+        output.writestr("upstream/bin/ffprobe.exe", b"test binary fixture only")
+        output.writestr("upstream/LICENSE.txt", "Test license fixture")
+    config = tmp_path / "runtime.json"
+    spec = {"sha256": "0" * 64, "url": "https://unreachable.invalid/test.zip"}
+    config.write_text(json.dumps({"ffmpeg": spec}))
+    destination = tmp_path / "tools"
+    with pytest.raises(ValueError, match="checksum"):
+        setup.install(destination, config, archive)
+    assert not list(destination.iterdir())
+    spec["sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    config.write_text(json.dumps({"ffmpeg": spec}))
+    setup.install(destination, config, archive)
+    assert (destination / "FFmpeg-LICENSE.txt").read_text() == "Test license fixture"
+    assert (destination / "ffmpeg.exe").read_bytes() == b"test binary fixture only"
+    assert json.loads((destination / "ffmpeg-provenance.json").read_text())["sha256"] == spec["sha256"]

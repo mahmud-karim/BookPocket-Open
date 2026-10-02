@@ -51,7 +51,24 @@ def run(bundle, report):
             child = temp / "engine-probe/Scripts/python.exe"
             version = subprocess.check_output([str(child), "-I", "-c", "import sys;print(sys.version.split()[0])"], text=True, env=env).strip()
             ffmpeg = subprocess.check_output([str(bundle / "tools/ffmpeg.exe"), "-version"], text=True, env=env).splitlines()[0]
-            result = {"runtime_version": version, "health": health, "studio_served": True, "library_requires_auth": True, "engine_venv_created": True, "ffmpeg": ffmpeg, "code_signed": False, "real_model_generation": "NOT TESTED", "physical_device": "NOT TESTED"}
+            # Exercise the actual windowless tray entry point and its production listeners.
+            gui_env = dict(env)
+            gui_env["LOCALAPPDATA"] = str(temp / "profile")
+            gui_port, gui_studio = port(), port()
+            gui = subprocess.Popen([str(bundle / "runtime/pythonw.exe"), "-I", str(bundle / "launcher.py"), "--no-browser", "--port", str(gui_port), "--studio-port", str(gui_studio), "--data-dir", str(temp / "gui-data")], env=gui_env, creationflags=subprocess.CREATE_NO_WINDOW)
+            try:
+                for _ in range(100):
+                    if gui.poll() is not None: raise RuntimeError("Windowless tray launcher exited")
+                    try:
+                        with urllib.request.urlopen(f"http://127.0.0.1:{gui_studio}/v1/health", timeout=1) as response:
+                            assert json.load(response)["api_version"] == "1"
+                        break
+                    except OSError: time.sleep(.2)
+                else: raise RuntimeError("Windowless tray launcher did not serve the studio")
+            finally:
+                gui.terminate()
+                gui.wait(timeout=15)
+            result = {"runtime_version": version, "health": health, "studio_served": True, "windowless_tray_launcher": True, "library_requires_auth": True, "engine_venv_created": True, "ffmpeg": ffmpeg, "code_signed": False, "real_model_generation": "NOT TESTED", "physical_device": "NOT TESTED"}
             report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             print(json.dumps(result, indent=2))
         finally:
@@ -65,3 +82,4 @@ if __name__ == "__main__":
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     run(args.bundle.resolve(), args.report)
+
