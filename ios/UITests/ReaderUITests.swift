@@ -49,7 +49,7 @@ final class ReaderUITests: XCTestCase {
                 guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
                     bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
-                context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+                context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
                 let bytes = buffer.bindMemory(to: UInt8.self)
                 return stride(from: 0, to: bytes.count, by: 4).reduce(0) { result, index in
                     result + (bytes[index] < 140 && bytes[index + 1] < 140 && bytes[index + 2] < 140 && bytes[index + 3] > 200 ? 1 : 0)

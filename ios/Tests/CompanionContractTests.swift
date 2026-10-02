@@ -41,4 +41,27 @@ final class CompanionContractTests: XCTestCase {
         XCTAssertNotNil(json["narration_plan"])
         XCTAssertNil(json["narrationPlan"])
     }
+
+    @MainActor func testUncertainNewTakeSubmissionSurvivesRestartWithoutDuplicate() async throws {
+        struct Fixture: Decodable { var book: RemoteBook }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "contract-v1", withExtension: "json"))
+        let book = try CompanionClient.decoder.decode(Fixture.self, from: Data(contentsOf: url)).book
+        let voice = try CompanionClient.decoder.decode(RemoteVoice.self, from: Data(#"{"id":"voice-test","name":"Test","engine":"kokoro","kind":"preset","language":"en"}"#.utf8))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let takeID = UUID().uuidString.lowercased()
+        let first = CompanionStore(root: folder)
+        do {
+            try await first.generate(book: book, segments: book.segments.map(\.id), voice: voice, rules: [], announce: false, takeID: takeID)
+            XCTFail("Submission without a companion must remain pending")
+        } catch {}
+        let original = try XCTUnwrap(first.pendingRequests.first)
+        let restarted = CompanionStore(root: folder)
+        XCTAssertEqual(restarted.pendingRequests.first?.takeId, takeID)
+        do { try await restarted.generate(book: book, segments: book.segments.map(\.id), voice: voice, rules: [], announce: false, takeID: takeID) } catch {}
+        XCTAssertEqual(restarted.pendingRequests.count, 1)
+        XCTAssertEqual(restarted.pendingRequests.first?.requestId, original.requestId)
+        do { try await restarted.generate(book: book, segments: book.segments.map(\.id), voice: voice, rules: [], announce: false, takeID: UUID().uuidString.lowercased()) } catch {}
+        XCTAssertEqual(restarted.pendingRequests.count, 2, "A deliberate new take must keep its own identity")
+    }
 }

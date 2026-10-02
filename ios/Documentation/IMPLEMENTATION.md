@@ -18,6 +18,8 @@ The scoped `NSAllowsLocalNetworking` declaration permits this local self-signed 
 
 Submission request IDs are persisted before sending; an uncertain request can be retried without creating a duplicate job. Completed downloads are checked against bytes and SHA-256 and saved atomically. Repeating download continues from completed assets after app termination; an incomplete individual asset is downloaded again. Playback remains offline.
 
+The PC library can download preserved EPUB/TXT originals into the offline phone library with source checksum verification. Migrated recordings remain separate legacy takes with an explicit no-synchronized-text label; they never receive fabricated timings. Deliberate new takes carry their own UUID through uncertain submission retries. Imported pronunciation rules are available when creating narration.
+
 Readium Apple speech synthesis produces text locators; downloaded narration maps Unicode scalar timing offsets into source text, falling back to passage-level highlighting when timing is unavailable. Voice samples can be trimmed/previewed on-device and are uploaded only to the paired companion.
 
 Full-cast analysis is configured on the PC. Phone analysis requires explicit hosted opt-in. Speaker assignments use source ranges and never replacement text. Manual assignments use native text selection; unreviewed suggestions block rendering unless the user chooses narrator fallback.
@@ -26,7 +28,7 @@ Full-cast analysis is configured on the PC. Phone analysis requires explicit hos
 
 Run `xcodegen generate` in this directory, then `xcodebuild test -project BookPocketOpen.xcodeproj -scheme BookPocketOpen -destination 'platform=iOS Simulator,id=DEVICE_ID' CODE_SIGNING_ALLOWED=NO`.
 
-Unit tests cover TXT source preservation and deduplication, SQLite restart persistence, contract decoding, Unicode scalars, and HTTPS/resource validation. UI tests import an original synthetic EPUB, open the native reader, inspect contents, and retain screenshots. These are useful boundaries; they do not prove full on-device behavior.
+Unit tests cover TXT source preservation and deduplication, SQLite restart persistence, durable new-take submission identity, contract decoding, Unicode scalars, and HTTPS/resource validation. UI tests import an original synthetic EPUB, require actual painted text pixels in the native reader, navigate chapters, reopen at the saved chapter, and retain screenshots. These are useful boundaries; they do not prove full on-device behavior.
 
 Required physical iPhone gates remain LiveContainer import, Keychain persistence, Files handoff, camera pairing, Bluetooth/interruption handling, and an hour of screen-locked playback. Real companion and voice-engine generation also require connected integration evidence. Do not claim these from simulator or compile results.
 
