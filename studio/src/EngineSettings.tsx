@@ -126,6 +126,7 @@ export function EngineList({ engines }: { engines: Engine[] }) {
 export function AnalyzerSettings() {
   const [url, setURL] = useState("");
   const [model, setModel] = useState("");
+  const [outputLimit, setOutputLimit] = useState(4096);
   const [key, setKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
   const [clearKey, setClearKey] = useState(false);
@@ -138,11 +139,13 @@ export function AnalyzerSettings() {
       url?: string;
       model?: string;
       has_api_key?: boolean;
+      max_output_tokens?: number;
     }>("/v1/admin/analyzer")
       .then((s) => {
         setURL(s.url ?? "");
         setModel(s.model ?? "");
         setHasKey(!!s.has_api_key);
+        setOutputLimit(s.max_output_tokens ?? 4096);
       })
       .catch((e) => setError(e.message));
   }, []);
@@ -158,6 +161,7 @@ export function AnalyzerSettings() {
         body: JSON.stringify({
           url,
           model,
+          max_output_tokens: outputLimit,
           ...(clearKey ? { api_key: "" } : key ? { api_key: key } : {}),
         }),
       });
@@ -215,6 +219,25 @@ export function AnalyzerSettings() {
             onChange={(e) => setKey(e.target.value)}
           />
         </label>
+        <details>
+          <summary>Advanced model settings</summary>
+          <label>
+            Maximum response tokens
+            <input
+              type="number"
+              min="256"
+              max="16384"
+              step="1"
+              required
+              value={outputLimit}
+              onChange={(e) => setOutputLimit(Number(e.target.value))}
+            />
+            <span className="field-help">
+              Increase this if analysis stops before finishing its answer. Keep
+              enough room in your model’s context for the book passages.
+            </span>
+          </label>
+        </details>
         {hasKey && (
           <label className="checkbox">
             <input
