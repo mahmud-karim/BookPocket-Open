@@ -5,8 +5,23 @@ import AVFoundation
 
 struct NativeReader: UIViewControllerRepresentable {
     let navigator: EPUBNavigatorViewController
-    func makeUIViewController(context: Context) -> EPUBNavigatorViewController { navigator }
-    func updateUIViewController(_ controller: EPUBNavigatorViewController, context: Context) {}
+    let onHighlight: () -> Void
+    func makeUIViewController(context: Context) -> ReaderContainer { ReaderContainer(navigator: navigator, onHighlight: onHighlight) }
+    func updateUIViewController(_ controller: ReaderContainer, context: Context) {}
+}
+
+final class ReaderContainer: UIViewController {
+    let navigator: EPUBNavigatorViewController
+    let onHighlight: () -> Void
+    init(navigator: EPUBNavigatorViewController, onHighlight: @escaping () -> Void) { self.navigator = navigator; self.onHighlight = onHighlight; super.init(nibName: nil, bundle: nil) }
+    required init?(coder: NSCoder) { fatalError("Not supported") }
+    override func viewDidLoad() {
+        super.viewDidLoad(); addChild(navigator); view.addSubview(navigator.view)
+        navigator.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([navigator.view.leadingAnchor.constraint(equalTo: view.leadingAnchor), navigator.view.trailingAnchor.constraint(equalTo: view.trailingAnchor), navigator.view.topAnchor.constraint(equalTo: view.topAnchor), navigator.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
+        navigator.didMove(toParent: self)
+    }
+    @objc func highlightSelection(_ sender: Any?) { onHighlight() }
 }
 
 struct ReaderView: View {
@@ -23,7 +38,7 @@ struct ReaderView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let navigator = model.navigator { NativeReader(navigator: navigator).accessibilityIdentifier("reader.publication") }
+                if let navigator = model.navigator { NativeReader(navigator: navigator, onHighlight: { model.addAnnotation(highlight: true) }).accessibilityIdentifier("reader.publication") }
                 else if model.loading { ProgressView("Opening book…") }
                 else { ContentUnavailableView("Unable to open book", systemImage: "book.closed", description: Text(model.error ?? "Try importing the book again.")) }
             }
@@ -49,8 +64,8 @@ struct ReaderView: View {
                     Button {
                         if player.bookID == model.bookID, player.isPlaying { player.pause() }
                         else if let pub = model.publication, let book = model.book {
-                            model.connectPlayback(player)
                             player.speak(publication: pub, book: book, from: model.navigator?.currentLocation)
+                            model.connectPlayback(player)
                         }
                     } label: { Label(player.isPlaying && player.bookID == model.bookID ? "Pause" : "Read aloud", systemImage: player.isPlaying && player.bookID == model.bookID ? "pause.fill" : "headphones") }
                     .accessibilityIdentifier("reader.speak")

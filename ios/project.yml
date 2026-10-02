@@ -37,6 +37,7 @@ targets:
         NSCameraUsageDescription: Scan the pairing code displayed by your audiobook companion.
         CFBundleDocumentTypes:
           - CFBundleTypeName: Electronic book
+            CFBundleTypeRole: Viewer
             LSHandlerRank: Alternate
             LSItemContentTypes: [org.idpf.epub-container, public.plain-text]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]

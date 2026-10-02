@@ -26,6 +26,15 @@ struct ListenView: View {
                             Spacer()
                             Menu { Button("Off") { player.sleep(minutes: nil) }; ForEach([5, 15, 30, 45, 60], id: \.self) { minutes in Button("\(minutes) minutes") { player.sleep(minutes: minutes) } } } label: { Label(player.sleepUntil == nil ? "Sleep timer" : "Timer set", systemImage: "moon") }
                         }.padding(.horizontal, 20)
+                        if let current = companion.downloads.first(where: { $0.id == book.audioAssetID }), let remote = companion.books.first(where: { $0.id == companion.jobs.first(where: { $0.id == current.jobID })?.bookId }) {
+                            Menu("Chapters", systemImage: "list.bullet") {
+                                ForEach(remote.chapters) { chapter in
+                                    if let record = companion.orderedDownloads(jobID: current.jobID).first(where: { record in chapter.segments.contains { $0.id == record.asset.segmentId } }) {
+                                        Button(chapter.title) { companion.play(record, library: library, player: player) }
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         ContentUnavailableView("Your next listening chapter", systemImage: "headphones", description: Text("Open a book and choose Read aloud. Generated narration downloaded from your PC also plays here."))
                     }
@@ -34,7 +43,7 @@ struct ListenView: View {
                             Text("Downloaded narration").font(.title2.bold())
                             ForEach(Array(Set(companion.downloads.map(\.jobID))).sorted(), id: \.self) { jobID in
                                 if let first = companion.orderedDownloads(jobID: jobID).first, let book = library.book(first.localBookID) {
-                                    Button { companion.play(first, library: library, player: player) } label: {
+                                    Button { if let record = companion.resumeRecord(jobID: jobID, library: library) { companion.play(record, library: library, player: player) } } label: {
                                         HStack(spacing: 14) {
                                             BookCover(book: book, url: library.cover(book)).frame(width: 46)
                                             VStack(alignment: .leading, spacing: 4) { Text(book.title).font(.headline).foregroundStyle(.primary); Text("\(companion.orderedDownloads(jobID: jobID).count) passages · Available offline").font(.caption).foregroundStyle(.secondary) }

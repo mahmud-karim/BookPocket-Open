@@ -85,7 +85,7 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     func toggle() { isPlaying ? pause() : resume() }
     func pause() { speech?.pause(); player?.pause(); isPlaying = false; nowPlaying() }
     func resume() { speech?.resume(); if let player { isPlaying = player.play() }; nowPlaying() }
-    func stop() { speech?.stop(); speech = nil; player?.stop(); player = nil; tickTask?.cancel(); isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; nowPlaying() }
+    func stop() { speech?.stop(); speech = nil; player?.stop(); player = nil; tickTask?.cancel(); isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; nowPlaying() }
     func skip(_ seconds: Double) { if let player { seek(player.currentTime + seconds) } else if seconds > 0 { speech?.next() } else { speech?.previous() } }
     func seek(_ value: Double) { guard let player else { return }; player.currentTime = min(max(0, value), player.duration); elapsed = player.currentTime; onProgress?(elapsed); nowPlaying() }
     func sleep(minutes: Int?) {
@@ -102,6 +102,7 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
     func publicationSpeechSynthesizer(_ synthesizer: PublicationSpeechSynthesizer, stateDidChange state: PublicationSpeechSynthesizer.State) {
+        guard synthesizer === speech else { return }
         switch state {
         case .stopped: isPlaying = false
         case .paused: isPlaying = false
@@ -109,6 +110,6 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
         }
         nowPlaying()
     }
-    func publicationSpeechSynthesizer(_ synthesizer: PublicationSpeechSynthesizer, utterance: PublicationSpeechSynthesizer.Utterance, didFailWithError error: PublicationSpeechSynthesizer.Error) { self.error = "Speech failed: \(error)"; pause() }
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { Task { @MainActor in self.isPlaying = false; self.nowPlaying(); if flag { self.onFinished?() } else { self.error = "Audio playback could not finish." } } }
+    func publicationSpeechSynthesizer(_ synthesizer: PublicationSpeechSynthesizer, utterance: PublicationSpeechSynthesizer.Utterance, didFailWithError error: PublicationSpeechSynthesizer.Error) { guard synthesizer === speech else { return }; self.error = "Speech failed: \(error)"; pause() }
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { Task { @MainActor in guard player === self.player else { return }; self.isPlaying = false; self.nowPlaying(); if flag { self.onFinished?() } else { self.error = "Audio playback could not finish." } } }
 }

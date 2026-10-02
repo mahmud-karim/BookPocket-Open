@@ -1,5 +1,6 @@
 import XCTest
 import ReadiumShared
+import ReadiumZIPFoundation
 @testable import BookPocketOpen
 
 final class LibraryTests: XCTestCase {
@@ -39,5 +40,17 @@ final class LibraryTests: XCTestCase {
         XCTAssertTrue(text?.contains("Read & preserve <every> word.") == true)
         publication.close()
         XCTAssertEqual(LibraryStore(root: folder.appendingPathComponent("Library")).books.first?.id, book.id)
+    }
+    @MainActor func testImportRejectsTraversalBeforeOpeningPublication() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("test.txt")
+        try Data("not a publication".utf8).write(to: source)
+        let url = folder.appendingPathComponent("unsafe.epub")
+        let archive = try await Archive(url: url, accessMode: .create)
+        try await archive.addEntry(with: "../outside.txt", fileURL: source)
+        do { try await PublicationService.validateArchive(url); XCTFail("Archive traversal must be rejected") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("unsafe")) }
     }
 }

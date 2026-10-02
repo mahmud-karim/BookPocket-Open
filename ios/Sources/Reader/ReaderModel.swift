@@ -22,7 +22,8 @@ import UIKit
         do {
             let publication = try await library.publications.open(library.file(book))
             self.publication = publication
-            let navigator = try EPUBNavigatorViewController(publication: publication, initialLocation: book.locator, config: .init(preferences: preferences()))
+            let actions = EditingAction.defaultActions + [EditingAction(title: "Highlight", action: #selector(ReaderContainer.highlightSelection(_:)))]
+            let navigator = try EPUBNavigatorViewController(publication: publication, initialLocation: book.locator, config: .init(preferences: preferences(), editingActions: actions))
             navigator.delegate = self
             self.navigator = navigator
             location = book.locator

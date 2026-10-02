@@ -57,7 +57,7 @@ struct StudioView: View {
                         Text("On this device").font(.title2.bold())
                         ForEach(Array(Set(companion.downloads.map(\.jobID))).sorted(), id: \.self) { id in
                             if let first = companion.orderedDownloads(jobID: id).first, let book = library.book(first.localBookID) {
-                                Button { companion.play(first, library: library, player: player) } label: { Label("\(book.title) · \(companion.orderedDownloads(jobID: id).count) passages", systemImage: "play.circle.fill") }.padding(.vertical, 8)
+                                Button { if let record = companion.resumeRecord(jobID: id, library: library) { companion.play(record, library: library, player: player) } } label: { Label("\(book.title) · \(companion.orderedDownloads(jobID: id).count) passages", systemImage: "play.circle.fill") }.padding(.vertical, 8)
                             }
                         }
                     }
@@ -107,7 +107,16 @@ struct StudioView: View {
                     Button(companion.downloading == job.id ? "Downloading…" : "Download", systemImage: "arrow.down.circle") { Task { await companion.download(job, localBook: local) } }.disabled(companion.downloading != nil)
                 }
                 if job.status == "completed" {
-                    Menu("Export", systemImage: "square.and.arrow.up") { ForEach(["m4b", "mp3", "project"], id: \.self) { format in Button(format == "project" ? "Production archive" : format.uppercased()) { Task { do { exportURL = try await companion.export(job, format: format) } catch { companion.error = error.localizedDescription } } } }.disabled(companion.exporting)
+                    Menu("Export", systemImage: "square.and.arrow.up") {
+                        ForEach(["m4b", "mp3", "project"], id: \.self) { format in
+                            Button(format == "project" ? "Production archive" : format.uppercased()) {
+                                Task {
+                                    do { exportURL = try await companion.export(job, format: format) }
+                                    catch { companion.error = error.localizedDescription }
+                                }
+                            }
+                        }
+                    }.disabled(companion.exporting)
                 }
             }.font(.subheadline)
         }.padding(18).background(Obsidian.surface, in: .rect(cornerRadius: 16))

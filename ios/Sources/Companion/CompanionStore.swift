@@ -161,7 +161,12 @@ import ReadiumZIPFoundation
         guard var book = library.book(record.localBookID) else { error = "Import the original book to read alongside this narration."; return }
         do {
             let offset = book.audioAssetID == record.id ? book.audioSeconds : 0
+            let currentFollow = player.bookID == book.id ? player.onLocator : nil
             try player.play(url: root.appendingPathComponent(record.file), book: book, start: offset)
+            var locationSaved = Date.distantPast
+            player.onLocator = currentFollow ?? { [weak library] locator in
+                if Date().timeIntervalSince(locationSaved) >= 3 { library?.saveLocation(record.localBookID, locator: locator); locationSaved = Date() }
+            }
             book.audioAssetID = record.id; library.update(book)
             var lastSaved = -5.0
             player.onProgress = { [weak library, weak player] seconds in
@@ -186,6 +191,11 @@ import ReadiumZIPFoundation
     func orderedDownloads(jobID: String) -> [DownloadRecord] {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return downloads.filter { $0.jobID == jobID } }
         return job.segmentIds.compactMap { id in downloads.first { $0.jobID == jobID && $0.asset.segmentId == id } }
+    }
+    func resumeRecord(jobID: String, library: LibraryStore) -> DownloadRecord? {
+        let sequence = orderedDownloads(jobID: jobID)
+        guard let first = sequence.first, let book = library.book(first.localBookID) else { return sequence.first }
+        return sequence.first { $0.id == book.audioAssetID } ?? first
     }
     func export(_ job: RemoteJob, format: String) async throws -> URL {
         guard let client else { throw BookError.message("Connect to your companion first.") }
