@@ -29,7 +29,10 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install ffmpeg -y --no-progress
       - run: ffmpeg -version
-      - run: python -m pip install -e './companion[test]'
+      - run: python -m pip install uv==0.12.22
+      - run: python scripts/verify_locks.py
+      - run: python -m pip install --require-hashes -r tests/requirements-test.lock -r scripts/build-requirements.lock
+      - run: python -m pip install --no-deps --no-build-isolation -e ./companion
       - run: python scripts/public_preflight.py
       - run: python -m pytest companion/tests tests -q --junitxml=test-results.xml
       - if: always()
@@ -52,4 +55,5 @@ jobs:
         working-directory: studio
       - run: npm run build
         working-directory: studio
+
 
