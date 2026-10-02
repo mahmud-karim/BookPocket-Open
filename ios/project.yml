@@ -1,0 +1,81 @@
+name: BookPocketOpen
+options:
+  bundleIdPrefix: org.bookpocket
+  deploymentTarget:
+    iOS: '18.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    TARGETED_DEVICE_FAMILY: '1,2'
+    CODE_SIGNING_ALLOWED: NO
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+packages:
+  Readium:
+    url: https://github.com/readium/swift-toolkit.git
+    exactVersion: 3.11.0
+  ZIPFoundation:
+    url: https://github.com/readium/ZIPFoundation.git
+    exactVersion: 3.0.1
+targets:
+  BookPocketOpen:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    resources:
+      - Resources
+      - path: ../tests/fixtures/lantern.epub
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: Book Pocket Open
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSLocalNetworkUsageDescription: Connect to your paired audiobook companion to generate and download narration.
+        NSCameraUsageDescription: Scan the pairing code displayed by your audiobook companion.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Electronic book
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [org.idpf.epub-container, public.plain-text]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.bookpocket.open
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: Readium
+        product: ReadiumShared
+      - package: Readium
+        product: ReadiumStreamer
+      - package: Readium
+        product: ReadiumNavigator
+      - package: ZIPFoundation
+        product: ReadiumZIPFoundation
+      - sdk: libsqlite3.tbd
+  BookPocketOpenTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: BookPocketOpen
+  BookPocketOpenUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: BookPocketOpen
+schemes:
+  BookPocketOpen:
+    build:
+      targets:
+        BookPocketOpen: all
+    test:
+      targets: [BookPocketOpenTests, BookPocketOpenUITests]

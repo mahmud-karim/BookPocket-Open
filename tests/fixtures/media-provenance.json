@@ -1,0 +1,8 @@
+{
+  "license": "Apache-2.0",
+  "purpose": "Original test fixtures; tone is not speech",
+  "sha256": {
+    "lantern.epub": "0288b0a02f6ab1109907870788de1f54e13b268e6daeb2768b9575630fcde436",
+    "test-tone.wav": "ec78298f766e6cf2a694ff8ba6904b79b0b4208731e9ee5ca7ba77e9c165e8a0"
+  }
+}

@@ -1,0 +1,21 @@
+Book Pocket Open
+Copyright 2026 Book Pocket Open contributors
+
+Original project source is licensed under Apache License 2.0.
+
+Third-party dependencies retain their own licenses, including Readium Swift Toolkit,
+ReadiumZIPFoundation, Swift dependencies resolved by Xcode, React, Vite, Lucide,
+QRCode, FastAPI, Uvicorn, cryptography, SQLite bindings, and Python dependencies.
+Consult the dependency distributions and resolved manifests for exact notices.
+
+DM Sans and Literata font files are distributed by Fontsource under the SIL Open
+Font License. Their license text accompanies their installed npm packages.
+
+Kokoro and Qwen3-TTS model weights and runtime packages are optional separate
+downloads. Their upstream licenses apply. They are not relicensed by this project.
+Optional external VoiceStudio integration communicates through its API; no
+VoiceStudio AGPL source is included. OmniVoice weights have separate noncommercial
+terms and are not the default redistributable model for this project.
+
+The test EPUB and text contain original fixture prose. The waveform fixture is
+deterministically generated test audio, not synthesized speech or a voice sample.

@@ -1,0 +1,60 @@
+# Book Pocket Open
+
+A local-first EPUB reader and audiobook studio. Read on iPhone, generate narration on your Windows PC, and keep your original books and audio.
+
+**Development preview.** The first implementation is under active integration. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and outstanding device checks. Do not interpret the feature scope below as a completed release.
+
+## The experience
+
+- Native SwiftUI iOS reader using Readium: EPUB and text import, offline books, reading preferences, navigation, bookmarks, highlights, and Apple text-to-speech.
+- Windows companion and an Obsidian desktop studio: local library, durable narration jobs, voice collection, device approval, and audio exports.
+- Managed Kokoro preset narration and Qwen3-TTS voice cloning, installed separately. Optional integration with an existing VoiceStudio service.
+- Full-cast narration from exact source passages, with editable voices and explicit review of model suggestions.
+- No reading account. Original files, model runtimes, credentials, and audio stay outside the source checkout.
+
+The interface uses charcoal, graphite, warm white, and restrained champagne accents, with coordinated light mode and independent reader backgrounds.
+
+## Develop on Windows
+
+Requirements: Python 3.11 or later, Node.js 22.12 or later, and FFmpeg/FFprobe on PATH for audio export. Model environments are separate from the application environment; their installers report actual readiness after a synthesis probe.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e './companion[test]'
+cd studio
+npm ci
+npm run build
+cd ..
+.\.venv\Scripts\bookpocket.exe serve --tray
+```
+
+The launcher opens the authenticated studio on loopback HTTP port 8782. The phone endpoint uses HTTPS on port 8783 with a locally generated certificate pinned during pairing. Keep the studio launcher link private. Pairings require approval on the PC. Use `--public-url https://YOUR-PC:8783` when automatic LAN address selection does not match the network your phone uses.
+
+For UI development, run `npm run dev` in `studio` and launch the companion in development mode on the proxy port:
+
+```powershell
+.\.venv\Scripts\bookpocket.exe serve --dev --port 8782
+```
+
+Development mode is loopback-only. Open the studio with the launcher's session credential; do not place it in source files, screenshots, or issue reports.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest companion/tests tests
+cd studio
+npm test
+npm run build
+```
+
+## iOS builds
+
+The native app targets iOS 18+. On a Mac with Xcode and XcodeGen, run `xcodegen generate` in `ios`, open `BookPocketOpen.xcodeproj`, and select the `BookPocketOpen` scheme. GitHub Actions runs simulator tests before creating a verified unsigned iPhoneOS ARM64 IPA. Unsigned packages require a compatible sideloading workflow; they are not App Store installations. Physical iPhone playback and sideload checks are recorded separately from CI.
+
+## Architecture and scope
+
+[Product plan](docs/PRODUCT.md) · [API contract](docs/CONTRACT.md) · [Verification](docs/VERIFICATION.md)
+
+Text identities refer to immutable source passages. Font changes and pagination do not change narration identities. Pronunciation substitutions affect synthesis only. Jobs persist in SQLite and cache individual passages so retries can reuse completed audio. Speech timing precision is explicitly reported; sentence timings are not represented as word alignment.
+
+## License
+
+Original project code is Apache-2.0. Dependencies and model weights keep their own licenses; see [NOTICE](NOTICE). Model downloads are optional and are not included in this repository. The synthetic test book is original project fixture text. Voice references and books must be supplied by the user.

@@ -1,0 +1,133 @@
+"""Clean adapters. Model dependencies live in separate environments."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import httpx
+
+
+def python_in(root):
+    return root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+class ManagedEngine:
+    def __init__(self, root, engine_id):
+        self.id = engine_id
+        self.root = root / engine_id
+        self.python = python_in(self.root / "venv")
+        self.version = "1"
+        self.process = None
+        self.log_handle = None
+
+    def info(self):
+        available = self.python.exists() and (self.root / "ready.json").exists()
+        return {"id": self.id, "name": "Kokoro" if self.id == "kokoro" else "Qwen3 TTS 0.6B",
+                "available": available, "supports_cloning": self.id == "qwen3",
+                "languages": ["en"], "license": "Apache-2.0",
+                "reason": None if available else "Install and validate this engine in Settings"}
+
+    def voices(self):
+        if self.id != "kokoro" or not self.info()["available"]: return []
+        return [{"id": "kokoro:" + name, "name": label, "engine": "kokoro", "kind": "preset", "language": "en", "created_at": "2025-01-27T00:00:00Z"}
+                for name, label in [("af_heart", "Heart"), ("af_bella", "Bella"), ("am_adam", "Adam"), ("bm_george", "George")]]
+
+    def synthesize(self, text, voice, output, language="en"):
+        if not self.info()["available"]: raise RuntimeError("The selected model is not installed and validated")
+        payload = {"engine": self.id, "text": text, "voice": voice, "output": str(output), "language": language}
+        if not self.process or self.process.poll() is not None:
+            self.close()
+            self.log_handle = (self.root / "generation.log").open("a", encoding="utf-8")
+            self.process = subprocess.Popen([str(self.python), "-u", str(Path(__file__).with_name("engine_worker.py"))], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=self.log_handle, text=True, encoding="utf-8", env=self.environment())
+        self.process.stdin.write(json.dumps(payload) + "\n")
+        self.process.stdin.flush()
+        # One worker exclusively owns this subprocess; read in a bounded future to recover a hung model.
+        import concurrent.futures
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self.process.stdout.readline)
+        try:
+            line = future.result(timeout=1800)
+            if not line: raise RuntimeError("Engine process stopped; inspect the local generation log")
+            result = json.loads(line)
+            if not result.get("ok"): raise RuntimeError(result.get("error", "Engine generation failed"))
+            return result
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def close(self):
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
+            try: self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired: self.process.kill()
+        self.process = None
+        if self.log_handle: self.log_handle.close()
+        self.log_handle = None
+
+    def environment(self):
+        env = dict(os.environ)
+        env["HF_HOME"] = str(self.root / "models")
+        env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        env["PYTHONUTF8"] = "1"
+        return env
+
+    def install(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        (self.root / "ready.json").unlink(missing_ok=True)
+        log = self.root / "install.log"
+        packages = ["kokoro==0.9.4", "soundfile", "numpy", "misaki[en]", "en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"] if self.id == "kokoro" else ["qwen-tts", "soundfile"]
+        with log.open("w", encoding="utf-8") as out:
+            subprocess.run([sys.executable, "-m", "venv", str(self.root / "venv")], check=True, stdout=out, stderr=out)
+            subprocess.run([str(self.python), "-m", "pip", "install", *packages], check=True, stdout=out, stderr=out, env=self.environment())
+            # Kokoro performs a real synthesis; Qwen Base loads the model, then requires a user voice reference.
+            probe = {"engine": self.id, "probe": True, "output": str(self.root / "probe.wav"), "text": "Your audiobook studio is ready.", "voice": {"id": "kokoro:af_heart"}, "language": "en"}
+            subprocess.run([str(self.python), str(Path(__file__).with_name("engine_worker.py"))], input=json.dumps(probe), text=True,
+                           check=True, stdout=out, stderr=out, env=self.environment(), timeout=1800)
+        (self.root / "ready.json").write_text(json.dumps({"version": self.version}), encoding="utf-8")
+
+
+class VoiceStudioEngine:
+    id = "voicestudio"
+    version = "speech-v1"
+    def __init__(self, url):
+        self.url = url.rstrip("/") if url else None
+
+    def inventory(self):
+        if not self.url: raise RuntimeError("Configure the optional local VoiceStudio service")
+        response = httpx.get(self.url + "/v1/audio/voices", timeout=3)
+        response.raise_for_status()
+        return response.json()
+
+    def info(self):
+        try:
+            self.inventory()
+            available, reason = True, None
+        except Exception:
+            available, reason = False, "VoiceStudio is not configured or is not running"
+        return {"id": self.id, "name": "VoiceStudio (external)", "available": available, "supports_cloning": False,
+                "languages": ["en"], "license": "External service; OmniVoice weights are noncommercial", "reason": reason}
+
+    def voices(self):
+        try: result = self.inventory()
+        except Exception: return []
+        items = result if isinstance(result, list) else result.get("voices", result.get("data", []))
+        return [{"id": "voicestudio:" + str(v.get("id", v.get("voice_id"))), "name": v.get("name", "VoiceStudio voice"),
+                 "engine": self.id, "kind": "clone", "language": "en", "created_at": v.get("created_at", "2026-01-01T00:00:00Z")}
+                for v in items if isinstance(v, dict) and (v.get("id") or v.get("voice_id"))]
+
+    def synthesize(self, text, voice, output, language="en"):
+        with httpx.stream("POST", self.url + "/v1/audio/speech", json={"model": "tts-1", "input": text,
+                          "voice": voice["id"].removeprefix("voicestudio:"), "response_format": "wav"}, timeout=1800) as response:
+            response.raise_for_status()
+            with output.open("wb") as f:
+                for chunk in response.iter_bytes(): f.write(chunk)
+
+
+def engines_for(config):
+    return {"kokoro": ManagedEngine(config.data_dir / "engines", "kokoro"),
+            "qwen3": ManagedEngine(config.data_dir / "engines", "qwen3"),
+            "voicestudio": VoiceStudioEngine(config.voicestudio_url)}

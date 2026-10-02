@@ -1,0 +1,93 @@
+name: iOS tests and device package
+on:
+  push:
+    branches: [main]
+    paths: ['ios/**', 'tests/fixtures/**', 'scripts/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['ios/**', 'tests/fixtures/**', 'scripts/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/select_xcode.py
+      - run: brew install xcodegen
+      - run: xcodegen generate
+        working-directory: ios
+      - id: device
+        run: echo "id=$(python3 scripts/select_simulator.py)" >> "$GITHUB_OUTPUT"
+      - name: Compile simulator app and tests
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          xcodebuild -version
+          xcodebuild build-for-testing -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/Simulator" \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-compile.log
+      - name: Boot simulator
+        timeout-minutes: 10
+        run: python3 scripts/boot_simulator.py '${{ steps.device.outputs.id }}'
+      - name: Run unit and UI tests
+        run: |
+          set -euo pipefail
+          xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
+            -destination 'platform=iOS Simulator,id=${{ steps.device.outputs.id }}' \
+            -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 180 -resultBundlePath artifacts/Tests.xcresult \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-tests.log
+      - name: Capture test evidence
+        if: always()
+        run: |
+          mkdir -p artifacts
+          xcrun simctl io '${{ steps.device.outputs.id }}' screenshot artifacts/final-screen.png || true
+          xcrun xcresulttool export attachments --path artifacts/Tests.xcresult --output-path artifacts/screenshots || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-evidence
+          path: artifacts/
+          retention-days: 3
+  device:
+    needs: simulator
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/select_xcode.py
+      - run: brew install xcodegen
+      - run: xcodegen generate
+        working-directory: ios
+      - name: Build iPhoneOS product
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          xcodebuild -version
+          xcodebuild build -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/Device" CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' | tee artifacts/device-build.log
+      - name: Package and verify unsigned ARM64 IPA
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/Device/Build/Products/Release-iphoneos/BookPocketOpen.app"
+          test -f "$APP/BookPocketOpen"
+          mkdir -p "$RUNNER_TEMP/Package/Payload"
+          ditto "$APP" "$RUNNER_TEMP/Package/Payload/BookPocketOpen.app"
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/Package/Payload" artifacts/BookPocketOpen.ipa
+          cd artifacts
+          shasum -a 256 BookPocketOpen.ipa > BookPocketOpen.ipa.sha256
+          python3 ../scripts/verify_ipa.py BookPocketOpen.ipa --report ipa-verification.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-device-package
+          path: artifacts/
+          retention-days: 3
