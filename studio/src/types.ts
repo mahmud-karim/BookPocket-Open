@@ -1,13 +1,102 @@
-export type Locator = {href:string;type?:string;title?:string;locations?:Record<string,unknown>;text?:Record<string,string>};
-export type Segment = {id:string;text:string;kind:'heading'|'paragraph';locator:Locator};
-export type Chapter = {id:string;title:string;href:string;segments:Segment[]};
-export type Book = {id:string;title:string;author:string;language:string;source_sha256:string;chapters:Chapter[];created_at:string;cover_url?:string};
-export type Voice = {id:string;name:string;engine:string;kind:'preset'|'clone'|'designed';language:string;created_at:string};
-export type Engine = {id:string;name:string;available:boolean;supports_cloning:boolean;languages:string[];license:string;reason?:string};
-export type Timing = {start:number;end:number;start_offset:number;end_offset:number};
-export type Asset = {id:string;segment_id:string;media_type:string;duration:number;sha256:string;bytes:number;url:string;timings:Timing[]};
-export type Job = {id:string;book_id:string;status:'queued'|'running'|'paused'|'completed'|'failed'|'cancelled';engine:string;voice_id:string;segment_ids:string[];completed_segments:number;total_segments:number;created_at:string;started_at?:string;finished_at?:string;generation_seconds?:number;error?:string;assets:Asset[]};
-export type Pairing = {id:string;device_name:string;status:string;created_at?:string};
-export type Device = {id:string;name?:string;device_name?:string;created_at:string};
-export type PronunciationRule = {term:string;replacement:string;enabled:boolean};
-export type Snapshot = {books:Book[];voices:Voice[];engines:Engine[];jobs:Job[]};
+export type Locator = {
+  href: string;
+  type?: string;
+  title?: string;
+  locations?: Record<string, unknown>;
+  text?: Record<string, string>;
+};
+export type Segment = {
+  id: string;
+  text: string;
+  kind: "heading" | "paragraph";
+  locator: Locator;
+};
+export type Chapter = {
+  id: string;
+  title: string;
+  href: string;
+  segments: Segment[];
+};
+export type Book = {
+  id: string;
+  title: string;
+  author: string;
+  language: string;
+  source_sha256: string;
+  chapters: Chapter[];
+  created_at: string;
+  cover_url?: string;
+};
+export type Voice = {
+  id: string;
+  name: string;
+  engine: string;
+  kind: "preset" | "clone" | "designed";
+  language: string;
+  created_at: string;
+};
+export type Engine = {
+  id: string;
+  name: string;
+  available: boolean;
+  supports_cloning: boolean;
+  languages: string[];
+  license: string;
+  reason?: string;
+};
+export type Timing = {
+  start: number;
+  end: number;
+  start_offset: number;
+  end_offset: number;
+};
+export type Asset = {
+  id: string;
+  segment_id: string;
+  media_type: string;
+  duration: number;
+  sha256: string;
+  bytes: number;
+  url: string;
+  timings: Timing[];
+};
+export type Job = {
+  id: string;
+  book_id: string;
+  status:
+    "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
+  engine: string;
+  voice_id: string;
+  segment_ids: string[];
+  completed_segments: number;
+  total_segments: number;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  generation_seconds?: number;
+  error?: string;
+  assets: Asset[];
+};
+export type Pairing = {
+  id: string;
+  device_name: string;
+  status: string;
+  created_at?: string;
+};
+export type Device = {
+  id: string;
+  name?: string;
+  device_name?: string;
+  created_at: string;
+};
+export type PronunciationRule = {
+  term: string;
+  replacement: string;
+  enabled: boolean;
+};
+export type Snapshot = {
+  books: Book[];
+  voices: Voice[];
+  engines: Engine[];
+  jobs: Job[];
+};

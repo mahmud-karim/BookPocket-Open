@@ -28,4 +28,16 @@ JSON keys use snake_case. IDs are opaque strings. Times are ISO8601 UTC unless a
 - Local HTTPS identity is verified from QR certificate SHA256 before token exchange; never global trust bypass. User-configured remote HTTPS must pass normal OS validation. HTTP restricted to loopback development only.
 
 ## Compatibility
+
+## Additions: studio setup and casting
+- The local studio is served on loopback HTTP 8782; the phone endpoint uses pinned HTTPS 8783. GET /v1/admin/connection returns `{url,certificate_sha256}`. QR payload is `{url,certificate_sha256,code}`. A development listener uses HTTP only on loopback.
+- POST /v1/admin/engines/{kokoro|qwen3}/install starts model installation. GET /v1/admin/engines/installations returns `{installations:[{engine,status,error,started_at}]}`. Actual synthesis/model validation precedes availability.
+- GET/PUT /v1/admin/analyzer uses `{url,model,api_key?}`. GET never returns the key, only `configured,url,model,has_api_key,hosted`. Changing origin must not forward an existing key. Hosted analysis requires explicit per-request `allow_hosted:true`.
+- GET/PUT /v1/books/{id}/cast uses `{characters:[{id,name,aliases,voice_id}],assignments:[{id,segment_id,start_offset,end_offset,character_id,confidence,reviewed}]}`. Offsets are Unicode scalar indices, end exclusive, ordered and nonoverlapping within a segment. Analysis suggestions are unreviewed. User-reviewed assignments survive reanalysis.
+- POST /v1/books/{id}/analyze `{allow_hosted:false}` returns an asynchronous persisted analysis `{id,book_id,status,completed_segments,total_segments,created_at,error,finished_at?}`; GET /v1/analyses/{id} polls it.
+- Generation supports `narration_plan:[{segment_id,start_offset,end_offset,voice_id}]`. Each original source segment produces one joined asset containing every selected voice span and narrator-filled gaps. The ordered plan and voice revisions participate in the cache key. `cast` remains a whole-segment compatibility field.
+- Asset `alignment` reports `word` or `sentence`; do not infer word precision from a sentence interval. Scalar offsets always refer to original display text, even when pronunciation substitutions affect synthesis.
+- Book `cover_url` is an optional protected API-relative location. GET /v1/books/{id}/cover returns a validated cover image.
+- Voice upload accepts optional `trim_start` and `trim_end` seconds. GET /v1/voices/{id}/reference returns a protected local clone reference. External voice adapters need not expose a reference.
+
 API v1 is owned by root. Additive optional fields are allowed; communicate any route/type change to root and the other client implementers. Companion Pydantic models generate OpenAPI and a checked schema snapshot. Shared fixtures verify JSON parsing, span offsets including emoji, restart idempotency and errors across clients.
