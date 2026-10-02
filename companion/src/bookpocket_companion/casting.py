@@ -155,10 +155,23 @@ def register_casting(app, store, auth, admin, get_book):
                         persist()
                 result = Cast(characters=list(characters.values()), assignments=assignments)
                 validate_cast(result, book)
-                # Preserve user-reviewed assignments from prior work over regenerated suggestions.
-                reviewed = [a for a in old.assignments if a.reviewed]
-                result.assignments = [a for a in result.assignments if not any(r.segment_id == a.segment_id and r.start_offset < a.end_offset and a.start_offset < r.end_offset for r in reviewed)] + reviewed
-                save_cast(identity, result)
+                # Merge against the current saved cast under a transaction, preserving edits made during analysis.
+                with store.db() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    row = db.execute("SELECT data FROM casts WHERE book_id=?", (identity,)).fetchone()
+                    current = Cast.model_validate_json(row[0]) if row else old
+                    reviewed = [a for a in current.assignments if a.reviewed]
+                    result.assignments = [a for a in result.assignments if not any(r.segment_id == a.segment_id and r.start_offset < a.end_offset and a.start_offset < r.end_offset for r in reviewed)] + reviewed
+                    latest_characters = {c.id: c for c in result.characters}
+                    for character in current.characters:
+                        if character.id in latest_characters:
+                            latest_characters[character.id].voice_id = character.voice_id
+                            latest_characters[character.id].name = character.name
+                            latest_characters[character.id].aliases = list(dict.fromkeys(character.aliases + latest_characters[character.id].aliases))
+                        else: latest_characters[character.id] = character
+                    result.characters = list(latest_characters.values())
+                    validate_cast(result, book)
+                    db.execute("INSERT OR REPLACE INTO casts VALUES(?,?)", (identity, canonical(result.model_dump())))
                 job.update(status="completed", finished_at=now())
             except Exception as exc:
                 job.update(status="failed", error=str(exc)[:1500], finished_at=now())

@@ -32,6 +32,7 @@ def build_epub() -> bytes:
         for name, text in items.items():
             info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_STORED if name == "mimetype" else zipfile.ZIP_DEFLATED
+            info.create_system = 3  # Reproducible Unix ZIP metadata on every build host
             info.external_attr = 0o644 << 16
             archive.writestr(info, text.encode("utf-8"))
     return output.getvalue()
@@ -56,3 +57,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

@@ -21,7 +21,7 @@ struct CastView: View {
                     Text("Build a cast for every conversation. Voices stay attached to the original words.").foregroundStyle(.secondary)
                     Toggle("Allow configured hosted analysis", isOn: $allowHosted)
                     Text(allowHosted ? "Analysis will send book text to the hosted API configured on your PC." : "Analysis uses your PC's local model. Hosted APIs are blocked.").font(.caption).foregroundStyle(.secondary)
-                    Button("Analyze speakers", systemImage: "person.2.wave.2") { startAnalysis() }.disabled(busy || dirty)
+                    Button("Analyze speakers", systemImage: "person.2.wave.2") { startAnalysis() }.disabled(busy)
                     if let analysis {
                         Text("\(analysis.status.capitalized) · \(analysis.completedSegments)/\(analysis.totalSegments) passages").font(.caption)
                         if let message = analysis.error { Text(message).foregroundStyle(.red) }
@@ -56,7 +56,7 @@ struct CastView: View {
                 Button(busy ? "Saving…" : "Save cast") { save() }.disabled(busy)
             }
             .navigationTitle("Cast studio").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save & close") { busy = true; Task { do { try await companion.saveCast(cast, bookID: book.id); dismiss() } catch { self.error = error.localizedDescription }; busy = false } }.disabled(busy) } }
             .task { do { cast = try await companion.fetchCast(book.id) } catch { self.error = error.localizedDescription } }
             .sheet(isPresented: $showingAssignment) { SpanAssignmentView(book: book, characters: cast.characters) { assignment in
                 let overlaps = cast.assignments.contains { $0.segmentId == assignment.segmentId && $0.startOffset < assignment.endOffset && assignment.startOffset < $0.endOffset }
@@ -74,6 +74,7 @@ struct CastView: View {
         busy = true; error = nil
         Task {
             do {
+                try await companion.saveCast(cast, bookID: book.id)
                 analysis = try await companion.analyze(book.id, allowHosted: allowHosted)
                 while let current = analysis, ["queued", "running"].contains(current.status) {
                     try await Task.sleep(for: .seconds(3)); analysis = try await companion.analysis(current.id)

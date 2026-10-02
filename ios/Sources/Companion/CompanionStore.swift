@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import ReadiumShared
 import UIKit
+import ReadiumZIPFoundation
 
 @MainActor @Observable final class CompanionStore {
     var identity: CompanionIdentity?
@@ -16,6 +17,7 @@ import UIKit
     var refreshing = false
     var downloading: String?
     var pairing = false
+    var exporting = false
     var paired: Bool { identity != nil && client != nil }
     private var client: CompanionClient?
     private var database: LibraryDatabase?
@@ -184,5 +186,56 @@ import UIKit
     func orderedDownloads(jobID: String) -> [DownloadRecord] {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return downloads.filter { $0.jobID == jobID } }
         return job.segmentIds.compactMap { id in downloads.first { $0.jobID == jobID && $0.asset.segmentId == id } }
+    }
+    func export(_ job: RemoteJob, format: String) async throws -> URL {
+        guard let client else { throw BookError.message("Connect to your companion first.") }
+        exporting = true; defer { exporting = false }
+        let asset: AudioAsset = try await client.send("/v1/jobs/\(job.id)/export", method: "POST", body: JSONSerialization.data(withJSONObject: ["format": format]))
+        let url = root.appendingPathComponent("Exports").appendingPathComponent("Audiobook-\(SourceIdentity.hash(Data(job.id.utf8)).prefix(12)).\(format == "project" ? "zip" : format)")
+        try await client.download(asset, to: url)
+        return url
+    }
+    func importProject(_ url: URL, library: LibraryStore) async throws {
+        let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let archive = try await Archive(url: url, accessMode: .read)
+        let entries = try await archive.entries()
+        guard entries.count < 100_000 else { throw BookError.message("This project has too many entries.") }
+        var paths = Set<String>(); var expanded: UInt64 = 0
+        for entry in entries {
+            let path = entry.path
+            guard !path.hasPrefix("/"), !path.contains("\\"), !path.contains(":"), !path.split(separator: "/").contains(".."), entry.type != .symlink, paths.insert(path).inserted else { throw BookError.message("This archive contains unsafe or duplicate paths.") }
+            expanded += entry.uncompressedSize
+            guard expanded <= 20 * 1024 * 1024 * 1024 else { throw BookError.message("This project exceeds the 20 GB import limit.") }
+        }
+        guard let manifest = entries.first(where: { $0.path == "project.json" }), manifest.uncompressedSize <= 100 * 1024 * 1024 else { throw BookError.message("This is not a Book Pocket production archive.") }
+        var metadata = Data()
+        _ = try await archive.extract(manifest) { metadata.append($0) }
+        struct Project: Decodable { var formatVersion: Int; var book: RemoteBook; var job: RemoteJob }
+        let project = try CompanionClient.decoder.decode(Project.self, from: metadata)
+        guard project.formatVersion == 1, let original = entries.first(where: { ["source.epub", "source.txt"].contains($0.path) }) else { throw BookError.message("Unsupported project version or missing original book.") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent(original.path)
+        _ = try await archive.extract(original, to: source)
+        guard SourceIdentity.hash(try Data(contentsOf: source, options: .mappedIfSafe)) == project.book.sourceSha256 else { throw BookError.message("The original book failed its checksum.") }
+        var local = try await library.importBook(source)
+        local.title = project.book.title; local.author = project.book.author; local.companionBookID = project.book.id; library.update(local)
+        for asset in project.job.assets {
+            guard let entry = entries.first(where: { $0.path == "audio/\(asset.id).wav" }), entry.uncompressedSize == UInt64(asset.bytes) else { throw BookError.message("The archive is missing expected audio.") }
+            let extracted = folder.appendingPathComponent("audio.wav")
+            if FileManager.default.fileExists(atPath: extracted.path) { try FileManager.default.removeItem(at: extracted) }
+            _ = try await archive.extract(entry, to: extracted)
+            let data = try Data(contentsOf: extracted, options: .mappedIfSafe)
+            guard SourceIdentity.hash(data) == asset.sha256 else { throw BookError.message("An audio file failed its checksum.") }
+            let file = "Audio/" + SourceIdentity.hash(Data(asset.id.utf8)) + ".wav"
+            try FileManager.default.createDirectory(at: root.appendingPathComponent("Audio"), withIntermediateDirectories: true)
+            try data.write(to: root.appendingPathComponent(file), options: .atomic)
+            downloads.removeAll { $0.id == asset.id }; downloads.append(DownloadRecord(localBookID: local.id, jobID: project.job.id, asset: asset, file: file, segment: project.book.segments.first { $0.id == asset.segmentId }))
+            try persist()
+        }
+        books.removeAll { $0.id == project.book.id }; books.append(project.book)
+        jobs.removeAll { $0.id == project.job.id }; jobs.append(project.job)
+        try persist()
     }
 }

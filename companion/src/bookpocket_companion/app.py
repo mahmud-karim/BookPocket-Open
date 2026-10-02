@@ -84,6 +84,16 @@ def create_app(config=None, engines=None, start_worker=True):
             return JSONResponse({"detail": "Remote connections require HTTPS"}, status_code=403)
         if request.headers.get("origin") and request.headers["origin"] not in allowed_origins:
             return JSONResponse({"detail": "Unrecognized browser origin"}, status_code=403)
+        if request.method in {"POST", "PUT"}:
+            # Reject oversized multipart bodies before Starlette spools uploaded files.
+            limit = config.max_import_bytes + 2 * 1024 * 1024 if request.url.path == "/v1/books" else (22 * 1024 * 1024 if request.url.path == "/v1/voices" else 20 * 1024 * 1024)
+            raw_length = request.headers.get("content-length")
+            if request.headers.get("transfer-encoding"):
+                return JSONResponse({"detail": "Send a bounded request with Content-Length"}, status_code=411)
+            try: length = int(raw_length or "0")
+            except ValueError: return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
+            if length < 0 or length > limit:
+                return JSONResponse({"detail": "Request exceeds the upload limit"}, status_code=413)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -214,7 +224,7 @@ def create_app(config=None, engines=None, start_worker=True):
         row = require("voices", identity)
         for j in store.all("jobs"):
             request = json.loads(store.item("jobs", j["id"])["request"])
-            if j["status"] in {"running", "queued", "paused"} and (j["voice_id"] == identity or identity in request.get("cast", {}).values()):
+            if j["status"] in {"running", "queued", "paused"} and (j["voice_id"] == identity or identity in request.get("cast", {}).values() or identity in {p["voice_id"] for p in request.get("narration_plan", [])}):
                 raise HTTPException(409, "Cancel active jobs using this voice before deleting it")
         with store.db() as db: db.execute("DELETE FROM voices WHERE id=?", (identity,))
         Path(row["reference"]).unlink(missing_ok=True)
@@ -354,6 +364,8 @@ def create_app(config=None, engines=None, start_worker=True):
     def install(identity: str):
         engine = engines.get(identity)
         if not isinstance(engine, ManagedEngine): raise HTTPException(400, "Only managed engines can be installed here")
+        if any(j["status"] in {"running", "queued"} for j in store.all("jobs")):
+            raise HTTPException(409, "Pause narration jobs before installing a model")
         with install_lock:
             if any(v["status"] == "running" for v in installs.values()): raise HTTPException(409, "An engine installation is already running")
             installs[identity] = {"engine": identity, "status": "running", "error": None, "started_at": now()}

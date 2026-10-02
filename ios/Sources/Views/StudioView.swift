@@ -10,6 +10,8 @@ struct StudioView: View {
     @State private var showVoice = false
     @State private var showGenerate = false
     @State private var revoke = false
+    @State private var exportURL: URL?
+    @State private var importProject = false
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -59,6 +61,9 @@ struct StudioView: View {
                             }
                         }
                     }
+                    Button("Import production archive", systemImage: "square.and.arrow.down") { importProject = true }
+                    if let exportURL { ShareLink(item: exportURL) { Label("Share exported audiobook", systemImage: "square.and.arrow.up") } }
+                    if companion.exporting { ProgressView("Exporting audiobook…") }
                 }.padding(24)
             }.background(Obsidian.background).navigationTitle("Studio")
             .toolbar {
@@ -73,6 +78,9 @@ struct StudioView: View {
             .sheet(isPresented: $showPairing) { PairingView() }
             .sheet(isPresented: $showVoice) { VoiceCreationView() }
             .sheet(isPresented: $showGenerate) { GenerationView() }
+            .fileImporter(isPresented: $importProject, allowedContentTypes: [.zip]) { result in
+                Task { do { try await companion.importProject(result.get(), library: library) } catch { companion.error = error.localizedDescription } }
+            }
             .confirmationDialog("Revoke this device's companion access? Downloaded audio will remain available.", isPresented: $revoke, titleVisibility: .visible) { Button("Revoke device", role: .destructive) { Task { await companion.disconnect() } } }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
@@ -97,6 +105,9 @@ struct StudioView: View {
                 if ["failed", "cancelled"].contains(job.status) { Button("Retry") { Task { await companion.jobAction(job, "retry") } } }
                 if !job.assets.isEmpty, let local = library.books.first(where: { $0.companionBookID == job.bookId || $0.sourceSHA256 == companion.books.first(where: { $0.id == job.bookId })?.sourceSha256 }) {
                     Button(companion.downloading == job.id ? "Downloading…" : "Download", systemImage: "arrow.down.circle") { Task { await companion.download(job, localBook: local) } }.disabled(companion.downloading != nil)
+                }
+                if job.status == "completed" {
+                    Menu("Export", systemImage: "square.and.arrow.up") { ForEach(["m4b", "mp3", "project"], id: \.self) { format in Button(format == "project" ? "Production archive" : format.uppercased()) { Task { do { exportURL = try await companion.export(job, format: format) } catch { companion.error = error.localizedDescription } } } }.disabled(companion.exporting)
                 }
             }.font(.subheadline)
         }.padding(18).background(Obsidian.surface, in: .rect(cornerRadius: 16))
@@ -154,6 +165,7 @@ struct VoiceCreationView: View {
     @State private var creating = false
     @State private var authorized = false
     @State private var error: String?
+    @State private var sampleEditor = VoiceSampleEditor()
     var body: some View {
         NavigationStack {
             Form {
@@ -164,17 +176,37 @@ struct VoiceCreationView: View {
                 }
                 Section {
                     Button(sample?.lastPathComponent ?? "Choose audio sample", systemImage: "waveform") { importing = true }
+                    if sampleEditor.source != nil {
+                        VStack(alignment: .leading) {
+                            Text("Start · \(Duration.seconds(sampleEditor.start).formatted(.time(pattern: .minuteSecond)))").font(.caption)
+                            Slider(value: $sampleEditor.start, in: 0...max(0.1, sampleEditor.duration - 3), step: 0.1).accessibilityLabel("Reference start")
+                            Text("End · \(Duration.seconds(sampleEditor.end).formatted(.time(pattern: .minuteSecond)))").font(.caption)
+                            Slider(value: $sampleEditor.end, in: 3...max(3.1, sampleEditor.duration), step: 0.1).accessibilityLabel("Reference end")
+                            Button(sampleEditor.playing ? "Stop preview" : "Preview selected audio", systemImage: sampleEditor.playing ? "stop.fill" : "play.fill") {
+                                do { if sampleEditor.playing { sampleEditor.stop() } else { try sampleEditor.preview() } } catch { self.error = error.localizedDescription }
+                            }
+                        }
+                    }
                     TextField("Exact transcript, if required by the engine", text: $transcript, axis: .vertical).lineLimit(3...8)
                     Toggle("I have permission to use this voice", isOn: $authorized)
                 } header: { Text("Reference recording") } footer: { Text("Use a clean recording of one speaker. The reference is sent only to your paired PC and stays private.") }
                 if let error { Text(error).foregroundStyle(.red) }
                 Button(creating ? "Creating voice…" : "Create voice") {
-                    guard let sample else { return }; creating = true
-                    Task { do { try await companion.clone(name: name, engine: engine, language: language, transcript: transcript, sample: sample); dismiss() } catch { self.error = error.localizedDescription }; creating = false }
+                    guard sample != nil else { return }; creating = true
+                    Task {
+                        do {
+                            let trimmed = try await sampleEditor.export()
+                            defer { try? FileManager.default.removeItem(at: trimmed) }
+                            try await companion.clone(name: name, engine: engine, language: language, transcript: transcript, sample: trimmed)
+                            dismiss()
+                        } catch { self.error = error.localizedDescription }
+                        creating = false
+                    }
                 }.disabled(creating || name.isEmpty || engine.isEmpty || sample == nil || !authorized)
             }.navigationTitle("New voice").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in do { sample = try result.get() } catch { self.error = error.localizedDescription } }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in do { let url = try result.get(); try sampleEditor.load(url); sample = url } catch { self.error = error.localizedDescription } }
+            .onDisappear { sampleEditor.cleanUp() }
         }
     }
 }

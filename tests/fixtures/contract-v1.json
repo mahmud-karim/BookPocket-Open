@@ -6,7 +6,7 @@
     "title": "The Lantern — Contract Sample",
     "author": "Book Pocket Contributors",
     "language": "en",
-    "source_sha256": "0288b0a02f6ab1109907870788de1f54e13b268e6daeb2768b9575630fcde436",
+    "source_sha256": "f4a4dace1b4053ab10d94c143331263b975d1ed4421fe28d70b36f81df0fec7c",
     "created_at": "2026-01-01T00:00:00Z",
     "chapters": [
       {
@@ -15,7 +15,7 @@
         "href": "EPUB/chapter1.xhtml",
         "segments": [
           {
-            "id": "e9437c34ec2b4f58e3b8b332273428f225bdbffb08d8ac3b3aeeb211584de2c1",
+            "id": "1402ca9b139452075d430c31f4966d2c9747c36e82d20fed5e5daa7158bac3e8",
             "text": "A compass 🧭 pointed north; café bells sounded beyond the window.",
             "kind": "paragraph",
             "locator": {
@@ -55,7 +55,7 @@
     "engine": "contract-only",
     "voice_id": "contract-voice",
     "segment_ids": [
-      "e9437c34ec2b4f58e3b8b332273428f225bdbffb08d8ac3b3aeeb211584de2c1"
+      "1402ca9b139452075d430c31f4966d2c9747c36e82d20fed5e5daa7158bac3e8"
     ],
     "completed_segments": 1,
     "total_segments": 1,
@@ -67,7 +67,7 @@
     "assets": [
       {
         "id": "contract-asset",
-        "segment_id": "e9437c34ec2b4f58e3b8b332273428f225bdbffb08d8ac3b3aeeb211584de2c1",
+        "segment_id": "1402ca9b139452075d430c31f4966d2c9747c36e82d20fed5e5daa7158bac3e8",
         "media_type": "audio/wav",
         "duration": 0.25,
         "sha256": "ec78298f766e6cf2a694ff8ba6904b79b0b4208731e9ee5ca7ba77e9c165e8a0",

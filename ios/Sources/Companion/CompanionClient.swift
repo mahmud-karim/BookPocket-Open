@@ -61,6 +61,7 @@ final class CompanionClient {
     func request(_ path: String, method: String = "GET", body: Data? = nil, contentType: String = "application/json", bearer: String? = nil) throws -> URLRequest {
         guard path.starts(with: "/v1/"), !path.contains(".."), let url = URL(string: path, relativeTo: baseURL)?.absoluteURL, url.host == baseURL.host, url.scheme == baseURL.scheme, url.port == baseURL.port else { throw BookError.message("The companion returned an invalid resource address.") }
         var request = URLRequest(url: url); request.httpMethod = method; request.httpBody = body
+        if path.hasSuffix("/export") { request.timeoutInterval = 3600 }
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         if let bearer = bearer ?? token { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
         return request

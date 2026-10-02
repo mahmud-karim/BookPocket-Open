@@ -8,6 +8,7 @@ struct LibraryView: View {
     @State private var selected: LocalBook?
     @State private var deleting: LocalBook?
     @AppStorage("appTheme") private var appTheme = "dark"
+    @ScaledMetric(relativeTo: .largeTitle) private var welcomeSize = 38.0
     private var filtered: [LocalBook] { library.books.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.author.localizedCaseInsensitiveContains(query) }.sorted { $0.lastOpenedAt > $1.lastOpenedAt } }
     var body: some View {
         NavigationStack {
@@ -16,7 +17,7 @@ struct LibraryView: View {
                     if library.books.isEmpty {
                         VStack(alignment: .leading, spacing: 20) {
                             Image(systemName: "books.vertical").font(.system(size: 46, weight: .ultraLight)).foregroundStyle(Obsidian.accent)
-                            Text("A world,\nwithin reach.").font(.system(size: 38, weight: .regular, design: .serif))
+                            Text("A world,\nwithin reach.").font(.system(size: welcomeSize, weight: .regular, design: .serif))
                             Text("Bring your books. Read at your own pace, or let a voice carry the story.").font(.body).foregroundStyle(.secondary)
                             Button("Import a book", systemImage: "plus") { showImporter = true }.buttonStyle(.borderedProminent).accessibilityIdentifier("library.import.empty")
                             Text("EPUB & plain text · Stored on your device").font(.caption).foregroundStyle(.secondary)

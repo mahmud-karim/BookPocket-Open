@@ -17,7 +17,7 @@ class ManagedEngine:
         self.id = engine_id
         self.root = root / engine_id
         self.python = python_in(self.root / "venv")
-        self.version = "1"
+        self.version = "2"
         self.process = None
         self.log_handle = None
 
@@ -71,6 +71,9 @@ class ManagedEngine:
     def environment(self):
         env = dict(os.environ)
         env["HF_HOME"] = str(self.root / "models")
+        env["HF_HUB_CACHE"] = str(self.root / "models" / "hub")
+        env["HUGGINGFACE_HUB_CACHE"] = env["HF_HUB_CACHE"]
+        env["TRANSFORMERS_CACHE"] = env["HF_HUB_CACHE"]
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"
         env["PYTHONUTF8"] = "1"
         return env
@@ -79,10 +82,16 @@ class ManagedEngine:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "ready.json").unlink(missing_ok=True)
         log = self.root / "install.log"
-        packages = ["kokoro==0.9.4", "soundfile", "numpy", "misaki[en]", "en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"] if self.id == "kokoro" else ["qwen-tts", "soundfile"]
+        packages = ["kokoro==0.9.4", "soundfile", "numpy", "misaki[en]", "en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"] if self.id == "kokoro" else ["qwen-tts==0.1.1", "soundfile"]
         with log.open("w", encoding="utf-8") as out:
             subprocess.run([sys.executable, "-m", "venv", str(self.root / "venv")], check=True, stdout=out, stderr=out)
             subprocess.run([str(self.python), "-m", "pip", "install", *packages], check=True, stdout=out, stderr=out, env=self.environment())
+            try:
+                gpu = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], capture_output=True, text=True, timeout=10)
+                modern_cuda = gpu.returncode == 0 and int(gpu.stdout.strip().split(".")[0]) >= 570
+            except (OSError, ValueError, subprocess.TimeoutExpired): modern_cuda = False
+            if modern_cuda:
+                subprocess.run([str(self.python), "-m", "pip", "install", "torch==2.11.0", "torchaudio==2.11.0", "--index-url", "https://download.pytorch.org/whl/cu128"], check=True, stdout=out, stderr=out, env=self.environment())
             # Kokoro performs a real synthesis; Qwen Base loads the model, then requires a user voice reference.
             probe = {"engine": self.id, "probe": True, "output": str(self.root / "probe.wav"), "text": "Your audiobook studio is ready.", "voice": {"id": "kokoro:af_heart"}, "language": "en"}
             subprocess.run([str(self.python), str(Path(__file__).with_name("engine_worker.py"))], input=json.dumps(probe), text=True,

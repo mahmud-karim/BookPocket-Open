@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from bookpocket_companion.app import create_app
 from bookpocket_companion.models import Config
-from bookpocket_companion.worker import sentences, spoken
+from bookpocket_companion.worker import sentences, spoken, spoken_mapping, word_timings
 
 
 class TestEngine:
@@ -94,3 +94,23 @@ def test_sentence_offsets_and_substitution():
     text = "Hello 🧭. Next sentence!"
     assert [(text[a:b], t) for a, b, t in sentences(text)] == [("Hello 🧭.", "Hello 🧭."), ("Next sentence!", "Next sentence!")]
     assert spoken("Anna and Ann", [{"term": "Ann", "replacement": "Anne", "enabled": True}]) == "Anna and Anne"
+
+def test_model_word_mapping_preserves_original_pronunciation_span():
+    text, mapping = spoken_mapping("Hi 🧭 Kyon.", [{"term": "Kyon", "replacement": "Key on", "enabled": True}])
+    result = {"words": [{"text": "Key", "start": .2, "end": .4}, {"text": "on", "start": .4, "end": .6}]}
+    times = word_timings(result, text, mapping, 0, 0, 1)
+    assert [(t["start_offset"], t["end_offset"]) for t in times] == [(5, 9), (5, 9)]
+    assert word_timings({"words": [{"text": "invented", "start": 0, "end": 1}]}, text, mapping, 0, 0, 1) is None
+
+def test_multiple_speakers_in_one_segment_and_overlap_validation(setup):
+    app, client, engine, _, request = setup
+    sid = request["segment_ids"][0]
+    request["narration_plan"] = [{"segment_id": sid, "start_offset": 2, "end_offset": 9, "voice_id": "fixture:voice"}, {"segment_id": sid, "start_offset": 8, "end_offset": 12, "voice_id": "fixture:voice"}]
+    assert client.post("/v1/jobs", json=request).status_code == 400
+    request["narration_plan"] = request["narration_plan"][:1]
+    job = client.post("/v1/jobs", json=request).json()
+    app.state.worker.run(job["id"])
+    result = client.get("/v1/jobs/"+job["id"]).json()
+    assert result["status"] == "completed"
+    assert result["assets"][0]["cast_spans"] == request["narration_plan"]
+    assert any(t["start_offset"] == 2 and t["end_offset"] == 9 for t in result["assets"][0]["timings"])

@@ -49,7 +49,7 @@ struct ReaderView: View {
                     Button {
                         if player.bookID == model.bookID, player.isPlaying { player.pause() }
                         else if let pub = model.publication, let book = model.book {
-                            player.onLocator = { [weak model] in model?.follow($0) }
+                            model.connectPlayback(player)
                             player.speak(publication: pub, book: book, from: model.navigator?.currentLocation)
                         }
                     } label: { Label(player.isPlaying && player.bookID == model.bookID ? "Pause" : "Read aloud", systemImage: player.isPlaying && player.bookID == model.bookID ? "pause.fill" : "headphones") }
@@ -58,7 +58,7 @@ struct ReaderView: View {
                     Button("Next page", systemImage: "chevron.right") { Task { await model.navigator?.goForward() } }.labelStyle(.iconOnly).frame(width: 44, height: 44)
                 }.padding(.horizontal).background(Obsidian.surface)
             }
-            .task { await model.load() }
+            .task { await model.load(); if player.bookID == model.bookID { model.connectPlayback(player); if let locator = player.speechLocator { model.follow(locator) } } }
             .sheet(item: $panel) { selected in
                 NavigationStack {
                     panelView(selected).navigationTitle(selected.rawValue.capitalized).navigationBarTitleDisplayMode(.inline)
@@ -111,5 +111,5 @@ struct ReaderView: View {
             }.onChange(of: fontSize) { model.applyPreferences() }.onChange(of: theme) { model.applyPreferences() }.onChange(of: scroll) { model.applyPreferences() }
         }
     }
-    private func flatten(_ links: [Link]) -> [Link] { links.flatMap { [$0] + flatten($0.children) } }
+    private func flatten(_ links: [ReadiumShared.Link]) -> [ReadiumShared.Link] { links.flatMap { [$0] + flatten($0.children) } }
 }

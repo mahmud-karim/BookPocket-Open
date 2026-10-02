@@ -67,7 +67,7 @@ struct AudioTiming: Codable {
 }
 struct AudioAsset: Codable, Identifiable {
     var id: String
-    var segmentId: String
+    var segmentId: String?
     var mediaType: String
     var duration: Double
     var sha256: String

@@ -3,6 +3,7 @@ import SwiftUI
 struct ListenView: View {
     @Environment(PlaybackController.self) private var player
     @Environment(LibraryStore.self) private var library
+    @Environment(CompanionStore.self) private var companion
     var body: some View {
         @Bindable var player = player
         NavigationStack {
@@ -27,6 +28,22 @@ struct ListenView: View {
                         }.padding(.horizontal, 20)
                     } else {
                         ContentUnavailableView("Your next listening chapter", systemImage: "headphones", description: Text("Open a book and choose Read aloud. Generated narration downloaded from your PC also plays here."))
+                    }
+                    if !companion.downloads.isEmpty {
+                        VStack(alignment: .leading, spacing: 18) {
+                            Text("Downloaded narration").font(.title2.bold())
+                            ForEach(Array(Set(companion.downloads.map(\.jobID))).sorted(), id: \.self) { jobID in
+                                if let first = companion.orderedDownloads(jobID: jobID).first, let book = library.book(first.localBookID) {
+                                    Button { companion.play(first, library: library, player: player) } label: {
+                                        HStack(spacing: 14) {
+                                            BookCover(book: book, url: library.cover(book)).frame(width: 46)
+                                            VStack(alignment: .leading, spacing: 4) { Text(book.title).font(.headline).foregroundStyle(.primary); Text("\(companion.orderedDownloads(jobID: jobID).count) passages · Available offline").font(.caption).foregroundStyle(.secondary) }
+                                            Spacer(); Image(systemName: "play.circle").font(.title2)
+                                        }
+                                    }.buttonStyle(.plain)
+                                }
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 16)
                     }
                 }.padding(28)
             }.background(Obsidian.background).navigationTitle("Listen")

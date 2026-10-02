@@ -61,7 +61,14 @@ def main():
         saved = json.loads(saved_path.read_text(encoding="utf-8"))
         for key in ("public_url", "voicestudio_url", "ffmpeg"):
             if key in saved: setattr(config, key, saved[key])
-    config.public_url = args.public_url or config.public_url
+    if args.public_url:
+        config.public_url = args.public_url
+    elif not saved_path.exists():
+        try:
+            addresses = [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ipaddress.ip_address(ip).is_loopback]
+            address = next((ip for ip in addresses if ip.startswith(("192.168.", "10."))), addresses[0] if addresses else "localhost")
+        except OSError: address = "localhost"
+        config.public_url = f"https://{address}:{args.port}"
     config.voicestudio_url = args.voicestudio_url or config.voicestudio_url
     config.studio_dir = args.studio_dir or Path(__file__).resolve().parents[3] / "studio" / "dist"
     if args.command == "install-engine":

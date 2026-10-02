@@ -70,6 +70,15 @@ import UIKit
         navigator?.apply(decorations: [Decoration(id: "spoken", locator: locator, style: .highlight(tint: .systemYellow, isActive: true))], in: "speech")
         Task { await navigator?.go(to: locator) }
     }
+    func connectPlayback(_ player: PlaybackController) {
+        let library = library
+        let id = bookID
+        var saved = Date.distantPast
+        player.onLocator = { [weak self] locator in
+            self?.follow(locator)
+            if Date().timeIntervalSince(saved) >= 3 { library.saveLocation(id, locator: locator); saved = Date() }
+        }
+    }
     func search(_ query: String) async {
         guard let publication, !query.trimmingCharacters(in: .whitespaces).isEmpty else { searchResults = []; return }
         searching = true
