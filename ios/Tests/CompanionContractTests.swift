@@ -2,6 +2,14 @@ import XCTest
 @testable import BookPocketOpen
 
 final class CompanionContractTests: XCTestCase {
+    func testAnalysisWarningsAreAdditiveAndRemainVisibleToReview() throws {
+        let base = #"{"id":"analysis","book_id":"book","status":"completed","completed_segments":1,"total_segments":1}"#
+        XCTAssertNil(try CompanionClient.decoder.decode(AnalysisJob.self, from: Data(base.utf8)).warnings)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(base.utf8)) as? [String: Any])
+        json["warnings"] = ["Only paired double-quoted dialogue was analyzed."]
+        let result = try CompanionClient.decoder.decode(AnalysisJob.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(result.warnings, ["Only paired double-quoted dialogue was analyzed."])
+    }
     func testContractFixtureDecodesAndUsesScalarOffsets() throws {
         struct Fixture: Decodable { var book: RemoteBook; var job: RemoteJob }
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "contract-v1", withExtension: "json"))

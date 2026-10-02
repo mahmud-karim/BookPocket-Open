@@ -4,6 +4,19 @@ import ReadiumZIPFoundation
 @testable import BookPocketOpen
 
 final class LibraryTests: XCTestCase {
+    @MainActor func testReaderFontPercentageBecomesReadiumScale() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let suite = "reader-preferences-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let reader = ReaderModel(bookID: "preferences-test", library: LibraryStore(root: folder))
+        XCTAssertEqual(reader.preferences(defaults: defaults).fontSize, 1.1)
+        for (percent, scale) in [(75.0, 0.75), (110, 1.1), (200, 2.0)] {
+            defaults.set(percent, forKey: "readerFontSize")
+            XCTAssertEqual(reader.preferences(defaults: defaults).fontSize, scale)
+        }
+    }
     func testUnicodeScalarOffsetsAreNotUTF16Offsets() throws {
         let text = "A compass 🧭 pointed north; café bells sounded beyond the window."
         let range = try XCTUnwrap(SourceIdentity.scalarRange(10, 11, in: text))

@@ -31,10 +31,11 @@ import UIKit
         } catch { self.error = error.localizedDescription }
         loading = false
     }
-    func preferences() -> EPUBPreferences {
-        let defaults = UserDefaults.standard
+    func preferences(defaults: UserDefaults = .standard) -> EPUBPreferences {
         var prefs = EPUBPreferences()
-        prefs.fontSize = defaults.double(forKey: "readerFontSize") == 0 ? 110 : defaults.double(forKey: "readerFontSize")
+        // The UI stores a percentage; Readium 3 expects a scale factor (1.0 = 100%).
+        let percentage = defaults.double(forKey: "readerFontSize")
+        prefs.fontSize = min(200, max(75, percentage == 0 ? 110 : percentage)) / 100
         prefs.publisherStyles = false
         prefs.scroll = defaults.bool(forKey: "readerScroll")
         prefs.theme = defaults.string(forKey: "readerTheme") == "white" ? .light : defaults.string(forKey: "readerTheme") == "dark" ? .dark : .sepia

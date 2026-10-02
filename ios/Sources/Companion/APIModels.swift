@@ -140,6 +140,7 @@ struct AnalysisJob: Codable, Identifiable {
     var completedSegments: Int
     var totalSegments: Int
     var error: String?
+    var warnings: [String]?
 }
 struct PairingQR: Codable {
     var url: String

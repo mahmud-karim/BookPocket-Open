@@ -25,6 +25,9 @@ struct CastView: View {
                     if let analysis {
                         Text("\(analysis.status.capitalized) · \(analysis.completedSegments)/\(analysis.totalSegments) passages").font(.caption)
                         if let message = analysis.error { Text(message).foregroundStyle(.red) }
+                        ForEach(Array((analysis.warnings ?? []).enumerated()), id: \.offset) { _, warning in
+                            Label(warning, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 Section("Characters") {
