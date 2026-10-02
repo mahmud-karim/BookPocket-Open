@@ -57,6 +57,32 @@ export function post<T>(path: string, body: unknown = {}): Promise<T> {
     body: JSON.stringify(body),
   });
 }
+// Retain a submission after a lost response so retry cannot duplicate a render.
+export async function submitJob<T>(body: Record<string, unknown>): Promise<T> {
+  const { request_id, ...specification } = body;
+  const key = `bp.pending-job.${String(body.book_id)}`;
+  const signature = JSON.stringify(specification);
+  let pending: { signature: string; request_id: string } | undefined;
+  try {
+    pending = JSON.parse(localStorage.getItem(key) ?? "null");
+  } catch {
+    /* Recover a malformed local draft. */
+  }
+  if (!pending || pending.signature !== signature) {
+    pending = {
+      signature,
+      request_id: String(request_id || crypto.randomUUID()),
+    };
+    localStorage.setItem(key, JSON.stringify(pending));
+  }
+  const result = await post<T>("/v1/jobs", {
+    ...specification,
+    request_id: pending.request_id,
+  });
+  localStorage.removeItem(key);
+  return result;
+}
+
 export async function mediaURL(path: string): Promise<string> {
   if (!path.startsWith("/v1/")) throw new Error("Invalid media location.");
   return URL.createObjectURL(await (await request(path)).blob());

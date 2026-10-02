@@ -39,7 +39,7 @@ import { VoiceSampleInput, ReferencePreview } from "./VoiceSample";
 import { EngineList, AnalyzerSettings } from "./EngineSettings";
 import { CastEditor } from "./CastEditor";
 import { narrationPlan, type Cast } from "./casting";
-import { api, bootstrapSession, post, saveAsset } from "./api";
+import { api, bootstrapSession, post, saveAsset, submitJob } from "./api";
 import { Cover, Empty, Modal, Player, type Playback } from "./components";
 import { duration, initials, jobProgress } from "./format";
 import type {
@@ -130,7 +130,14 @@ export function App() {
     await run(async () => {
       const body = new FormData();
       body.append("file", file);
-      const book = await api<Book>("/v1/books", { method: "POST", body });
+      const book = file.name.toLowerCase().endsWith(".zip")
+        ? (
+            await api<{ book: Book; job: Job }>("/v1/projects/import", {
+              method: "POST",
+              body,
+            })
+          ).book
+        : await api<Book>("/v1/books", { method: "POST", body });
       await refresh();
       setSelected(book.id);
       setTab("library");
@@ -420,7 +427,7 @@ export function App() {
                   onBack={() => setSelected(undefined)}
                   onGenerate={(body) =>
                     run(async () => {
-                      const job = await post<Job>("/v1/jobs", body);
+                      const job = await submitJob<Job>(body);
                       await refresh();
                       setNotice(
                         job.status === "completed"
@@ -751,13 +758,14 @@ export function App() {
       {modal === "import" && (
         <Modal title="Add to your library" onClose={() => setModal(null)}>
           <p className="muted">
-            Bring a DRM-free EPUB or plain text file. The original stays safely
-            in your library.
+            Bring a DRM-free EPUB, plain text file, or exported Book Pocket
+            project ZIP. Projects restore the original book and their
+            recordings.
           </p>
           <input
             ref={upload}
             type="file"
-            accept=".epub,.txt"
+            accept=".epub,.txt,.zip"
             className="sr-only"
             disabled={busy}
             onChange={(e) => {
@@ -784,7 +792,7 @@ export function App() {
             <strong>
               {busy ? "Opening your book…" : "Choose a book, or drop it here"}
             </strong>
-            <span>EPUB or TXT</span>
+            <span>EPUB, TXT, or Book Pocket project ZIP</span>
           </button>
         </Modal>
       )}
@@ -829,6 +837,14 @@ function JobCard({
 }) {
   const progress = jobProgress(job.completed_segments, job.total_segments);
   const live = ["queued", "running", "paused"].includes(job.status);
+  const elapsed = job.started_at
+    ? Math.max(0, (Date.now() - Date.parse(job.started_at)) / 1000)
+    : 0;
+  const remaining =
+    job.status === "running" && job.completed_segments >= 2
+      ? (elapsed / job.completed_segments) *
+        (job.total_segments - job.completed_segments)
+      : undefined;
   return (
     <article className="job-card">
       {book && <Cover book={book} small />}
@@ -859,7 +875,12 @@ function JobCard({
               <span>
                 {job.completed_segments} of {job.total_segments} passages ready
               </span>
-              <span>{progress}%</span>
+              <span>
+                {remaining !== undefined
+                  ? `About ${duration(remaining)} remaining · `
+                  : ""}
+                {progress}%
+              </span>
             </div>
           </>
         )}
@@ -1059,7 +1080,7 @@ function BookStudio({
   jobs: Job[];
   busy: boolean;
   onBack: () => void;
-  onGenerate: (body: unknown) => Promise<void>;
+  onGenerate: (body: Record<string, unknown>) => Promise<void>;
   onPlay: (job: Job) => void;
   onError: (message: string) => void;
 }) {
@@ -1113,11 +1134,19 @@ function BookStudio({
       return;
     }
     let plan;
+    let narrator = chosenVoice;
     try {
       if (fullCast) {
         if (!cast || !castSaved)
           throw new Error("Save your cast before generating.");
         plan = narrationPlan(cast, segments, voices, engine);
+        const override = cast.characters.find(c => c.id === "narrator")?.voice_id;
+        if (override) {
+          if (!voices.some(v => v.id === override && v.engine === engine)) {
+            throw new Error("Choose a narrator voice from the selected engine in your cast.");
+          }
+          narrator = override;
+        }
       }
     } catch (e) {
       onError((e as Error).message);
@@ -1129,7 +1158,7 @@ function BookStudio({
       book_id: book.id,
       segment_ids: segments.map((s) => s.id),
       engine,
-      voice_id: chosenVoice,
+      voice_id: narrator,
       language: book.language || "en",
       pronunciation_rules: rules.filter(
         (r) => r.term.trim() && r.replacement.trim(),

@@ -6,7 +6,7 @@ import {
   Save,
   Trash2,
   Users,
-  WandSparkles,
+  ScanText,
 } from "lucide-react";
 import { api, post } from "./api";
 import { sourceSlice, type Assignment, type Cast } from "./casting";
@@ -335,7 +335,7 @@ export function CastEditor({
           {running ? (
             <LoaderCircle size={15} className="spin" />
           ) : (
-            <WandSparkles size={15} />
+            <ScanText size={15} />
           )}
           Analyze book
         </button>
