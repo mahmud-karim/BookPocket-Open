@@ -89,14 +89,21 @@ import ReadiumZIPFoundation
             async let j: Jobs = client.send("/v1/jobs")
             async let b: Books = client.send("/v1/books")
             let result = try await (e, v, j, b)
-            engines = result.0.engines; voices = result.1.voices; jobs = result.2.jobs; books = result.3.books
+            engines = result.0.engines; voices = result.1.voices
+            let downloadedJobIDs = Set(downloads.map(\.jobID))
+            let remoteJobIDs = Set(result.2.jobs.map(\.id))
+            jobs = result.2.jobs + jobs.filter { downloadedJobIDs.contains($0.id) && !remoteJobIDs.contains($0.id) }
+            let neededBookIDs = Set(jobs.map(\.bookId))
+            let remoteBookIDs = Set(result.3.books.map(\.id))
+            books = result.3.books + books.filter { neededBookIDs.contains($0.id) && !remoteBookIDs.contains($0.id) }
             try persist(); status = "Connected to your companion"
         } catch { self.error = error.localizedDescription }
     }
     func upload(_ local: LocalBook, library: LibraryStore) async throws -> RemoteBook {
         guard let client else { throw BookError.message("Pair your PC companion first.") }
         if let existing = books.first(where: { $0.sourceSha256 == local.sourceSHA256 }) { return existing }
-        let remote = try await client.uploadBook(library.file(local, original: true), displayName: "book." + library.file(local, original: true).pathExtension)
+        let filename = local.title.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_") + "." + library.file(local, original: true).pathExtension
+        let remote = try await client.uploadBook(library.file(local, original: true), displayName: filename)
         books.removeAll { $0.id == remote.id }; books.append(remote)
         var updated = library.book(local.id) ?? local; updated.companionBookID = remote.id; library.update(updated)
         try persist(); return remote

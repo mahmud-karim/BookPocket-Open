@@ -15,6 +15,10 @@ final class CompanionContractTests: XCTestCase {
         XCTAssertNotNil(SourceIdentity.scalarRange(timing.startOffset, timing.endOffset, in: segment.text))
     }
     func testCompanionRejectsInsecureAndCredentialURLs() throws {
+        XCTAssertTrue(PinnedSessionDelegate.isLocalHost("192.168.1.20"))
+        XCTAssertTrue(PinnedSessionDelegate.isLocalHost("100.100.1.2"))
+        XCTAssertFalse(PinnedSessionDelegate.isLocalHost("8.8.8.8"))
+        XCTAssertFalse(PinnedSessionDelegate.isLocalHost("example.com"))
         for url in ["http://example.com", "https://user:secret@example.com", "https://example.com?token=secret"] {
             XCTAssertThrowsError(try CompanionClient(url: URL(string: url)!, fingerprint: nil))
         }

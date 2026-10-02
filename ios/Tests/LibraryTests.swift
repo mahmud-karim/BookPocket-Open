@@ -20,6 +20,8 @@ final class LibraryTests: XCTestCase {
         do { let db = try LibraryDatabase(url: url); try db.write("test", value: ["original"]); try db.write("test", value: ["replacement", "🧭"]) }
         let reopened = try LibraryDatabase(url: url)
         XCTAssertEqual(try reopened.read("test", as: [String].self), ["replacement", "🧭"])
+        try reopened.write("identity", value: Optional<CompanionIdentity>.none)
+        XCTAssertNil(try reopened.read("identity", as: CompanionIdentity.self))
     }
     @MainActor func testTextImportPreservesOriginalAndDeduplicates() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

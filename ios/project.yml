@@ -21,10 +21,11 @@ targets:
   BookPocketOpen:
     type: application
     platform: iOS
-    sources: [Sources]
-    resources:
+    sources:
+      - Sources
       - Resources
       - path: ../tests/fixtures/lantern.epub
+        buildPhase: resources
     info:
       path: Info.plist
       properties:
@@ -35,6 +36,8 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         NSLocalNetworkUsageDescription: Connect to your paired audiobook companion to generate and download narration.
         NSCameraUsageDescription: Scan the pairing code displayed by your audiobook companion.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         CFBundleDocumentTypes:
           - CFBundleTypeName: Electronic book
             CFBundleTypeRole: Viewer
@@ -59,10 +62,12 @@ targets:
   BookPocketOpenTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [Tests]
-    resources:
+    sources:
+      - Tests
       - path: ../tests/fixtures/contract-v1.json
+        buildPhase: resources
       - path: ../tests/fixtures/lantern.epub
+        buildPhase: resources
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

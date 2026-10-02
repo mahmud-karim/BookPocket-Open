@@ -130,7 +130,8 @@ struct SourceSelectionView: UIViewRepresentable {
             guard let text = view.text, let range = Range(view.selectedRange, in: text) else { return }
             let a = text.unicodeScalars.distance(from: text.unicodeScalars.startIndex, to: range.lowerBound)
             let b = text.unicodeScalars.distance(from: text.unicodeScalars.startIndex, to: range.upperBound)
-            onSelection(a, b)
+            let callback = onSelection
+            DispatchQueue.main.async { callback(a, b) }
         }
     }
 }

@@ -14,6 +14,8 @@ SQLite WAL stores local library and companion metadata. Original publications st
 
 Companion credentials are in Keychain with device-only after-first-unlock protection. QR pairing pins the SHA-256 fingerprint of the exact leaf certificate for a single HTTPS origin. Without a pin, normal system trust applies. Cross-origin redirects are rejected. Tokens are never embedded in URLs. Pairing requires PC approval.
 
+The scoped `NSAllowsLocalNetworking` declaration permits this local self-signed certificate flow while ATS remains enabled for public domains. The API client independently requires HTTPS and TLS 1.2 or newer; there is no global arbitrary-load exception. This follows Apple's [manual trust](https://developer.apple.com/documentation/Foundation/performing-manual-server-trust-authentication) and [local networking](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowslocalnetworking) guidance.
+
 Submission request IDs are persisted before sending; an uncertain request can be retried without creating a duplicate job. Completed downloads are checked against bytes and SHA-256 and saved atomically. Repeating download continues from completed assets after app termination; an incomplete individual asset is downloaded again. Playback remains offline.
 
 Readium Apple speech synthesis produces text locators; downloaded narration maps Unicode scalar timing offsets into source text, falling back to passage-level highlighting when timing is unavailable. Voice samples can be trimmed/previewed on-device and are uploaded only to the paired companion.

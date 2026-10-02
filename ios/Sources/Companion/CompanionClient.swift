@@ -31,7 +31,16 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskD
         guard challenge.protectionSpace.host.lowercased() == origin.host?.lowercased(), challenge.protectionSpace.port == (origin.port ?? 443), let trust = challenge.protectionSpace.serverTrust, let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else { completionHandler(.cancelAuthenticationChallenge, nil); return }
         let actual = SourceIdentity.hash(SecCertificateCopyData(leaf) as Data)
         guard actual == fingerprint else { completionHandler(.cancelAuthenticationChallenge, nil); return }
+        if !Self.isLocalHost(challenge.protectionSpace.host), !SecTrustEvaluateWithError(trust, nil) { completionHandler(.cancelAuthenticationChallenge, nil); return }
         completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+    static func isLocalHost(_ host: String) -> Bool {
+        let host = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if host == "localhost" || host.hasSuffix(".local") || (!host.contains(".") && !host.contains(":")) { return true }
+        if host == "::1" || (host.contains(":") && (host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("fe80:"))) { return true }
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) else { return false }
+        return octets[0] == 10 || octets[0] == 127 || (octets[0] == 192 && octets[1] == 168) || (octets[0] == 172 && (16...31).contains(octets[1])) || (octets[0] == 169 && octets[1] == 254) || (octets[0] == 100 && (64...127).contains(octets[1]))
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         guard let url = request.url, url.scheme == origin.scheme, url.host == origin.host, (url.port ?? 443) == (origin.port ?? 443) else { completionHandler(nil); return }
@@ -54,6 +63,7 @@ final class CompanionClient {
         baseURL = url; self.fingerprint = cleaned?.isEmpty == false ? cleaned : nil; self.token = token
         delegate = PinnedSessionDelegate(origin: url, fingerprint: self.fingerprint)
         let config = URLSessionConfiguration.default
+        config.tlsMinimumSupportedProtocolVersion = .TLSv12
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 3600
         config.urlCache = nil; config.httpCookieStorage = nil; config.waitsForConnectivity = false
         session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)

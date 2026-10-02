@@ -24,7 +24,9 @@ final class LibraryDatabase {
         let status = sqlite3_step(statement)
         if status == SQLITE_DONE { return nil }
         guard status == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else { throw failure() }
-        return try JSONDecoder().decode(type, from: Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0))))
+        let data = Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 0)))
+        if data == Data("null".utf8) { return nil }
+        return try JSONDecoder().decode(type, from: data)
     }
     func write<T: Encodable>(_ key: String, value: T) throws {
         let data = try JSONEncoder().encode(value)
