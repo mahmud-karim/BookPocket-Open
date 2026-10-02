@@ -47,3 +47,5 @@ A portable Windows package was built using checksum-pinned official CPython 3.12
 Current local combined suite: 38 passing tests. Full-cast privacy opt-in, scalar-span validation and selective rerender cache tests now pass. This does not prove actual LLM attribution quality or real multi-voice speech quality.
 
 Windows hosted installer gate passed: run `37041629940` compiled the unsigned Inno installer, installed it into an isolated directory, downloaded verified upstream media tools and passed installed-runtime checks. The downloaded installer and portable ZIP hashes matched their CI SHA256 files. A subsequent local smoke also exercised the actual pythonw tray launcher with isolated state and confirmed production studio serving; this launcher check is now part of CI smoke.
+
+Hosted run `37042076790` also passed installation plus the actual windowless tray-launch gate. Windows runtime dependency versions are now constrained to that tested package inventory in `scripts/windows-constraints.txt`; the official Python and upstream FFmpeg archives remain SHA256-pinned. Rebuild the installer after subsequent application changes before publishing a release.

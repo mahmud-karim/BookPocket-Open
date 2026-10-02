@@ -20,7 +20,7 @@ Copy-Item -LiteralPath (Join-Path $unpacked 'tools') -Destination (Join-Path $bu
 $python = Join-Path $bundle 'runtime\python.exe'
 & $python -I -m ensurepip --upgrade
 if ($LASTEXITCODE) { throw 'Python pip bootstrap failed' }
-& $python -I -m pip install --disable-pip-version-check --no-compile (Join-Path $repo 'companion')
+& $python -I -m pip install --disable-pip-version-check --no-compile --constraint (Join-Path $PSScriptRoot 'windows-constraints.txt') (Join-Path $repo 'companion')
 if ($LASTEXITCODE) { throw 'Companion dependency installation failed' }
 if (!(Test-Path -LiteralPath (Join-Path $repo 'studio\dist\index.html'))) { throw 'Build studio first' }
 Copy-Item -LiteralPath (Join-Path $repo 'studio\dist') -Destination (Join-Path $bundle 'studio') -Recurse
@@ -60,3 +60,4 @@ Compress-Archive -LiteralPath $bundle -DestinationPath $zip
 $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  $([IO.Path]::GetFileName($zip))" | Set-Content -LiteralPath "$zip.sha256" -Encoding ascii
 Write-Output "Portable package: $zip"
+
