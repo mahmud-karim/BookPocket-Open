@@ -45,7 +45,18 @@ struct ListenView: View {
                     }.padding(.horizontal, landscape ? 28 : 24).padding(.vertical, 12)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 } else {
-                    ContentUnavailableView("Your next listening chapter", systemImage: "headphones", description: Text("Open a book and choose Read aloud, or choose a downloaded narration from the tray above."))
+                    // ContentUnavailableView introduces its own scrolling at
+                    // large text sizes. Listen stays a single fixed surface.
+                    VStack(spacing: 16) {
+                        if !dynamicTypeSize.isAccessibilitySize && geometry.size.height >= 300 {
+                            Image(systemName: "headphones").font(.system(size: 56)).foregroundStyle(Obsidian.accent).accessibilityHidden(true)
+                        }
+                        Text("Ready to listen").font(.system(.title2, design: .serif))
+                            .accessibilityIdentifier("listen.empty.title")
+                        Text("Open a book or choose Downloads above.").font(.body).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("listen.empty.help")
+                    }.multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24).padding(.vertical, 12)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 }
             }.background(Obsidian.background).navigationTitle("Listen").navigationBarTitleDisplayMode(.inline)

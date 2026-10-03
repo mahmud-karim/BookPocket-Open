@@ -19,7 +19,17 @@ final class ReaderUITests: XCTestCase {
         }
         let traitEvidence = XCTAttachment(string: (probe.value as? String) ?? "Missing actual trait")
         traitEvidence.name = "Verified native and SwiftUI accessibility text size"; traitEvidence.lifetime = .keepAlways; add(traitEvidence)
-        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.buttons["listen.downloads"].tap()
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30))
+        assertEmptyListenFits(app, name: "Obsidian empty Listen largest text portrait")
+        let emptyPosition = app.staticTexts["listen.empty.help"].frame
+        app.swipeUp()
+        XCTAssertEqual(app.staticTexts["listen.empty.help"].frame, emptyPosition, "Empty Listen must not scroll")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
+        assertEmptyListenFits(app, name: "Obsidian empty Listen largest text landscape")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
+        app.buttons["listen.downloads"].tap()
         XCTAssertTrue(app.navigationBars["Downloads"].waitForExistence(timeout: 10))
         let downloadsList = app.collectionViews.firstMatch
         XCTAssertTrue(downloadsList.waitForExistence(timeout: 10))
@@ -76,6 +86,25 @@ final class ReaderUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(element.frame.width + 0.001, 44, file: file, line: line)
         XCTAssertGreaterThanOrEqual(element.frame.height + 0.001, 44, file: file, line: line)
         XCTAssertTrue(XCUIApplication().frame.contains(element.frame), file: file, line: line)
+    }
+
+    private func assertEmptyListenFits(_ app: XCUIApplication, name: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(app.scrollViews.count, 0, "Empty Listen must not create a scrolling container", file: file, line: line)
+        let title = app.staticTexts["listen.empty.title"]
+        let help = app.staticTexts["listen.empty.help"]
+        XCTAssertEqual(title.label, "Ready to listen", file: file, line: line)
+        XCTAssertEqual(help.label, "Open a book or choose Downloads above.", file: file, line: line)
+        for text in [title, help] {
+            XCTAssertTrue(text.exists && text.isHittable && app.frame.contains(text.frame), file: file, line: line)
+            XCTAssertGreaterThan(text.frame.height, 0, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(text.frame.minY, app.navigationBars["Listen"].frame.maxY, file: file, line: line)
+            XCTAssertLessThanOrEqual(text.frame.maxY, app.tabBars.buttons["Listen"].frame.minY, file: file, line: line)
+        }
+        XCTAssertLessThanOrEqual(title.frame.maxY, help.frame.minY, file: file, line: line)
+        XCTAssertTrue(app.buttons["listen.downloads"].isHittable, file: file, line: line)
+        for tab in ["Library", "Listen", "Studio"] { XCTAssertTrue(app.tabBars.buttons[tab].isHittable, file: file, line: line) }
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
     }
 
     func testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters() {
