@@ -70,7 +70,12 @@ final class ReaderScopeTests: XCTestCase {
         let controller = UIViewController()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         window.rootViewController = controller; window.makeKeyAndVisible()
-        let web = WKWebView(frame: window.bounds); controller.view.addSubview(web)
+        let web = WKWebView(frame: window.bounds)
+        // Match Readium's EPUBSpreadView: this fixed viewport owns its insets.
+        // Automatic safe-area adjustment can leave short replacement content
+        // scrolled by the device's inset even after JavaScript scrollTo(0, 0).
+        web.scrollView.contentInsetAdjustmentBehavior = .never
+        controller.view.addSubview(web)
         defer { web.removeFromSuperview(); window.isHidden = true }
         let loaded = expectation(description: "Original synthetic HTML rendered")
         let navigation = ScopeNavigation(loaded); web.navigationDelegate = navigation
@@ -116,7 +121,7 @@ final class ReaderScopeTests: XCTestCase {
         }
         if stableSamples < 2 {
             let details = try await web.evaluateJavaScript("JSON.stringify({scrollY,innerHeight,rect:document.querySelector('p').getBoundingClientRect().toJSON()})")
-            let attachment = XCTAttachment(string: String(describing: details))
+            let attachment = XCTAttachment(string: "\(details)\nNative offset: \(web.scrollView.contentOffset), adjusted inset: \(web.scrollView.adjustedContentInset), bounds: \(web.bounds)")
             attachment.name = "Replacement paragraph layout"; attachment.lifetime = .keepAlways; add(attachment)
         }
         XCTAssertEqual(stableSamples, 2, "Replacement paragraph must settle at the top of the viewport")
