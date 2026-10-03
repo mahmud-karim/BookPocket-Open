@@ -24,12 +24,21 @@ def _plain(path, directory=False):
 
 def _assets_root(store):
     assets = (store.root / "assets").absolute()
+    if ".." in assets.parts:
+        raise ValueError("Render assets root must not contain parent traversal")
     for path in (assets, *assets.parents):
         if not _plain(path, directory=True):
             raise ValueError("Render assets root must not contain symbolic links or junctions")
-    if assets.resolve(strict=True) != assets:
+    resolved = assets.resolve(strict=True)
+    for path in (resolved, *resolved.parents):
+        if not _plain(path, directory=True):
+            raise ValueError("Render assets root must not contain symbolic links or junctions")
+    # Windows packaged processes can transparently redirect LocalAppData without
+    # a filesystem reparse point. Compare actual directory identity, not spelling;
+    # use that verified canonical root for every subsequent workspace boundary.
+    if not assets.samefile(resolved):
         raise ValueError("Render assets root did not resolve to its configured directory")
-    return assets
+    return resolved
 
 
 def _lock(file):
