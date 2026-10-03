@@ -37,8 +37,19 @@ import Foundation
             assets.append(asset)
             records.append(DownloadRecord(localBookID: local.id, jobID: "transport-job", asset: asset, file: file, segment: segments[index]))
         }
-        companion.books = [remote]
-        companion.jobs = [RemoteJob(id: "transport-job", bookId: remote.id, status: "completed", engine: "test-only-pcm-tone", voiceId: "not-a-voice", segmentIds: segments.map(\.id), completedSegments: 3, totalSegments: 3, assets: assets)]
+        let first = RemoteJob(id: "transport-job", bookId: remote.id, status: "completed", engine: "test-only-pcm-tone", voiceId: "not-a-voice", segmentIds: [segments[0].id, segments[2].id], completedSegments: 2, totalSegments: 2, assets: [assets[0], assets[2]], createdAt: "2026-01-01T00:00:00Z")
+        let second = RemoteJob(id: "transport-second-job", bookId: remote.id, status: "completed", engine: "test-only-pcm-tone", voiceId: "not-a-voice", segmentIds: [segments[1].id], completedSegments: 1, totalSegments: 1, assets: [assets[1]], createdAt: "2026-01-02T00:00:00Z")
+        records[1].jobID = second.id
+        var excerptAsset = assets[0]; excerptAsset.id = "transport-excerpt-audio"; excerptAsset.sourceStart = 0; excerptAsset.sourceEnd = 4
+        let excerpt = RemoteJob(id: "transport-excerpt-job", bookId: remote.id, status: "completed", engine: "test-only-pcm-tone", voiceId: "alternate-test-tone", segmentIds: [segments[0].id], completedSegments: 1, totalSegments: 1, assets: [excerptAsset], createdAt: "2026-01-03T00:00:00Z", sourceRanges: [.init(segmentId: segments[0].id, startOffset: 0, endOffset: 4)])
+        records.append(.init(localBookID: local.id, jobID: excerpt.id, asset: excerptAsset, file: records[0].file, segment: segments[0]))
+        var other = remote; other.id = "other-book"; other.sourceSha256 = String(repeating: "b", count: 64)
+        other.chapters[0].title = "Different book chapter"
+        var otherJob = first; otherJob.id = "other-job"; otherJob.bookId = other.id
+        var otherRecord = records[0]; otherRecord.localBookID = "other-local-book"; otherRecord.jobID = otherJob.id
+        records.append(otherRecord)
+        companion.books = [remote, other]
+        companion.jobs = [first, second, excerpt, otherJob]
         companion.downloads = records
     }
 

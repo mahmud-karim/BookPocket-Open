@@ -18,6 +18,67 @@ private final class NarrationProtocol: URLProtocol {
 }
 
 final class RangedNarrationTests: XCTestCase {
+    @MainActor func testBookChapterBrowserKeepsIndependentTakesAndHonestLocalScope() throws {
+        let f = try fixture()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = CompanionStore(root: folder)
+        let data = try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: "test-tone", withExtension: "wav")))
+        try data.write(to: folder.appendingPathComponent("tone.wav"))
+        let local = LocalBook(id: "local", title: "Original", author: "Test", language: "en", sourceFile: "original.epub", readingFile: "original.epub", sourceSHA256: f.book.sourceSha256)
+        var remote = f.book
+        let continuation = RemoteSegment(id: "continuation", text: "More original words.", kind: "paragraph", locator: .object([:]))
+        let second = RemoteSegment(id: "second", text: "The second chapter.", kind: "paragraph", locator: .object([:]))
+        remote.chapters[0].segments.append(continuation)
+        remote.chapters.append(.init(id: "second-chapter", title: "Second chapter", href: "EPUB/second.xhtml", segments: [second]))
+        func asset(_ id: String, _ segment: RemoteSegment) -> AudioAsset {
+            AudioAsset(id: id, segmentId: segment.id, mediaType: "audio/wav", duration: 0.25, sha256: SourceIdentity.hash(data), bytes: data.count, url: "/test-only", timings: [])
+        }
+        let firstAssets = [asset("first", remote.segments[0]), asset("continuation-audio", continuation)]
+        func job(_ id: String, _ assets: [AudioAsset], day: Int) -> RemoteJob {
+            RemoteJob(id: id, bookId: remote.id, status: "completed", engine: "test-only", voiceId: "voice-one", segmentIds: assets.compactMap(\.segmentId), completedSegments: assets.count, totalSegments: assets.count, assets: assets, createdAt: "2026-01-0\(day)T00:00:00Z")
+        }
+        let original = job("original", firstAssets, day: 1)
+        var alternate = job("alternate", firstAssets, day: 2); alternate.voiceId = "voice-two"
+        alternate.sourceRanges = remote.chapters[0].segments.map { .init(segmentId: $0.id, startOffset: 0, endOffset: $0.text.unicodeScalars.count) }
+        let separate = job("separate-chapter", [asset("second-audio", second)], day: 3)
+        var excerptAsset = firstAssets[0]; excerptAsset.id = "excerpt"; excerptAsset.sourceStart = 10; excerptAsset.sourceEnd = 11
+        var excerpt = job("page", [excerptAsset], day: 4)
+        excerpt.sourceRanges = [.init(segmentId: remote.segments[0].id, startOffset: 10, endOffset: 11)]
+        let partialDownload = job("partial-download", firstAssets, day: 5)
+        let missing = job("missing", [asset("missing-audio", second)], day: 6)
+        var foreign = remote; foreign.id = "foreign"; foreign.sourceSha256 = "different-original"
+        var foreignJob = separate; foreignJob.id = "foreign-job"; foreignJob.bookId = foreign.id
+        store.books = [remote, foreign]
+        store.jobs = [excerpt, separate, alternate, original, partialDownload, missing, foreignJob]
+        for job in store.jobs {
+            for asset in job.assets {
+                if job.id == partialDownload.id && asset.id == firstAssets[1].id { continue }
+                store.downloads.append(.init(localBookID: local.id, jobID: job.id, asset: asset, file: job.id == missing.id ? "absent.wav" : "tone.wav", segment: remote.segments.first { $0.id == asset.segmentId }))
+            }
+        }
+        store.voices = [.init(id: "voice-one", name: "Original narrator", engine: "test-only", kind: "preset", language: "en"), .init(id: "voice-two", name: "Alternate narrator", engine: "test-only", kind: "preset", language: "en")]
+        let groups = store.downloadedChapterGroups(for: local)
+        XCTAssertEqual(groups.map(\.id), [remote.chapters[0].id, "second-chapter"], "Book order must win over job/download arrival order")
+        XCTAssertEqual(groups[0].takes.map(\.jobID), [original.id, alternate.id, excerpt.id, partialDownload.id])
+        XCTAssertEqual(groups[0].takes.map(\.scope), ["Full chapter", "Full chapter", "Excerpt", "Excerpt"])
+        XCTAssertEqual(groups[1].takes.map(\.jobID), [separate.id], "Wrong originals and missing local files must not appear")
+        XCTAssertTrue(groups[0].takes[0].description.contains("Original narrator"))
+        XCTAssertTrue(groups[0].takes[1].description.contains("Alternate narrator"))
+        XCTAssertNotEqual(groups[0].takes[0].recordIDs, groups[0].takes[1].recordIDs, "Shared cached assets still belong to explicit independent takes")
+        let alternateIndex = try XCTUnwrap(store.jobs.firstIndex { $0.id == alternate.id })
+        store.jobs[alternateIndex].sourceRanges?[0].endOffset = remote.segments[0].text.utf16.count
+        XCTAssertEqual(store.downloadedChapterGroups(for: local)[0].takes[1].scope, "Excerpt", "UTF-16 length cannot prove complete Unicode-scalar coverage")
+        XCTAssertEqual(store.orderedDownloads(jobID: separate.id).map(\.asset.id), ["second-audio"], "Browsing across jobs cannot concatenate their automatic playlists")
+        store.downloads.removeAll { $0.jobID != separate.id }
+        store.downloads[0].localBookID = "different-local-book"
+        XCTAssertTrue(store.downloadedChapterGroups(for: local).isEmpty)
+        store.downloads[0].localBookID = local.id; store.downloads[0].asset.sha256 = "stale-metadata"
+        XCTAssertTrue(store.downloadedChapterGroups(for: local).isEmpty)
+        store.downloads[0].asset = separate.assets[0]
+        try Data([0]).write(to: folder.appendingPathComponent("tone.wav"))
+        XCTAssertTrue(store.downloadedChapterGroups(for: local).isEmpty, "Truncated local files must not earn available/full chapter status")
+    }
     @MainActor func testOfflinePreparationIsActionableAndNeverAcceptsStaleVoiceInventory() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder); NarrationProtocol.handler = nil }

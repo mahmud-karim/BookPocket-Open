@@ -22,7 +22,7 @@ Choose **Generate current chapter**, check the preview's start/end against Conte
 
 ## Playback and hardware
 
-In iOS 0.1.4, open **Listen** with on-device speech and downloaded narration. Confirm all player controls fit without scrolling in portrait and landscape. Tap the chapter row, select a different chapter, and check playback and the saved reading position. Downloaded takes should offer only chapters with audio on this phone. Open the tray to select or remove a downloaded recording.
+In iOS 0.1.5, open **Listen** with on-device speech and downloaded narration. Confirm all player controls fit without scrolling in portrait and landscape. Tap the chapter row, select a different chapter, and check playback and the saved reading position. Generate and download two chapters separately, plus an alternate page excerpt within one chapter. Disconnect the PC and enable airplane mode. The chapter selector should offer both chapters and explicitly distinguish their downloaded takes and excerpts. Choose each in turn and check that playback starts the selected recording from its beginning. A partially downloaded chapter must not claim full coverage, missing files must not be offered, and audio from another book must stay out of this selector. Automatic passage playback must remain within the selected take. Open the tray to select or remove a downloaded recording.
 
 With a sufficiently long downloaded recording, test pause/resume, seek, speed, sleep timer, Bluetooth controls, lock-screen controls, a call or other audio interruption, and Bluetooth disconnection. Then play for at least one hour with the screen locked. Record whether it continued, whether controls worked, and whether the final reading/audio position reopened correctly.
 

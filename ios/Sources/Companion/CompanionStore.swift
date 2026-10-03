@@ -284,6 +284,54 @@ import ReadiumZIPFoundation
             return DownloadedChapter(id: chapter.id, title: chapter.title, firstRecord: first)
         }
     }
+    /// The browser spans a book, but every choice remains an independent job.
+    /// Playback sequencing continues to use orderedDownloads(jobID:) exclusively.
+    func downloadedChapterGroups(for localBook: LocalBook) -> [DownloadedChapterGroup] {
+        let matchingBooks = books.filter { $0.sourceSha256 == localBook.sourceSHA256 }
+        let bookIDs = Set(matchingBooks.map(\.id))
+        let eligibleJobs = jobs.filter { job in bookIDs.contains(job.bookId) && downloads.contains(where: { $0.jobID == job.id && $0.localBookID == localBook.id }) }
+            .sorted { ($0.createdAt ?? "", $0.id) < ($1.createdAt ?? "", $1.id) }
+        var groups: [DownloadedChapterGroup] = []
+        for remote in matchingBooks {
+            for chapter in remote.chapters {
+                var takes: [DownloadedChapterTake] = []
+                for (index, job) in eligibleJobs.enumerated() where job.bookId == remote.id {
+                    let records = orderedDownloads(jobID: job.id).filter { record in
+                        guard record.localBookID == localBook.id, record.legacyTitle == nil,
+                              chapter.segments.contains(where: { $0.id == record.asset.segmentId }),
+                              let asset = job.assets.first(where: { $0.id == record.asset.id }),
+                              record.asset.sha256 == asset.sha256, record.asset.bytes == asset.bytes,
+                              record.asset.segmentId == asset.segmentId,
+                              record.asset.sourceStart == asset.sourceStart, record.asset.sourceEnd == asset.sourceEnd,
+                              let size = try? root.appendingPathComponent(record.file).resourceValues(forKeys: [.fileSizeKey]).fileSize else { return false }
+                        return size == asset.bytes
+                    }
+                    guard let first = records.first else { continue }
+                    let complete = !chapter.segments.isEmpty && chapter.segments.allSatisfy { segment in
+                        guard let record = records.first(where: { $0.asset.segmentId == segment.id }) else { return false }
+                        guard (record.asset.sourceStart == nil) == (record.asset.sourceEnd == nil) else { return false }
+                        let range = job.sourceRanges?.first { $0.segmentId == segment.id }
+                        let start = record.asset.sourceStart ?? range?.startOffset ?? 0
+                        let end = record.asset.sourceEnd ?? range?.endOffset ?? segment.text.unicodeScalars.count
+                        return start == 0 && end == segment.text.unicodeScalars.count &&
+                            (job.sourceRanges?.isEmpty != false || (range?.startOffset == 0 && range?.endOffset == segment.text.unicodeScalars.count))
+                    }
+                    let engine = engines.first(where: { $0.id == job.engine })?.name ?? job.engine
+                    let voice = voices.first(where: { $0.id == job.voiceId })?.name ?? "Voice not saved"
+                    let date = job.createdAt.flatMap { value -> Date? in
+                        let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                        return parser.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+                    }
+                    let detail = "Take \(index + 1) · \(voice) · \(engine)" + (date.map { " · " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "")
+                    takes.append(.init(id: job.id + ":" + chapter.id, jobID: job.id, description: detail, scope: complete ? "Full chapter" : "Excerpt", recordIDs: records.map(\.id), firstRecord: first))
+                }
+                guard !takes.isEmpty else { continue }
+                if let index = groups.firstIndex(where: { $0.id == chapter.id }) { groups[index].takes.append(contentsOf: takes) }
+                else { groups.append(.init(id: chapter.id, title: chapter.title, takes: takes)) }
+            }
+        }
+        return groups
+    }
     func refreshNarrationInventory() async throws {
         guard let client else { throw BookError.message("Pair your PC companion in Studio first.") }
         struct Engines: Decodable { var engines: [RemoteEngine] }

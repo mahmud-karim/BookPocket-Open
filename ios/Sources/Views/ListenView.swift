@@ -7,10 +7,9 @@ struct ListenView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showDownloads = false
     @State private var showChapters = false
-    private var audioChapters: [DownloadedChapter] {
-        guard player.speechChapters.isEmpty, let id = player.bookID, let book = library.book(id),
-              let record = companion.downloads.first(where: { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID }) else { return [] }
-        return companion.downloadedChapters(jobID: record.jobID)
+    @State private var audioChapters: [DownloadedChapterGroup] = []
+    private var hasBookDownloads: Bool {
+        companion.downloads.contains { $0.localBookID == player.bookID }
     }
     var body: some View {
         NavigationStack {
@@ -67,7 +66,10 @@ struct ListenView: View {
         }
     }
     private var chaptersButton: some View {
-        Button { showChapters = true } label: {
+        Button {
+            if let id = player.bookID, let book = library.book(id) { audioChapters = companion.downloadedChapterGroups(for: book) }
+            showChapters = true
+        } label: {
             HStack(spacing: 10) {
                 Image(systemName: "list.bullet")
                 Text(player.chapterTitle.isEmpty ? "Choose chapter" : player.chapterTitle).lineLimit(1)
@@ -75,7 +77,7 @@ struct ListenView: View {
             }.font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
                 .background(Obsidian.surface, in: .rect(cornerRadius: 12))
         }.buttonStyle(.plain).foregroundStyle(Obsidian.accent)
-            .disabled(player.speechChapters.isEmpty && audioChapters.isEmpty)
+            .disabled(player.speechChapters.isEmpty && !hasBookDownloads)
             .accessibilityLabel("Chapters").accessibilityValue(player.chapterTitle).accessibilityIdentifier("listen.chapters")
     }
     @ViewBuilder private var timeline: some View {
@@ -138,18 +140,37 @@ struct ListenView: View {
                         }
                     } footer: { Text("Starts on-device narration at the selected chapter.") }
                 } else {
-                    Section {
-                        ForEach(audioChapters) { chapter in
-                            Button(chapter.title) {
-                                companion.play(chapter.firstRecord, library: library, player: player, fromBeginning: true)
-                                if player.isPlaying { showChapters = false }
-                            }.accessibilityIdentifier("listen.chapter.\(chapter.id)")
+                    ForEach(audioChapters) { chapter in
+                        Section(chapter.title) {
+                            ForEach(chapter.takes) { take in
+                                Button {
+                                    companion.play(take.firstRecord, library: library, player: player, fromBeginning: true)
+                                    if player.isPlaying { showChapters = false }
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            Text(take.scope).font(.headline)
+                                            Text(take.description).font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        if isCurrentTake(take) { Image(systemName: "checkmark").accessibilityLabel("Current take") }
+                                    }
+                                }.accessibilityLabel("\(take.scope), \(take.description)" + (isCurrentTake(take) ? ", Current take" : ""))
+                                    .accessibilityIdentifier("listen.chapter.\(take.id)")
+                            }
                         }
-                    } footer: { Text("Only chapters with audio downloaded in this take are available. Page narrations contain just the selected portion.") }
+                    }
+                    Section {
+                        if audioChapters.isEmpty { Text("No chapter audio is available on this device.").foregroundStyle(.secondary) }
+                    } footer: { Text("Choose a downloaded take for any chapter. Excerpts contain only part of a chapter. Playback continues within the selected take; it never switches to another take automatically.") }
                 }
             }.navigationTitle("Chapters").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showChapters = false } } }
         }.tint(Obsidian.accent)
+    }
+    private func isCurrentTake(_ take: DownloadedChapterTake) -> Bool {
+        guard let id = player.bookID, let current = library.book(id)?.audioAssetID else { return false }
+        return take.recordIDs.contains(current)
     }
 }
 

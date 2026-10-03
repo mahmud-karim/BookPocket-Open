@@ -34,7 +34,7 @@ For other existing voice profiles or broader selections, the Studio flow remains
 
 The reader's **Use on-device voice** menu action starts Apple's speech. Its bottom playback button pauses or resumes the active narration, including downloaded PC audio. Downloaded recordings can play without the PC once their checksums have been verified and they are stored on the phone.
 
-In iOS 0.1.4, **Listen** keeps the player controls on one screen. Tap the chapter row to select a chapter for on-device reading, or a chapter with downloaded audio in the current take. A page-only take offers only its available portion. The tray button in the upper-right corner opens your downloaded recordings.
+In iOS 0.1.5, **Listen** keeps the player controls on one screen. Tap the chapter row to select a chapter for on-device reading, or browse downloaded narration across this book. Separately generated chapters and alternate takes remain separate choices with narrator and take details. Only complete local chapter coverage is labelled **Full chapter**; page selections and partial downloads are labelled **Excerpt**. Selecting a recording starts it from the beginning. Automatic passage playback stays within that take. The tray button in the upper-right corner opens your downloaded recordings.
 
 If preparation says the PC is offline or unreachable, open Book Pocket Open on the PC and confirm the devices can reach the paired address over the same Wi-Fi or your configured Tailscale connection. Start VoiceStudio as well, then tap **Refresh connection** in the narration panel. Reading and downloaded audio remain available while the PC is offline. A certificate error requires checking the saved companion identity; do not bypass certificate validation.
 

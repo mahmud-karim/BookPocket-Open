@@ -46,9 +46,13 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(play.frame, frame, "Downloaded player must also fit without scrolling")
         app.buttons["listen.chapters"].tap()
         XCTAssertTrue(app.navigationBars["Chapters"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["listen.chapter.transport-chapter-0"].exists)
-        XCTAssertFalse(app.buttons["listen.chapter.transport-chapter-2"].exists, "An asset with no local file cannot be offered as an offline chapter")
-        let next = app.buttons["listen.chapter.transport-chapter-1"]
+        let original = app.buttons["listen.chapter.transport-job:transport-chapter-0"]
+        XCTAssertTrue(original.exists); XCTAssertTrue(original.label.contains("Full chapter"))
+        let excerpt = app.buttons["listen.chapter.transport-excerpt-job:transport-chapter-0"]
+        XCTAssertTrue(excerpt.exists); XCTAssertTrue(excerpt.label.contains("Excerpt"))
+        XCTAssertFalse(app.buttons["listen.chapter.transport-job:transport-chapter-2"].exists, "An asset with no local file cannot be offered as an offline chapter")
+        XCTAssertFalse(app.staticTexts["Different book chapter"].exists)
+        let next = app.buttons["listen.chapter.transport-second-job:transport-chapter-1"]
         XCTAssertTrue(next.exists && next.isHittable); next.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Tone two — 120 seconds"), object: app.buttons["listen.chapters"])], timeout: 10), .completed)
         XCTAssertEqual(play.value as? String, "Playing", "Selecting downloaded chapter must start the real local recording")
@@ -76,6 +80,20 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(play.value as? String, "Paused")
         XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), pausedSeconds, "Switching tabs must preserve the paused audio position")
         XCTAssertEqual(position.normalizedSliderPosition, pausedSliderPosition, accuracy: 0.0001)
+        app.buttons["listen.chapters"].tap()
+        XCTAssertTrue(excerpt.waitForExistence(timeout: 10))
+        XCTAssertTrue(excerpt.label.contains("Excerpt")); excerpt.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Tone one — 90 seconds"), object: app.buttons["listen.chapters"])], timeout: 10), .completed)
+        XCTAssertEqual(play.value as? String, "Playing", "An alternate excerpt requires an explicit selection")
+        play.tap()
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 90)
+        app.buttons["listen.chapters"].tap()
+        XCTAssertTrue(excerpt.waitForExistence(timeout: 10))
+        XCTAssertTrue(excerpt.label.contains("Current take"))
+        XCTAssertFalse(original.label.contains("Current take"))
+        let choices = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        choices.name = "Obsidian book chapters with explicit offline takes and excerpt"; choices.lifetime = .keepAlways; add(choices)
+        app.buttons["Done"].tap()
     }
 
     private func audioSeconds(_ label: XCUIElement) -> Double {

@@ -27,7 +27,7 @@ Listen keeps its player controls on one screen, with a chapter selector and a tr
 
 - Native SwiftUI iOS reader using Readium: EPUB and text import, offline books, reading preferences, navigation, bookmarks, highlights, and Apple text-to-speech.
 - Generate the current visible page or table-of-contents chapter from the reader with the PC's external OmniVoice Kyon profile. Preview the exact source text, follow durable progress, and download finished narration for offline playback.
-- Listen without scrolling; choose chapters for on-device reading or chapters available in the current downloaded take. Keep playback speed, sleep timer and transport controls together.
+- Listen without scrolling; choose chapters for on-device reading or browse downloaded chapter recordings across the book. Alternate takes and excerpts remain explicit choices. Keep playback speed, sleep timer and transport controls together.
 - Windows companion and an Obsidian desktop studio: local library, durable narration jobs, voice collection, device approval, and audio exports.
 - Managed Kokoro preset narration and Qwen3-TTS voice cloning, installed separately. Optional integration with an existing VoiceStudio service.
 - Full-cast narration from exact source passages, with editable voices and explicit review of model suggestions.

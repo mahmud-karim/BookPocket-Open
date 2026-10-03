@@ -183,6 +183,19 @@ struct DownloadedChapter: Identifiable {
     var title: String
     var firstRecord: DownloadRecord
 }
+struct DownloadedChapterGroup: Identifiable {
+    var id: String
+    var title: String
+    var takes: [DownloadedChapterTake]
+}
+struct DownloadedChapterTake: Identifiable {
+    var id: String
+    var jobID: String
+    var description: String
+    var scope: String
+    var recordIDs: [String]
+    var firstRecord: DownloadRecord
+}
 struct LegacyRecording: Codable, Identifiable {
     var id: String
     var bookId: String
