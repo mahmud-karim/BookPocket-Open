@@ -8,8 +8,8 @@ settings:
     SWIFT_VERSION: '5.0'
     TARGETED_DEVICE_FAMILY: '1,2'
     CODE_SIGNING_ALLOWED: NO
-    MARKETING_VERSION: '0.1.2'
-    CURRENT_PROJECT_VERSION: '3'
+    MARKETING_VERSION: '0.1.3'
+    CURRENT_PROJECT_VERSION: '4'
 packages:
   Readium:
     url: https://github.com/readium/swift-toolkit.git
@@ -23,7 +23,10 @@ targets:
     platform: iOS
     sources:
       - Sources
-      - Resources
+      - path: Resources
+        excludes: [ReaderScope.js]
+      - path: Resources/ReaderScope.js
+        buildPhase: resources
       - path: ../tests/fixtures/lantern.epub
         buildPhase: resources
     info:

@@ -74,6 +74,8 @@ struct AudioAsset: Codable, Identifiable {
     var bytes: Int
     var url: String
     var timings: [AudioTiming]
+    var sourceStart: Int?
+    var sourceEnd: Int?
 }
 struct RemoteJob: Codable, Identifiable {
     var id: String
@@ -88,6 +90,7 @@ struct RemoteJob: Codable, Identifiable {
     var error: String?
     var assets: [AudioAsset]
     var createdAt: String?
+    var sourceRanges: [SourceRange]?
 }
 struct PronunciationRule: Codable, Identifiable {
     var term: String
@@ -107,6 +110,12 @@ struct GenerationRequest: Codable {
     var cast: [String: String]?
     var narrationPlan: [NarrationSpan]?
     var takeId: String?
+    var sourceRanges: [SourceRange]?
+}
+struct SourceRange: Codable, Equatable {
+    var segmentId: String
+    var startOffset: Int
+    var endOffset: Int
 }
 struct CastCharacter: Codable, Identifiable {
     var id: String
@@ -160,7 +169,7 @@ struct CompanionIdentity: Codable {
     var deviceID: String
 }
 struct DownloadRecord: Codable, Identifiable {
-    var id: String { asset.id }
+    var id: String { jobID + ":" + asset.id }
     var localBookID: String
     var jobID: String
     var asset: AudioAsset

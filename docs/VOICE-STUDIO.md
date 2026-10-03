@@ -17,6 +17,14 @@ Keep VoiceStudio and the PC companion running while generating narration. A shor
 
 ## Generate from the iPhone
 
+In iOS 0.1.3 with PC Companion 0.1.1 or later, open a book and tap the **waveform plus** button in the reader's top bar. Choose **Generate current page** or **Generate current chapter**. The narration panel previews the captured original words and uses the uniquely named **Kyon** profile from the external OmniVoice service. Tap **Generate with Kyon**. With **Play when ready** enabled, the app downloads the finished audio and starts it in the reader; you can also use **Download & play in reader**.
+
+The page is captured before the panel opens, including partial paragraphs. A chapter follows table-of-contents boundaries across intervening EPUB resources. If a book's visible text or chapter boundaries cannot be matched exactly, the app explains the problem before requesting audio. It never expands a page request into whole paragraphs. Reopen the panel after changing pages or reading appearance to capture a new selection.
+
+**Recent narration** reopens the latest page/chapter job for this book. Generation continues on the PC if you close the panel; pause, resume, cancel and retry controls remain available. Keep both the companion and VoiceStudio running during generation. Finished downloads remain playable offline. An older companion requires an update before it can generate exact page ranges.
+
+For other existing voice profiles or broader selections, the Studio flow remains available:
+
 1. Open **Studio → Refresh → Create narration**.
 2. Choose a book from your library, then tap **Send book to companion**. This also retrieves the companion's matching book manifest for a book already on the PC.
 3. Select the existing profile under **Narrator**.
@@ -24,7 +32,7 @@ Keep VoiceStudio and the PC companion running while generating narration. A shor
 5. Tap **Generate narration**. The production queue shows actual progress.
 6. When the recording is ready, tap **Download** in the production queue. Play it from **On this device** in Studio, or from Listen.
 
-The reader's **Read aloud** control uses Apple's on-device speech. Select and download a PC production to hear the VoiceStudio profile instead. Downloaded recordings can play without the PC once their checksums have been verified and they are stored on the phone.
+The reader's **Use on-device voice** menu action starts Apple's speech. Its bottom playback button pauses or resumes the active narration, including downloaded PC audio. Downloaded recordings can play without the PC once their checksums have been verified and they are stored on the phone.
 
 ## Generate from the PC
 

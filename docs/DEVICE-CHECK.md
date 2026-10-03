@@ -14,6 +14,12 @@ Launch the installed Windows companion with the phone and PC on the same network
 
 Generate the short original fixture on the PC. Download the book and completed narration to the phone. Interrupt a download once, relaunch, and retry it; completed verified files should be reused. Disconnect the PC and enable airplane mode. Confirm downloaded narration still plays and highlights the original source. Legacy recordings must retain their no-synchronized-text label.
 
+## Reader page and chapter narration
+
+With iOS 0.1.3 and PC Companion 0.1.1 or later, keep the paired PC and its external OmniVoice service running. Open a text page and choose the reader's waveform-plus menu → **Generate current page**. Compare the preview with the visible words, including a paragraph that continues onto the next screen. Generate with the uniquely named Kyon profile and confirm the downloaded result uses that voice and highlights the same source.
+
+Choose **Generate current chapter**, check the preview's start/end against Contents, and try a chapter containing an intervening illustration resource. Change text size, capture another page, and verify the new selection follows the reflowed page. Close the generation panel and reopen **Recent narration**; pause/resume and retry a failed job. Finished audio should download and play without duplicating completed passages. In airplane mode, reopen recent downloaded narration and confirm playback still works.
+
 ## Playback and hardware
 
 With a sufficiently long downloaded recording, test pause/resume, seek, speed, sleep timer, Bluetooth controls, lock-screen controls, a call or other audio interruption, and Bluetooth disconnection. Then play for at least one hour with the screen locked. Record whether it continued, whether controls worked, and whether the final reading/audio position reopened correctly.

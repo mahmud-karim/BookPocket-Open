@@ -56,13 +56,13 @@ final class CompanionClient {
     private let session: URLSession
     static let decoder: JSONDecoder = { let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase; return d }()
     static let encoder: JSONEncoder = { let e = JSONEncoder(); e.keyEncodingStrategy = .convertToSnakeCase; e.outputFormatting = [.sortedKeys]; return e }()
-    init(url: URL, fingerprint: String?, token: String? = nil) throws {
+    init(url: URL, fingerprint: String?, token: String? = nil, configuration: URLSessionConfiguration? = nil) throws {
         guard url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { throw BookError.message("Use the companion's HTTPS address without credentials, queries, or fragments.") }
         let cleaned = fingerprint?.replacingOccurrences(of: ":", with: "").lowercased()
         if let cleaned, !cleaned.isEmpty, cleaned.count != 64 || cleaned.contains(where: { !$0.isHexDigit }) { throw BookError.message("The certificate fingerprint must contain 64 hexadecimal characters.") }
         baseURL = url; self.fingerprint = cleaned?.isEmpty == false ? cleaned : nil; self.token = token
         delegate = PinnedSessionDelegate(origin: url, fingerprint: self.fingerprint)
-        let config = URLSessionConfiguration.default
+        let config = configuration ?? URLSessionConfiguration.default
         config.tlsMinimumSupportedProtocolVersion = .TLSv12
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 3600
         config.urlCache = nil; config.httpCookieStorage = nil; config.waitsForConnectivity = false

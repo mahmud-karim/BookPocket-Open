@@ -25,7 +25,7 @@ import ReadiumZIPFoundation
     private var client: CompanionClient?
     private var database: LibraryDatabase?
     let root: URL
-    init(root: URL? = nil) {
+    init(root: URL? = nil, client: CompanionClient? = nil) {
         self.root = root ?? URL.documentsDirectory.appendingPathComponent("Companion", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true)
@@ -37,8 +37,9 @@ import ReadiumZIPFoundation
             pendingRequests = try database?.read("pendingRequests", as: [GenerationRequest].self) ?? []
             legacyRecordings = try database?.read("legacyRecordings", as: [LegacyRecording].self) ?? []
             importedPronunciations = try database?.read("pronunciations", as: [PronunciationRule].self) ?? []
-            if let identity, let token = DeviceKeychain.read(account: identity.deviceID) { client = try CompanionClient(url: identity.url, fingerprint: identity.fingerprint, token: token) }
+            if let identity, let token = DeviceKeychain.read(account: identity.deviceID) { self.client = try CompanionClient(url: identity.url, fingerprint: identity.fingerprint, token: token) }
         } catch { self.error = error.localizedDescription }
+        if let client { self.client = client }
     }
     private func persist() throws {
         guard let database else { throw BookError.message("Companion storage is unavailable.") }
@@ -128,32 +129,45 @@ import ReadiumZIPFoundation
         do {
             let file = "Audio/" + SourceIdentity.hash(Data(recording.asset.id.utf8)) + ".wav"
             try await client.download(recording.asset, to: root.appendingPathComponent(file))
-            downloads.removeAll { $0.id == recording.asset.id }
+            downloads.removeAll { $0.jobID == "legacy:" + recording.id && $0.asset.id == recording.asset.id }
             downloads.append(DownloadRecord(localBookID: localBook.id, jobID: "legacy:" + recording.id, asset: recording.asset, file: file, segment: nil, legacyTitle: recording.title, legacyMapping: recording.mapping))
             try persist()
         } catch { self.error = error.localizedDescription }
     }
     func upload(_ local: LocalBook, library: LibraryStore) async throws -> RemoteBook {
         guard let client else { throw BookError.message("Pair your PC companion first.") }
-        if let existing = books.first(where: { $0.sourceSha256 == local.sourceSHA256 }) { return existing }
+        if let existing = books.first(where: { $0.sourceSha256 == local.sourceSHA256 }) {
+            var updated = library.book(local.id) ?? local; updated.companionBookID = existing.id; library.update(updated)
+            return existing
+        }
         let filename = local.title.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_") + "." + library.file(local, original: true).pathExtension
         let remote = try await client.uploadBook(library.file(local, original: true), displayName: filename)
         books.removeAll { $0.id == remote.id }; books.append(remote)
         var updated = library.book(local.id) ?? local; updated.companionBookID = remote.id; library.update(updated)
         try persist(); return remote
     }
-    func generate(book: RemoteBook, segments: [String], voice: RemoteVoice, rules: [PronunciationRule], announce: Bool, cast: [String: String]? = nil, narrationPlan: [NarrationSpan]? = nil, takeID: String? = nil) async throws {
-        let request = GenerationRequest(requestId: UUID().uuidString.lowercased(), bookId: book.id, segmentIds: segments, engine: voice.engine, voiceId: voice.id, language: book.language, pronunciationRules: rules, announceChapters: announce, cast: cast, narrationPlan: narrationPlan, takeId: takeID)
+    @discardableResult func generate(book: RemoteBook, segments: [String], voice: RemoteVoice, rules: [PronunciationRule], announce: Bool, cast: [String: String]? = nil, narrationPlan: [NarrationSpan]? = nil, takeID: String? = nil, sourceRanges: [SourceRange]? = nil) async throws -> RemoteJob {
+        let request = GenerationRequest(requestId: UUID().uuidString.lowercased(), bookId: book.id, segmentIds: segments, engine: voice.engine, voiceId: voice.id, language: book.language, pronunciationRules: rules, announceChapters: announce, cast: cast, narrationPlan: narrationPlan, takeId: takeID, sourceRanges: sourceRanges)
         for existing in pendingRequests {
             var comparison = request
             comparison.requestId = existing.requestId
             if try CompanionClient.encoder.encode(comparison) == CompanionClient.encoder.encode(existing) {
-                try await submit(existing)
-                return
+                return try await submit(existing)
             }
         }
         pendingRequests.append(request); try persist()
-        try await submit(request)
+        return try await submit(request)
+    }
+    func requireSourceRanges() async throws {
+        guard let client else { throw BookError.message("Pair your PC companion in Studio first.") }
+        struct Health: Decodable { var capabilities: [String]? }
+        let health: Health = try await client.send("/v1/health")
+        guard health.capabilities?.contains("source_ranges") == true else { throw BookError.message("Update PC Companion to a version supporting exact source ranges, then reconnect. This PC cannot safely generate only the selected page.") }
+    }
+    func refreshJob(_ id: String) async throws -> RemoteJob {
+        guard let client else { throw BookError.message("Reconnect your paired PC to refresh this narration.") }
+        let job: RemoteJob = try await client.send("/v1/jobs/\(id)")
+        jobs.removeAll { $0.id == id }; jobs.insert(job, at: 0); try persist(); return job
     }
     func fetchCast(_ bookID: String) async throws -> BookCast {
         guard let client else { throw BookError.message("Connect to your companion first.") }
@@ -171,19 +185,24 @@ import ReadiumZIPFoundation
         guard let client else { throw BookError.message("Connect to your companion first.") }
         return try await client.send("/v1/analyses/\(id)")
     }
-    func submit(_ request: GenerationRequest) async throws {
+    @discardableResult func submit(_ request: GenerationRequest) async throws -> RemoteJob {
         guard let client else { throw BookError.message("Pair your PC companion first.") }
+        if request.sourceRanges?.isEmpty == false { try await requireSourceRanges() }
         let job: RemoteJob = try await client.send("/v1/jobs", method: "POST", body: CompanionClient.encoder.encode(request))
+        if let ranges = request.sourceRanges, !ranges.isEmpty, job.sourceRanges != ranges { throw BookError.message("The PC did not confirm the exact source ranges. Update PC Companion before retrying this request.") }
         jobs.removeAll { $0.id == job.id }; jobs.insert(job, at: 0)
         pendingRequests.removeAll { $0.requestId == request.requestId }
         try persist()
+        return job
     }
-    func jobAction(_ job: RemoteJob, _ action: String) async {
+    @discardableResult func jobAction(_ job: RemoteJob, _ action: String) async -> Bool {
         do {
-            guard let client, ["pause", "resume", "retry", "cancel"].contains(action) else { return }
+            guard let client, ["pause", "resume", "retry", "cancel"].contains(action) else { return false }
+            if job.sourceRanges?.isEmpty == false && ["resume", "retry"].contains(action) { try await requireSourceRanges() }
             let updated: RemoteJob = try await client.send("/v1/jobs/\(job.id)/\(action)", method: "POST")
             jobs.removeAll { $0.id == job.id }; jobs.insert(updated, at: 0); try persist()
-        } catch { self.error = error.localizedDescription }
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
     func clone(name: String, engine: String, language: String, transcript: String, sample: URL) async throws {
         guard let client else { throw BookError.message("Pair your companion first.") }
@@ -196,20 +215,25 @@ import ReadiumZIPFoundation
         downloading = job.id; defer { downloading = nil }
         do {
             guard let remote = books.first(where: { $0.id == job.bookId }) else { throw BookError.message("Refresh the companion library before downloading.") }
+            try RangedAudioValidation.validate(job: job, book: remote)
             for asset in job.assets {
-                if let existing = downloads.first(where: { $0.id == asset.id }), FileManager.default.fileExists(atPath: root.appendingPathComponent(existing.file).path) { continue }
                 let file = "Audio/" + SourceIdentity.hash(Data(asset.id.utf8)) + (asset.mediaType.contains("mpeg") ? ".mp3" : ".wav")
-                try await client.download(asset, to: root.appendingPathComponent(file))
-                downloads.removeAll { $0.id == asset.id }
+                if let cached = downloads.first(where: { $0.asset.id == asset.id && $0.asset.sha256 == asset.sha256 }),
+                   let data = try? Data(contentsOf: root.appendingPathComponent(cached.file), options: .mappedIfSafe), data.count == asset.bytes, SourceIdentity.hash(data) == asset.sha256 {
+                    if cached.file != file { try data.write(to: root.appendingPathComponent(file), options: .atomic) }
+                } else { try await client.download(asset, to: root.appendingPathComponent(file)) }
+                let replaced = downloads.filter { $0.jobID == job.id && ($0.asset.id == asset.id || $0.asset.segmentId == asset.segmentId) }
+                downloads.removeAll { $0.jobID == job.id && ($0.asset.id == asset.id || $0.asset.segmentId == asset.segmentId) }
                 downloads.append(DownloadRecord(localBookID: localBook.id, jobID: job.id, asset: asset, file: file, segment: remote.segments.first { $0.id == asset.segmentId }))
                 try persist()
+                for old in replaced where !downloads.contains(where: { $0.file == old.file }) { try? FileManager.default.removeItem(at: root.appendingPathComponent(old.file)) }
             }
         } catch { self.error = error.localizedDescription }
     }
     func play(_ record: DownloadRecord, library: LibraryStore, player: PlaybackController) {
         guard var book = library.book(record.localBookID) else { error = "Import the original book to read alongside this narration."; return }
         do {
-            let offset = book.audioAssetID == record.id ? book.audioSeconds : 0
+            let offset = book.audioAssetID == record.id || book.audioAssetID == record.asset.id ? book.audioSeconds : 0
             let currentFollow = player.bookID == book.id ? player.onLocator : nil
             try player.play(url: root.appendingPathComponent(record.file), book: book, start: offset)
             if let legacyTitle = record.legacyTitle { player.title = legacyTitle; player.subtitle = "Legacy recording · no synchronized text" }
@@ -223,6 +247,9 @@ import ReadiumZIPFoundation
                 guard let library, var current = library.book(record.localBookID) else { return }
                 if abs(seconds - lastSaved) >= 5 { current.audioAssetID = record.id; current.audioSeconds = seconds; library.update(current); lastSaved = seconds }
                 guard let segment = record.segment, var locator = segment.locator.locator else { return }
+                if let start = record.asset.sourceStart, let end = record.asset.sourceEnd, let range = SourceIdentity.scalarRange(start, end, in: segment.text) {
+                    locator.text.highlight = String(segment.text[range]); locator.text.before = String(segment.text[..<range.lowerBound].suffix(60)); locator.text.after = String(segment.text[range.upperBound...].prefix(60))
+                }
                 if let timing = record.asset.timings.first(where: { $0.start <= seconds && $0.end > seconds }), let range = SourceIdentity.scalarRange(timing.startOffset, timing.endOffset, in: segment.text) {
                     locator.text.highlight = String(segment.text[range])
                     locator.text.before = String(segment.text[..<range.lowerBound].suffix(60))
@@ -240,12 +267,15 @@ import ReadiumZIPFoundation
     }
     func orderedDownloads(jobID: String) -> [DownloadRecord] {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return downloads.filter { $0.jobID == jobID } }
-        return job.segmentIds.compactMap { id in downloads.first { $0.jobID == jobID && $0.asset.segmentId == id } }
+        return job.segmentIds.compactMap { id in
+            guard let asset = job.assets.first(where: { $0.segmentId == id }) else { return nil }
+            return downloads.first { $0.jobID == jobID && $0.asset.id == asset.id }
+        }
     }
     func resumeRecord(jobID: String, library: LibraryStore) -> DownloadRecord? {
         let sequence = orderedDownloads(jobID: jobID)
         guard let first = sequence.first, let book = library.book(first.localBookID) else { return sequence.first }
-        return sequence.first { $0.id == book.audioAssetID } ?? first
+        return sequence.first { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID } ?? first
     }
     func takeDescription(jobID: String) -> String {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return "Available offline" }
@@ -259,7 +289,7 @@ import ReadiumZIPFoundation
         let previous = downloads
         downloads.removeAll { $0.jobID == jobID }
         do { try persist() } catch { downloads = previous; throw error }
-        for record in removing { try? FileManager.default.removeItem(at: root.appendingPathComponent(record.file)) }
+        for record in removing where !downloads.contains(where: { $0.file == record.file }) { try? FileManager.default.removeItem(at: root.appendingPathComponent(record.file)) }
     }
     func export(_ job: RemoteJob, format: String) async throws -> URL {
         guard let client else { throw BookError.message("Connect to your companion first.") }
@@ -286,6 +316,7 @@ import ReadiumZIPFoundation
         _ = try await archive.extract(manifest) { metadata.append($0) }
         struct Project: Decodable { var formatVersion: Int; var book: RemoteBook; var job: RemoteJob }
         let project = try CompanionClient.decoder.decode(Project.self, from: metadata)
+        try RangedAudioValidation.validate(job: project.job, book: project.book)
         guard project.formatVersion == 1, let original = entries.first(where: { ["source.epub", "source.txt"].contains($0.path) }) else { throw BookError.message("Unsupported project version or missing original book.") }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -305,7 +336,7 @@ import ReadiumZIPFoundation
             let file = "Audio/" + SourceIdentity.hash(Data(asset.id.utf8)) + ".wav"
             try FileManager.default.createDirectory(at: root.appendingPathComponent("Audio"), withIntermediateDirectories: true)
             try data.write(to: root.appendingPathComponent(file), options: .atomic)
-            downloads.removeAll { $0.id == asset.id }; downloads.append(DownloadRecord(localBookID: local.id, jobID: project.job.id, asset: asset, file: file, segment: project.book.segments.first { $0.id == asset.segmentId }))
+            downloads.removeAll { $0.jobID == project.job.id && $0.asset.id == asset.id }; downloads.append(DownloadRecord(localBookID: local.id, jobID: project.job.id, asset: asset, file: file, segment: project.book.segments.first { $0.id == asset.segmentId }))
             try persist()
         }
         books.removeAll { $0.id == project.book.id }; books.append(project.book)

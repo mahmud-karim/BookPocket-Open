@@ -12,6 +12,8 @@ import UIKit
     var loading = true
     var searchResults: [Locator] = []
     var searching = false
+    var capturingScope = false
+    var sourceDocuments: [String: SourceDocument] = [:]
     let bookID: String
     private let library: LibraryStore
     init(bookID: String, library: LibraryStore) { self.bookID = bookID; self.library = library }

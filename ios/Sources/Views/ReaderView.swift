@@ -27,9 +27,11 @@ final class ReaderContainer: UIViewController {
 struct ReaderView: View {
     @State var model: ReaderModel
     @Environment(PlaybackController.self) private var player
+    @Environment(CompanionStore.self) private var companion
     @Environment(\.dismiss) private var dismiss
     @State private var panel: ReaderPanel?
     @State private var query = ""
+    @State private var narration: ReaderNarrationPresentation?
     @AppStorage("readerFontSize") private var fontSize = 110.0
     @AppStorage("readerScroll") private var scroll = false
     @AppStorage("readerTheme") private var theme = "cream"
@@ -49,6 +51,15 @@ struct ReaderView: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Contents", systemImage: "list.bullet") { panel = .contents }.labelStyle(.iconOnly).accessibilityIdentifier("reader.contents")
                     Menu {
+                        Button("Generate current page", systemImage: "doc.text") { captureNarration(.page) }.accessibilityIdentifier("reader.generate.page")
+                        Button("Generate current chapter", systemImage: "book") { captureNarration(.chapter) }.accessibilityIdentifier("reader.generate.chapter")
+                        if let recent = companion.jobs.first(where: { job in
+                            job.sourceRanges?.isEmpty == false && companion.books.contains(where: { $0.id == job.bookId && $0.sourceSha256 == model.book?.sourceSHA256 })
+                        }) { Button("Recent narration", systemImage: "clock") { narration = ReaderNarrationPresentation(jobID: recent.id) } }
+                        Button("Use on-device voice", systemImage: "speaker.wave.2") { speakOnDevice() }
+                    } label: { Label(model.capturingScope ? "Capturing text…" : "Generate narration", systemImage: "waveform.badge.plus") }
+                    .disabled(model.capturingScope || model.navigator == nil).accessibilityIdentifier("reader.generate")
+                    Menu {
                         Button("Search book", systemImage: "magnifyingglass") { panel = .search }
                         Button("Add bookmark", systemImage: "bookmark") { model.addAnnotation(highlight: false) }
                         Button("Highlight selection", systemImage: "highlighter") { model.addAnnotation(highlight: true) }
@@ -62,12 +73,9 @@ struct ReaderView: View {
                     Button("Previous page", systemImage: "chevron.left") { Task { await model.navigator?.goBackward() } }.labelStyle(.iconOnly).frame(width: 44, height: 44)
                     Spacer()
                     Button {
-                        if player.bookID == model.bookID, player.isPlaying { player.pause() }
-                        else if let pub = model.publication, let book = model.book {
-                            player.speak(publication: pub, book: book, from: model.navigator?.currentLocation)
-                            model.connectPlayback(player)
-                        }
-                    } label: { Label(player.isPlaying && player.bookID == model.bookID ? "Pause" : "Read aloud", systemImage: player.isPlaying && player.bookID == model.bookID ? "pause.fill" : "headphones") }
+                        if player.bookID == model.bookID { player.toggle(); model.connectPlayback(player) }
+                        else { speakOnDevice() }
+                    } label: { Label(player.isPlaying && player.bookID == model.bookID ? "Pause" : player.bookID == model.bookID ? "Resume" : "Read aloud", systemImage: player.isPlaying && player.bookID == model.bookID ? "pause.fill" : "headphones") }
                     .accessibilityIdentifier("reader.speak")
                     Spacer()
                     Button("Next page", systemImage: "chevron.right") { Task { await model.navigator?.goForward() } }.labelStyle(.iconOnly).frame(width: 44, height: 44)
@@ -80,8 +88,16 @@ struct ReaderView: View {
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { panel = nil } } }
                 }.presentationDetents([.medium, .large])
             }
+            .sheet(item: $narration) { presentation in ReaderNarrationView(presentation: presentation, reader: model) }
             .alert("Reader", isPresented: Binding(get: { model.error != nil && !model.loading && model.navigator != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
         }.tint(Obsidian.accent)
+    }
+    private func speakOnDevice() {
+        guard let publication = model.publication, let book = model.book else { return }
+        player.speak(publication: publication, book: book, from: model.navigator?.currentLocation); model.connectPlayback(player)
+    }
+    private func captureNarration(_ scope: NarrationScope) {
+        Task { do { narration = ReaderNarrationPresentation(snapshot: try await model.captureScope(scope)) } catch { model.error = error.localizedDescription } }
     }
     @ViewBuilder private func panelView(_ selected: ReaderPanel) -> some View {
         switch selected {

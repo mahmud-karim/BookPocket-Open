@@ -2,6 +2,32 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--import-fixture"]
+        app.launch()
+        let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 30)); book.tap()
+        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 30))
+        app.buttons["reader.contents"].tap()
+        XCTAssertTrue(app.buttons["The Lantern"].waitForExistence(timeout: 10)); app.buttons["The Lantern"].tap()
+        let paragraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
+        XCTAssertTrue(paragraph.waitForExistence(timeout: 30)); assertVisibleInk(in: paragraph)
+        app.buttons["reader.generate"].tap()
+        let page = app.buttons["reader.generate.page"]
+        XCTAssertTrue(page.waitForExistence(timeout: 10)); page.tap()
+        let preview = app.staticTexts["reader.generation.preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(preview.label.contains("Mira opened the brass lantern"))
+        XCTAssertFalse(preview.label.contains("Across the Bridge"), "Current page must not include the next chapter")
+        XCTAssertTrue(app.buttons["Pair your PC"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Obsidian exact current page narration preview"; screenshot.lifetime = .keepAlways; add(screenshot)
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["reader.speak"].waitForExistence(timeout: 10))
+        assertVisibleInk(in: paragraph)
+    }
+
     func testNarrationMiniPlayerLeavesNativeTabsVisibleAndUsable() {
         executionTimeAllowance = 180
         let app = XCUIApplication()

@@ -27,7 +27,7 @@ struct ListenView: View {
                             Spacer()
                             Menu { Button("Off") { player.sleep(minutes: nil) }; ForEach([5, 15, 30, 45, 60], id: \.self) { minutes in Button("\(minutes) minutes") { player.sleep(minutes: minutes) } } } label: { Label(player.sleepUntil == nil ? "Sleep timer" : "Timer set", systemImage: "moon") }
                         }.padding(.horizontal, 20)
-                        if let current = companion.downloads.first(where: { $0.id == book.audioAssetID }), let remote = companion.books.first(where: { $0.id == companion.jobs.first(where: { $0.id == current.jobID })?.bookId }) {
+                        if let current = companion.downloads.first(where: { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID }), let remote = companion.books.first(where: { $0.id == companion.jobs.first(where: { $0.id == current.jobID })?.bookId }) {
                             Menu("Chapters", systemImage: "list.bullet") {
                                 ForEach(remote.chapters) { chapter in
                                     if let record = companion.orderedDownloads(jobID: current.jobID).first(where: { record in chapter.segments.contains { $0.id == record.asset.segmentId } }) {
