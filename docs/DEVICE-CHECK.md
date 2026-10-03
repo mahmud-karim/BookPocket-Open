@@ -31,3 +31,7 @@ For iOS 0.1.6 or later, enable the largest accessibility text size in iPhone Set
 With a sufficiently long downloaded recording, test pause/resume, seek, speed, sleep timer, Bluetooth controls, lock-screen controls, a call or other audio interruption, and Bluetooth disconnection. Then play for at least one hour with the screen locked. Record whether it continued, whether controls worked, and whether the final reading/audio position reopened correctly.
 
 The application remains a development preview until these device gates have evidence. A failed check should be reported and repaired before promoting the release.
+
+## Cast edits during analysis
+
+With iOS 0.1.8 and Companion 0.1.4 or later, start speaker analysis on an original fixture. While it runs, rename a character, remove an alias, select a voice, delete an assignment and add a reviewed selection containing an emoji. Close and reopen the cast editor while the PC continues analysis. It should resume polling, retain the local changes, and add only suggestions outside protected ranges. Save after reviewing the result, then reopen and confirm the saved cast. Interrupt the phone's connection during polling, reconnect and retry the analysis refresh. Unsaved drafts survive editor dismissal while the app stays open; they are not promised across app termination.

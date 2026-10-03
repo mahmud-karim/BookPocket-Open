@@ -31,6 +31,11 @@ import ReadiumZIPFoundation
         var valid: Bool
     }
     @ObservationIgnored private var verifiedFiles: [String: VerifiedFile] = [:]
+    @ObservationIgnored private var castDrafts: [String: CastDraft] = [:]
+    func castDraft(for bookID: String) -> CastDraft {
+        if let draft = castDrafts[bookID] { return draft }
+        let draft = CastDraft(); castDrafts[bookID] = draft; return draft
+    }
     let root: URL
     init(root: URL? = nil, client: CompanionClient? = nil) {
         self.root = root ?? URL.documentsDirectory.appendingPathComponent("Companion", isDirectory: true)

@@ -117,13 +117,13 @@ struct SourceRange: Codable, Equatable {
     var startOffset: Int
     var endOffset: Int
 }
-struct CastCharacter: Codable, Identifiable {
+struct CastCharacter: Codable, Identifiable, Equatable {
     var id: String
     var name: String
     var aliases: [String]
     var voiceId: String?
 }
-struct CastAssignment: Codable, Identifiable {
+struct CastAssignment: Codable, Identifiable, Equatable {
     var id: String
     var segmentId: String
     var startOffset: Int
@@ -132,7 +132,7 @@ struct CastAssignment: Codable, Identifiable {
     var confidence: Double
     var reviewed: Bool
 }
-struct BookCast: Codable {
+struct BookCast: Codable, Equatable {
     var characters: [CastCharacter] = []
     var assignments: [CastAssignment] = []
 }

@@ -1,5 +1,6 @@
 """Exact-source casting with explicit hosted-analysis consent and persisted review."""
 import json
+import re
 import threading
 import uuid
 from urllib.parse import urlparse
@@ -92,6 +93,10 @@ def dialogue_units(segments):
                     # Apostrophes within words are not nested dialogue.
                     if char in {'’', "'"} and offset and offset+1 < len(segment["text"]) and segment["text"][offset-1].isalnum() and segment["text"][offset+1].isalnum():
                         continue
+                    # Clear plural possessives, e.g. pilots' maps, also occur
+                    # inside dialogue. Other standalone marks still need review.
+                    if char in {'’', "'"} and re.search(r"\b[^\W\d_]+s$", segment["text"][:offset], re.IGNORECASE) and re.match(r"\s+[^\W\d_]", segment["text"][offset+1:]):
+                        continue
                     raise ValueError("Nested quotation marks need manual casting review; automatic analysis has not assigned this passage")
             elif char in pairs:
                 start, closing = offset, pairs[char]
@@ -102,6 +107,31 @@ def dialogue_units(segments):
         if closing is not None:
             raise ValueError("Unbalanced or multi-paragraph dialogue needs manual casting review")
     return units
+
+
+def merge_analysis(old, current, result):
+    """Three-way merge: saved edits and deletions win over in-flight suggestions."""
+    if not current.characters and not current.assignments and (old.characters or old.assignments):
+        return current.model_copy(deep=True)
+    old_characters = {c.id: c for c in old.characters}
+    current_characters = {c.id: c for c in current.characters}
+    deleted_characters = old_characters.keys() - current_characters.keys()
+    old_assignments = {a.id: a for a in old.assignments}
+    current_assignments = {a.id: a for a in current.assignments}
+    preserved = [a for a in current.assignments if a.reviewed or old_assignments.get(a.id) != a]
+    suppressed = preserved + [a for a in old.assignments if current_assignments.get(a.id) != a]
+    result.assignments = [a for a in result.assignments if a.character_id not in deleted_characters and not any(
+        r.segment_id == a.segment_id and r.start_offset < a.end_offset and a.start_offset < r.end_offset for r in suppressed)] + preserved
+    characters = {c.id: c for c in result.characters if c.id not in deleted_characters}
+    for character in current.characters:
+        suggestion = characters.get(character.id)
+        previous = old_characters.get(character.id)
+        merged = character.model_copy(deep=True)
+        if suggestion and previous and character.aliases == previous.aliases:
+            merged.aliases = list(dict.fromkeys(character.aliases + suggestion.aliases))
+        characters[character.id] = merged
+    result.characters = list(characters.values())
+    return result
 
 
 def resolve_utterances(result, units, characters):
@@ -193,6 +223,7 @@ def register_casting(app, store, auth, admin, get_book):
     def analyze(identity: str, body: AnalysisRequest):
         book, cfg = get_book(identity), settings()
         if cfg["hosted"] and not body.allow_hosted: raise HTTPException(409, "Confirm sending this book to the configured hosted analysis API")
+        old = Cast.model_validate(get_cast(identity))
         if not analysis_lock.acquire(blocking=False): raise HTTPException(409, "Another casting analysis is running")
         job = {"id": str(uuid.uuid4()), "book_id": identity, "status": "queued", "completed_segments": 0,
                "total_segments": sum(len(c["segments"]) for c in book["chapters"]), "created_at": now(), "error": None, "warnings": ["Automatic casting identifies paired double-quoted dialogue only. Unquoted speech, script dialogue, and literary quotation conventions need manual review; unassigned prose uses the narrator."]}
@@ -203,7 +234,6 @@ def register_casting(app, store, auth, admin, get_book):
             try:
                 job["status"] = "running"
                 persist()
-                old = Cast.model_validate(get_cast(identity))
                 characters = {c.id: c for c in old.characters}
                 assignments = []
                 segments = [s for c in book["chapters"] for s in c["segments"]]
@@ -264,16 +294,7 @@ def register_casting(app, store, auth, admin, get_book):
                     db.execute("BEGIN IMMEDIATE")
                     row = db.execute("SELECT data FROM casts WHERE book_id=?", (identity,)).fetchone()
                     current = Cast.model_validate_json(row[0]) if row else old
-                    reviewed = [a for a in current.assignments if a.reviewed]
-                    result.assignments = [a for a in result.assignments if not any(r.segment_id == a.segment_id and r.start_offset < a.end_offset and a.start_offset < r.end_offset for r in reviewed)] + reviewed
-                    latest_characters = {c.id: c for c in result.characters}
-                    for character in current.characters:
-                        if character.id in latest_characters:
-                            latest_characters[character.id].voice_id = character.voice_id
-                            latest_characters[character.id].name = character.name
-                            latest_characters[character.id].aliases = list(dict.fromkeys(character.aliases + latest_characters[character.id].aliases))
-                        else: latest_characters[character.id] = character
-                    result.characters = list(latest_characters.values())
+                    result = merge_analysis(old, current, result)
                     validate_cast(result, book)
                     db.execute("INSERT OR REPLACE INTO casts VALUES(?,?)", (identity, canonical(result.model_dump())))
                 job.update(status="completed", finished_at=now())

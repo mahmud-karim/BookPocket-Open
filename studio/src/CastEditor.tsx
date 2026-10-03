@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Check,
   LoaderCircle,
@@ -10,16 +10,11 @@ import {
 } from "lucide-react";
 import { api, post } from "./api";
 import { sourceSlice, type Assignment, type Cast } from "./casting";
+import { CastDraft, type CastService } from "./castDraft";
 import type { Book, Voice } from "./types";
 
-type Analysis = {
-  id: string;
-  status: string;
-  completed_segments: number;
-  total_segments: number;
-  error?: string;
-  warnings?: string[];
-};
+// Unsaved drafts survive switching books or closing this panel for this session.
+const drafts = new Map<string, CastDraft>();
 type Analyzer = {
   configured: boolean;
   url?: string;
@@ -39,12 +34,33 @@ export function CastEditor({
   onChange: (cast: Cast | undefined, saved: boolean) => void;
   onError: (message: string) => void;
 }) {
-  const [cast, setCast] = useState<Cast>();
-  const [saved, setSaved] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const draft = useMemo(() => {
+    let value = drafts.get(book.id);
+    if (!value) {
+      value = new CastDraft(book.chapters.flatMap((c) => c.segments));
+      drafts.set(book.id, value);
+    }
+    return value;
+  }, [book.id]);
+  const [, render] = useState(0);
+  const { value: cast, saved, busy, analysis } = draft;
+  const service: CastService = useMemo(
+    () => ({
+      fetch: () => api<Cast>(`/v1/books/${book.id}/cast`),
+      save: (value) =>
+        api<Cast>(`/v1/books/${book.id}/cast`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(value),
+        }),
+      analyze: (allow_hosted) =>
+        post(`/v1/books/${book.id}/analyze`, { allow_hosted }),
+      poll: (id) => api(`/v1/analyses/${id}`),
+    }),
+    [book.id],
+  );
   const [chapter, setChapter] = useState(0);
   const [character, setCharacter] = useState("narrator");
-  const [analysis, setAnalysis] = useState<Analysis>();
   const [analyzer, setAnalyzer] = useState<Analyzer>();
   const [allowHosted, setAllowHosted] = useState(false);
   const [selection, setSelection] = useState<{
@@ -52,67 +68,57 @@ export function CastEditor({
     start: number;
     end: number;
   }>();
-  const reload = useCallback(async () => {
-    const value = await api<Cast>(`/v1/books/${book.id}/cast`);
-    setCast(value);
-    setSaved(true);
-    onChange(value, true);
-  }, [book.id, onChange]);
   useEffect(() => {
-    void reload().catch((e) => onError(e.message));
+    const notify = () => {
+      render((count) => count + 1);
+      onChange(draft.value, draft.saved);
+    };
+    const unsubscribe = draft.subscribe(notify);
+    notify();
+    let active = true;
+    void draft.load(service).catch((e) => {
+      if (active) onError(e.message);
+    });
     void api<Analyzer>("/v1/admin/analyzer")
-      .then(setAnalyzer)
-      .catch((e) => onError(e.message));
-  }, [reload, onError]);
+      .then((value) => {
+        if (active) setAnalyzer(value);
+      })
+      .catch((e) => {
+        if (active) onError(e.message);
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [draft, service, onChange, onError]);
   useEffect(() => {
-    if (!analysis || !["queued", "running"].includes(analysis.status)) return;
+    if (!analysis || !busy) return;
+    let active = true;
     const timer = setInterval(() => {
-      void api<Analysis>(`/v1/analyses/${analysis.id}`)
-        .then(async (next) => {
-          setAnalysis(next);
-          if (next.status === "completed") await reload();
-          if (next.status === "failed")
-            onError(next.error ?? "Cast analysis failed.");
-        })
-        .catch((e) => onError(e.message));
+      void draft.poll(service).catch((e) => {
+        if (active) onError(e.message);
+      });
     }, 1800);
-    return () => clearInterval(timer);
-  }, [analysis?.id, analysis?.status, reload, onError]);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [draft, service, analysis?.id, busy, onError]);
   function change(next: Cast) {
-    setCast(next);
-    setSaved(false);
-    onChange(next, false);
+    draft.change(next);
   }
   async function save() {
-    if (!cast) return;
-    setBusy(true);
     try {
-      const next = await api<Cast>(`/v1/books/${book.id}/cast`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cast),
-      });
-      setCast(next);
-      setSaved(true);
-      onChange(next, true);
+      await draft.save(service);
     } catch (e) {
       onError((e as Error).message);
-    } finally {
-      setBusy(false);
     }
   }
   async function analyze() {
-    setBusy(true);
     try {
-      setAnalysis(
-        await post<Analysis>(`/v1/books/${book.id}/analyze`, {
-          allow_hosted: allowHosted,
-        }),
-      );
+      await draft.analyze(service, allowHosted);
     } catch (e) {
       onError((e as Error).message);
-    } finally {
-      setBusy(false);
     }
   }
   function capture(element: HTMLParagraphElement, segment_id: string) {
@@ -184,7 +190,7 @@ export function CastEditor({
         </div>
         <button
           className="secondary"
-          disabled={busy || saved || running}
+          disabled={busy || saved || draft.loading}
           onClick={() => void save()}
         >
           <Save size={15} />
@@ -203,7 +209,6 @@ export function CastEditor({
                 aria-label={`Name for ${c.name}`}
                 value={c.name}
                 maxLength={120}
-                disabled={running}
                 onChange={(e) =>
                   change({
                     ...cast,
@@ -217,7 +222,6 @@ export function CastEditor({
                 aria-label={`Aliases for ${c.name}`}
                 placeholder="Aliases, separated by commas"
                 value={c.aliases.join(", ")}
-                disabled={running}
                 onChange={(e) =>
                   change({
                     ...cast,
@@ -238,7 +242,6 @@ export function CastEditor({
             <select
               aria-label={`Voice for ${c.name}`}
               value={c.voice_id ?? ""}
-              disabled={running}
               onChange={(e) =>
                 change({
                   ...cast,
@@ -262,7 +265,6 @@ export function CastEditor({
             {c.id !== "narrator" && (
               <button
                 className="icon-button"
-                disabled={running}
                 aria-label={`Remove ${c.name}`}
                 onClick={() => {
                   if (
@@ -287,7 +289,6 @@ export function CastEditor({
       </div>
       <button
         className="small-button"
-        disabled={running}
         onClick={() => {
           const id = crypto.randomUUID();
           change({
@@ -330,6 +331,7 @@ export function CastEditor({
           className="secondary"
           disabled={
             busy ||
+            draft.loading ||
             running ||
             !saved ||
             !analyzer?.configured ||
@@ -406,9 +408,7 @@ export function CastEditor({
           </select>
           <button
             className="primary"
-            disabled={
-              running || !cast.characters.some((c) => c.id === character)
-            }
+            disabled={!cast.characters.some((c) => c.id === character)}
             onClick={assign}
           >
             <Check size={15} />
@@ -429,7 +429,6 @@ export function CastEditor({
             </p>
             <button
               className="small-button"
-              disabled={running}
               onClick={() =>
                 setSelection({
                   segment_id: s.id,
@@ -455,7 +454,6 @@ export function CastEditor({
                     <select
                       aria-label="Speaker"
                       value={a.character_id}
-                      disabled={running}
                       onChange={(e) =>
                         change({
                           ...cast,
@@ -480,7 +478,6 @@ export function CastEditor({
                     <label className="checkbox">
                       <input
                         type="checkbox"
-                        disabled={running}
                         checked={a.reviewed}
                         onChange={(e) =>
                           change({
@@ -499,7 +496,6 @@ export function CastEditor({
                     </label>
                     <button
                       className="icon-button"
-                      disabled={running}
                       aria-label="Remove passage assignment"
                       onClick={() =>
                         change({

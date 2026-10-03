@@ -4,16 +4,24 @@ import UIKit
 struct CastView: View {
     let book: RemoteBook
     @Environment(CompanionStore.self) private var companion
+    var body: some View { CastDraftView(book: book, draft: companion.castDraft(for: book.id)) }
+}
+
+private struct CastDraftView: View {
+    let book: RemoteBook
+    @Bindable var draft: CastDraft
+    @Environment(CompanionStore.self) private var companion
     @Environment(\.dismiss) private var dismiss
-    @State private var cast = BookCast()
     @State private var name = ""
-    @State private var adding = false
-    @State private var dirty = false
-    @State private var busy = false
     @State private var allowHosted = false
-    @State private var analysis: AnalysisJob?
-    @State private var error: String?
     @State private var showingAssignment = false
+    @State private var action: Task<Void, Never>?
+    private var service: CastService {
+        CastService(fetch: { try await companion.fetchCast(book.id) },
+                    save: { try await companion.saveCast($0, bookID: book.id) },
+                    analyze: { try await companion.analyze(book.id, allowHosted: $0) },
+                    poll: { try await companion.analysis($0) })
+    }
     var body: some View {
         NavigationStack {
             Form {
@@ -21,9 +29,11 @@ struct CastView: View {
                     Text("Build a cast for every conversation. Voices stay attached to the original words.").foregroundStyle(.secondary)
                     Toggle("Allow configured hosted analysis", isOn: $allowHosted)
                     Text(allowHosted ? "Analysis will send book text to the hosted API configured on your PC." : "Analysis uses your PC's local model. Hosted APIs are blocked.").font(.caption).foregroundStyle(.secondary)
-                    Button("Analyze speakers", systemImage: "person.2.wave.2") { startAnalysis() }.disabled(busy)
-                    if let analysis {
-                        Text("\(analysis.status.capitalized) · \(analysis.completedSegments)/\(analysis.totalSegments) passages").font(.caption)
+                    Button("Analyze speakers", systemImage: "person.2.wave.2") { startAnalysis() }.disabled(draft.busy)
+                    if draft.loading { ProgressView("Loading saved cast…") }
+                    if let analysis = draft.analysis {
+                        if draft.mergingResults { ProgressView("Loading suggestions…") }
+                        else { Text("\(analysis.status.capitalized) · \(analysis.completedSegments)/\(analysis.totalSegments) passages").font(.caption) }
                         if let message = analysis.error { Text(message).foregroundStyle(.red) }
                         ForEach(Array((analysis.warnings ?? []).enumerated()), id: \.offset) { _, warning in
                             Label(warning, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
@@ -31,7 +41,7 @@ struct CastView: View {
                     }
                 }
                 Section("Characters") {
-                    ForEach($cast.characters) { $character in
+                    ForEach($draft.value.characters) { $character in
                         VStack(alignment: .leading, spacing: 8) {
                             TextField("Character name", text: $character.name)
                             TextField("Aliases, separated by commas", text: Binding(get: { character.aliases.joined(separator: ", ") }, set: { character.aliases = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }))
@@ -41,30 +51,45 @@ struct CastView: View {
                                 ForEach(companion.voices) { Text($0.name).tag($0.id) }
                             }
                         }
+                    }.onDelete { offsets in
+                        let removed = Set(offsets.map { draft.value.characters[$0].id })
+                        draft.value.characters.remove(atOffsets: offsets)
+                        draft.value.assignments.removeAll { removed.contains($0.characterId) }
                     }
-                    HStack { TextField("New character", text: $name); Button("Add") { cast.characters.append(CastCharacter(id: UUID().uuidString, name: name, aliases: [], voiceId: nil)); name = ""; dirty = true }.disabled(name.isEmpty) }
+                    HStack { TextField("New character", text: $name); Button("Add") { draft.value.characters.append(CastCharacter(id: UUID().uuidString, name: name, aliases: [], voiceId: nil)); name = "" }.disabled(name.isEmpty) }
                 }
                 Section {
-                    ForEach($cast.assignments) { $assignment in
+                    ForEach($draft.value.assignments) { $assignment in
                         VStack(alignment: .leading, spacing: 10) {
                             if let text = excerpt(assignment) { Text(text).font(.system(.body, design: .serif)).lineLimit(5) }
-                            Picker("Speaker", selection: $assignment.characterId) { ForEach(cast.characters) { Text($0.name).tag($0.id) } }
+                            Picker("Speaker", selection: $assignment.characterId) { ForEach(draft.value.characters) { Text($0.name).tag($0.id) } }
                             if !assignment.reviewed { Label(assignment.confidence < 0.8 ? "Uncertain speaker — review required" : "Suggested speaker", systemImage: "questionmark.circle").font(.caption).foregroundStyle(.secondary) }
                             Toggle("Reviewed", isOn: $assignment.reviewed)
                         }.padding(.vertical, 6)
-                    }.onDelete { cast.assignments.remove(atOffsets: $0); dirty = true }
-                    Button("Assign selected words", systemImage: "text.cursor") { showingAssignment = true }.disabled(cast.characters.isEmpty)
+                    }.onDelete { draft.value.assignments.remove(atOffsets: $0) }
+                    Button("Assign selected words", systemImage: "text.cursor") { showingAssignment = true }.disabled(draft.value.characters.isEmpty)
                 } header: { Text("Dialogue & narration") } footer: { Text("Delete an incorrect range and select its exact replacement. Unassigned words use the narrator.") }
-                if let error { Text(error).foregroundStyle(.red) }
-                Button(busy ? "Saving…" : "Save cast") { save() }.disabled(busy)
+                if let error = draft.error { Text(error).foregroundStyle(.red) }
+                if draft.canResumeAnalysis {
+                    Button("Refresh analysis results", systemImage: "arrow.clockwise") {
+                        action = Task { await draft.load(book: book, service: service) }
+                    }
+                }
+                if draft.dirty { Text("Unsaved edits are kept while this app stays open.").font(.caption).foregroundStyle(.secondary) }
+                Button("Save cast") { save() }.disabled(draft.busy)
             }
             .navigationTitle("Cast studio").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save & close") { busy = true; Task { do { try await companion.saveCast(cast, bookID: book.id); dismiss() } catch { self.error = error.localizedDescription }; busy = false } }.disabled(busy) } }
-            .task { do { cast = try await companion.fetchCast(book.id) } catch { self.error = error.localizedDescription } }
-            .sheet(isPresented: $showingAssignment) { SpanAssignmentView(book: book, characters: cast.characters) { assignment in
-                let overlaps = cast.assignments.contains { $0.segmentId == assignment.segmentId && $0.startOffset < assignment.endOffset && assignment.startOffset < $0.endOffset }
-                if overlaps { error = "Those words already have a speaker. Delete the overlapping assignment first." }
-                else { cast.assignments.append(assignment); dirty = true }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save & close") { save(close: true) }.disabled(draft.busy) } }
+            .task { await draft.load(book: book, service: service) }
+            .onDisappear {
+                guard !showingAssignment else { return }
+                if !draft.awaitingAnalysisConfirmation { action?.cancel() }
+                draft.cancel()
+            }
+            .sheet(isPresented: $showingAssignment) { SpanAssignmentView(book: book, characters: draft.value.characters) { assignment in
+                let overlaps = draft.value.assignments.contains { CastMerge.overlaps($0, assignment) }
+                if overlaps { draft.error = "Those words already have a speaker. Delete the overlapping assignment first." }
+                else { draft.value.assignments.append(assignment) }
             } }
         }
     }
@@ -72,20 +97,14 @@ struct CastView: View {
         guard let segment = book.segments.first(where: { $0.id == assignment.segmentId }), let range = SourceIdentity.scalarRange(assignment.startOffset, assignment.endOffset, in: segment.text) else { return nil }
         return String(segment.text[range])
     }
-    private func save() { busy = true; Task { do { try await companion.saveCast(cast, bookID: book.id); dirty = false } catch { self.error = error.localizedDescription }; busy = false } }
-    private func startAnalysis() {
-        busy = true; error = nil
-        Task {
-            do {
-                try await companion.saveCast(cast, bookID: book.id)
-                analysis = try await companion.analyze(book.id, allowHosted: allowHosted)
-                while let current = analysis, ["queued", "running"].contains(current.status) {
-                    try await Task.sleep(for: .seconds(3)); analysis = try await companion.analysis(current.id)
-                }
-                cast = try await companion.fetchCast(book.id)
-            } catch { self.error = error.localizedDescription }
-            busy = false
+    private func save(close: Bool = false) {
+        action = Task {
+            let saved = await draft.save(service: service)
+            if close && saved && !Task.isCancelled { dismiss() }
         }
+    }
+    private func startAnalysis() {
+        action = Task { await draft.analyze(book: book, hosted: allowHosted, service: service) }
     }
 }
 
