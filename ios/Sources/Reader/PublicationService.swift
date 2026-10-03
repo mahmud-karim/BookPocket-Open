@@ -34,7 +34,11 @@ import ReadiumZIPFoundation
         for file in ["META-INF/container.xml", "package.opf", "text.xhtml", "nav.xhtml"] { try await archive.addEntry(with: file, relativeTo: temp, compressionMethod: .deflate) }
     }
     static func validateArchive(_ url: URL) async throws {
-        let archive = try await Archive(url: url, accessMode: .read)
+        let archive: Archive
+        do { archive = try await Archive(url: url, accessMode: .read) }
+        catch Archive.ArchiveError.missingEndOfCentralDirectoryRecord {
+            throw BookError.message("This EPUB is damaged or its download is incomplete. Download a fresh copy and try again. Your original file has not been changed.")
+        }
         let entries = try await archive.entries()
         guard entries.count <= 20_000 else { throw BookError.message("This EPUB contains too many files.") }
         var total: UInt64 = 0

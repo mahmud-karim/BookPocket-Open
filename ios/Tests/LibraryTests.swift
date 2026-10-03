@@ -68,4 +68,26 @@ final class LibraryTests: XCTestCase {
         do { try await PublicationService.validateArchive(url); XCTFail("Archive traversal must be rejected") }
         catch { XCTAssertTrue(error.localizedDescription.contains("unsafe")) }
     }
+    @MainActor func testIncompleteEPUBGivesRecoveryAdviceWithoutChangingSourceOrLibrary() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lantern", withExtension: "epub"))
+        let complete = try Data(contentsOf: fixture)
+        let incomplete = Data(complete.dropLast(22))
+        let source = folder.appendingPathComponent("incomplete.epub")
+        try incomplete.write(to: source)
+        let library = LibraryStore(root: folder.appendingPathComponent("Library"))
+        do { try await library.importBook(source); XCTFail("An incomplete archive must not enter the library") }
+        catch {
+            XCTAssertTrue(error.localizedDescription.contains("download is incomplete"))
+            XCTAssertTrue(error.localizedDescription.contains("Download a fresh copy"))
+        }
+        XCTAssertEqual(try Data(contentsOf: source), incomplete)
+        XCTAssertTrue(library.books.isEmpty)
+        XCTAssertTrue(LibraryStore(root: library.root).books.isEmpty)
+        XCTAssertFalse(library.importing)
+        let remaining = try FileManager.default.contentsOfDirectory(at: library.root, includingPropertiesForKeys: [.isDirectoryKey])
+        XCTAssertTrue(try remaining.allSatisfy { try $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory != true }, "Failed imports must not leave book folders")
+    }
 }
