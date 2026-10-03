@@ -11,6 +11,8 @@ struct ReaderPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showPairing = false
     @State private var showCast = false
+    @State private var chooser: Chooser?
+    private enum Chooser { case narrator, scope }
     private var job: RemoteJob? { companion.jobs.first { $0.id == state.selectedJobID } }
     private var active: Bool {
         guard player.bookID == reader.bookID else { return false }
@@ -22,15 +24,19 @@ struct ReaderPlayerView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var detail: Detail?
     private enum Detail: Identifiable {
-        case production, chapters([DownloadedChapterGroup])
-        var id: String { if case .production = self { return "production" }; return "chapters" }
+        case production, scope, chapters([DownloadedChapterGroup])
+        var id: String {
+            switch self { case .production: return "production"; case .scope: return "scope"; case .chapters: return "chapters" }
+        }
     }
     private var canPlay: Bool { state.mode == .device || active || (job.map { state.readyIDs.contains($0.id) } ?? false) }
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
                 Group {
-                    if geometry.size.width > geometry.size.height * 1.5 {
+                    if let chooser {
+                        choices(chooser, wide: geometry.size.width > geometry.size.height * 1.5)
+                    } else if geometry.size.width > geometry.size.height * 1.5 {
                         HStack(alignment: .center, spacing: 24) { transport; actions.frame(maxWidth: 220) }
                     } else {
                         VStack(spacing: 12) { transport; actions }
@@ -39,11 +45,22 @@ struct ReaderPlayerView: View {
             }.background(Obsidian.background)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("reader.player.surface")
                 .navigationTitle("Read aloud").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { state.invalidatePlaybackIntent(); if let onClose { onClose() } else { dismiss() } } } }
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        if chooser != nil { Button("Back") { chooser = nil }.accessibilityIdentifier("reader.player.choice.back") }
+                    }
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { state.invalidatePlaybackIntent(); if let onClose { onClose() } else { dismiss() } } }
+                }
                 .sheet(item: $detail) { item in
                     NavigationStack {
                         Group {
                             if case .chapters(let groups) = item { chapters(groups) }
+                            else if case .scope = item {
+                                GeometryReader { geometry in
+                                    choices(.scope, wide: geometry.size.width > geometry.size.height * 1.5)
+                                        .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
+                                }
+                            }
                             else {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 20) {
@@ -59,7 +76,12 @@ struct ReaderPlayerView: View {
                                 }
                             }
                         }.background(Obsidian.background).navigationTitle(item.id == "chapters" ? "Chapters" : "Narration").navigationBarTitleDisplayMode(.inline)
-                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { detail = nil } } }
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    if case .scope = item { Button("Back") { detail = .production } }
+                                }
+                                ToolbarItem(placement: .confirmationAction) { Button("Done") { detail = nil } }
+                            }
                     }.tint(Obsidian.accent)
                         .sheet(isPresented: $showPairing, onDismiss: { refresh() }) { PairingView() }
                         .sheet(isPresented: $showCast, onDismiss: { refreshPreparation() }) { if let remote = state.remote { CastView(book: remote) } }
@@ -82,12 +104,7 @@ struct ReaderPlayerView: View {
     private var transport: some View {
         VStack(spacing: 12) {
             HStack {
-                Menu {
-                    ForEach(ReaderVoiceMode.allCases) { mode in
-                        Button { select(mode) } label: { Label(mode.title, systemImage: state.mode == mode ? "checkmark" : "waveform") }
-                            .accessibilityIdentifier("reader.voice." + mode.rawValue)
-                    }
-                } label: { HStack { Text(state.mode.title).font(.headline); Image(systemName: "chevron.down").font(.system(size: 14)) }.frame(minHeight: 48).contentShape(.rect) }
+                Button { chooser = .narrator } label: { HStack { Text(state.mode.title).font(.headline); Image(systemName: "chevron.down").font(.system(size: 14)) }.frame(minHeight: 48).contentShape(.rect) }
                     .disabled(state.working || reader.capturingScope).accessibilityIdentifier("reader.player.narrator")
                 Spacer(minLength: 4)
                 Menu {
@@ -133,16 +150,40 @@ struct ReaderPlayerView: View {
         }.frame(maxWidth: .infinity)
     }
     private var generateMenu: some View {
-        Menu {
-            ForEach(NarrationScope.allCases) { scope in
-                Button(scope.title, systemImage: scope == .page ? "doc.text" : "book") { capture(scope) }.accessibilityIdentifier("reader.generate." + scope.rawValue)
-            }
-        } label: {
+        Button { chooser = .scope } label: {
             Group {
                 if dynamicTypeSize.isAccessibilitySize { Label("Generate", systemImage: "waveform.badge.plus").labelStyle(.iconOnly) }
                 else { Label("Generate", systemImage: "waveform.badge.plus") }
             }.font(dynamicTypeSize.isAccessibilitySize ? .system(size: 22) : .body).frame(minWidth: 48, minHeight: 48).contentShape(.rect)
         }.disabled(state.working || reader.capturingScope || !reader.pageReady).accessibilityIdentifier("reader.player.generate")
+    }
+    private func choices(_ choice: Chooser, wide: Bool) -> some View {
+        // Keep the choices in this panel's real coordinate space. A nested
+        // system menu can report displaced accessibility frames in the reader.
+        let layout = wide ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 12))
+        return layout {
+            if choice == .narrator {
+                ForEach(ReaderVoiceMode.allCases) { mode in
+                    choiceButton(mode.title, icon: state.mode == mode ? "checkmark" : "waveform", id: "reader.voice." + mode.rawValue) {
+                        chooser = nil
+                        if state.mode != mode { select(mode) }
+                    }.accessibilityAddTraits(state.mode == mode ? .isSelected : [])
+                }
+            } else {
+                ForEach(NarrationScope.allCases) { scope in
+                    choiceButton(scope.title, icon: scope == .page ? "doc.text" : "book", id: "reader.generate." + scope.rawValue) {
+                        chooser = nil; capture(scope)
+                    }
+                }
+            }
+        }
+    }
+    private func choiceButton(_ title: String, icon: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon).font(.headline).multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(8)
+                .background(Obsidian.surface, in: .rect(cornerRadius: 12)).contentShape(.rect)
+        }.buttonStyle(.plain).accessibilityIdentifier(id)
     }
     private func chapters(_ chapterGroups: [DownloadedChapterGroup]) -> some View {
         List {
@@ -225,11 +266,7 @@ struct ReaderPlayerView: View {
                 .buttonStyle(.borderedProminent).foregroundStyle(Obsidian.onAccent).disabled(state.working)
                 .accessibilityIdentifier("reader.generation.submit")
         }
-        Menu {
-            ForEach(NarrationScope.allCases) { scope in
-                Button(scope.title, systemImage: scope == .page ? "doc.text" : "book") { capture(scope) }.accessibilityIdentifier("reader.generate." + scope.rawValue)
-            }
-        } label: { Label(canPlay ? "Generate another selection" : "Generate", systemImage: "waveform.badge.plus").frame(minHeight: 48) }
+        Button { detail = .scope } label: { Label(canPlay ? "Generate another selection" : "Generate", systemImage: "waveform.badge.plus").frame(minHeight: 48) }
             .buttonStyle(.bordered).disabled(state.working || reader.capturingScope || !reader.pageReady).accessibilityIdentifier("reader.player.generate")
         if !companion.paired { Button("Pair your PC", systemImage: "qrcode.viewfinder") { showPairing = true }.frame(minHeight: 48) }
         else { Button("Refresh connection & takes", systemImage: "arrow.clockwise") { refresh() }.font(.caption).frame(minHeight: 48).disabled(state.working) }

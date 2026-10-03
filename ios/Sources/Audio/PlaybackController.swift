@@ -97,14 +97,23 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
         isPlaying = audio.play(); nowPlaying()
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(500))
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
                 guard let self, let player = self.player else { return }
+                // A paused recording must not pull a manually turned page back
+                // to its old locator. Explicit seek still publishes below.
+                guard player.isPlaying else { continue }
                 self.elapsed = player.currentTime; self.onProgress?(self.elapsed); self.nowPlaying()
             }
         }
     }
     func toggle() { isPlaying ? pause() : resume() }
-    func pause() { speech?.pause(); player?.pause(); isPlaying = false; nowPlaying() }
+    func pause() {
+        speech?.pause()
+        if let player {
+            player.pause(); elapsed = player.currentTime; onProgress?(elapsed)
+        }
+        isPlaying = false; nowPlaying()
+    }
     func resume() { speech?.resume(); if let player { isPlaying = player.play() }; nowPlaying() }
     func stop() { speech?.stop(); speech = nil; speechPublication = nil; speechChapters = []; chapterTitle = ""; player?.stop(); player = nil; tickTask?.cancel(); isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
     func skip(_ seconds: Double) { if let player { seek(player.currentTime + seconds) } else if seconds > 0 { speech?.next() } else { speech?.previous() } }
