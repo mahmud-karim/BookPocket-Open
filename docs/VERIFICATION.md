@@ -48,10 +48,14 @@ CI uses standard GitHub-hosted runners. Untrusted pull requests have no access t
 
 ## Physical iPhone and broader reader gates still open
 
+- [Native hotfix run 37080483932](https://github.com/mahmud-karim/BookPocket-Open/actions/runs/37080483932) passed eleven unit tests and one reader UI test on `9407555`. The new incomplete-EPUB test verifies actionable error wording, unchanged source bytes, unchanged persisted library and removal of partial import directories. Root inspected the reader screenshot with visibly painted fixture text.
+- [Published iOS preview v0.1.1-preview.1](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.1-preview.1) was downloaded again and verified: IPA SHA256 `7f27d1955a56efd4119dd139e074ea571cfb9b0f18e80f5ec408db3bfd691db0`, ZIP integrity, ARM64 iPhoneOS platform, bundle ID `org.bookpocket.open`, version 0.1.1/build 2, minimum iOS 18.0. The Windows companion remains version 0.1.0 and compatible. The hotfix itself still needs physical-device import validation.
+- The user reported that the original preview opened on their iPhone and that pairing was approved. The running installed companion independently showed a paired device. This establishes startup and initial pairing; certificate-tamper rejection, saved Keychain credentials after restart and subsequent download/playback checks remain separate gates.
+
 - Inspect dark/light/cream modes, small/large physical devices and enlarged text; simulator screenshots above cover their stated fixture and configuration only.
 - Verify original EPUB formatting, Files/share import, bookmarks/highlights/search, persistent position across font changes/rotation/relaunch and PC-independent offline reading.
 - Verify phone certificate pinning, Keychain persistence, interrupted-download recovery, checksum checks, original-text alignment and offline listening.
-- Physical iPhone: LiveContainer installation, Files import, Keychain persistence, Bluetooth/lock-screen controls, interruptions/reconnection and at least one hour of screen-locked playback remain unverified.
+- Physical iPhone: Files import, Keychain persistence, Bluetooth/lock-screen controls, interruptions/reconnection and at least one hour of screen-locked playback remain unverified. Initial LiveContainer startup and pairing were reported successful as described above.
 
 ## Remaining product-level validation
 

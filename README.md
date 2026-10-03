@@ -2,7 +2,7 @@
 
 A local-first EPUB reader and audiobook studio. Read on iPhone, generate narration on your Windows PC, and keep your original books and audio.
 
-**Development preview available:** [download the Windows installer and unsigned iOS IPA](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.0-preview.1). Both published downloads were retrieved and checksum-verified. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
+**Development preview available:** [download the latest unsigned iOS IPA (0.1.1)](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.1-preview.1) and [the compatible Windows installer (0.1.0)](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.0-preview.1). Published downloads were retrieved and checksum-verified. The iOS update explains incomplete EPUB downloads and preserves the original file and library after failed imports. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
 
 ## Obsidian in the actual app
 
