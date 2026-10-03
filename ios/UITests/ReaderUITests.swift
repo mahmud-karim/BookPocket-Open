@@ -53,15 +53,29 @@ final class ReaderUITests: XCTestCase {
     private func assertMiniPlayerAboveTabs(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let mini = app.otherElements["player.mini"].firstMatch
         XCTAssertTrue(mini.waitForExistence(timeout: 10), file: file, line: line)
-        XCTAssertTrue(app.buttons["player.mini.open"].isHittable, file: file, line: line)
-        XCTAssertTrue(app.buttons["player.mini.toggle"].isHittable, file: file, line: line)
-        XCTAssertGreaterThan(mini.frame.height, 0, file: file, line: line)
+        let open = app.buttons["player.mini.open"]
+        let toggle = app.buttons["player.mini.toggle"]
+        for control in [open, toggle] {
+            XCTAssertTrue(control.exists && control.isHittable, "Mini player control must remain visible and tappable", file: file, line: line)
+            XCTAssertGreaterThan(control.frame.width, 0, file: file, line: line)
+            XCTAssertGreaterThan(control.frame.height, 0, file: file, line: line)
+            XCTAssertTrue(app.frame.contains(control.frame), "Mini player control must remain on screen", file: file, line: line)
+        }
+        // The inset's AX container includes its background through the bottom safe area.
+        // Measure the actual interactive row, not that decorative background envelope.
+        let controlsFrame = open.frame.union(toggle.frame)
+        var geometry = ["Container: \(mini.frame)", "Open control: \(open.frame)", "Playback control: \(toggle.frame)", "Interactive row: \(controlsFrame)"]
         for name in ["Library", "Listen", "Studio"] {
             let tab = app.tabBars.buttons[name]
             XCTAssertTrue(tab.exists && tab.isHittable, "\(name) must remain visible and tappable", file: file, line: line)
+            XCTAssertGreaterThan(tab.frame.width, 0, file: file, line: line)
+            XCTAssertGreaterThan(tab.frame.height, 0, file: file, line: line)
             XCTAssertTrue(app.frame.contains(tab.frame), "\(name) must remain on screen", file: file, line: line)
-            XCTAssertLessThanOrEqual(mini.frame.maxY, tab.frame.minY, "Mini player must sit above \(name), without overlap", file: file, line: line)
+            XCTAssertLessThanOrEqual(controlsFrame.maxY, tab.frame.minY, "Mini player controls must sit above \(name), without overlap", file: file, line: line)
+            geometry.append("\(name) tab: \(tab.frame)")
         }
+        let attachment = XCTAttachment(string: geometry.joined(separator: "\n"))
+        attachment.name = "Mini player and native tab geometry"; attachment.lifetime = .keepAlways; add(attachment)
     }
 
     func testImportedEPUBOpensAndContentsWorkOffline() {
