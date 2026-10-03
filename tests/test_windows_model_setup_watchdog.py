@@ -4,6 +4,8 @@ import ctypes
 from ctypes import wintypes
 from pathlib import Path
 import sys
+import stat
+import threading
 import time
 
 import pytest
@@ -100,3 +102,81 @@ def test_runtime_timing_gate_accepts_bounded_original_intervals():
         {"start": 0., "end": .5, "start_offset": 0, "end_offset": 4},
         {"start": .45, "end": 1., "start_offset": 5, "end_offset": 11},
     ]}, "Mira walked.")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows read-only file behavior")
+def test_owned_cleanup_repairs_read_only_file_and_preserves_external_junction(tmp_path):
+    import _winapi
+    smoke = module("smoke_windows_model_setup")
+    root = tmp_path / "bookpocket-fresh-model-readonly"
+    root.mkdir()
+    model = root / "cache" / "model.bin"
+    model.parent.mkdir()
+    model.write_bytes(b"public synthetic test cache")
+    model.chmod(stat.S_IREAD)
+    assert not model.stat().st_mode & stat.S_IWRITE
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep.bin"
+    sentinel.write_bytes(b"outside data must remain unchanged")
+    sentinel.chmod(stat.S_IREAD)
+    before = sentinel.stat().st_mode
+    _winapi.CreateJunction(str(outside), str(root / "external-link"))
+    try:
+        result = smoke.cleanup_owned_root(root, tmp_path)
+        assert result["removed"] and result["read_only_repairs"] == 1
+        assert not root.exists()
+        assert sentinel.read_bytes() == b"outside data must remain unchanged"
+        assert sentinel.stat().st_mode == before
+    finally:
+        sentinel.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction root guard")
+def test_owned_cleanup_refuses_root_junction(tmp_path):
+    import _winapi
+    smoke = module("smoke_windows_model_setup")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep.bin"
+    sentinel.write_bytes(b"unchanged")
+    root = tmp_path / "bookpocket-fresh-model-linked"
+    _winapi.CreateJunction(str(outside), str(root))
+    with pytest.raises(RuntimeError, match="link or junction"):
+        smoke.cleanup_owned_root(root, tmp_path)
+    assert sentinel.read_bytes() == b"unchanged" and root.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Actual Windows sharing lock")
+@pytest.mark.parametrize("release", [True, False])
+def test_owned_cleanup_retries_real_locks_and_reports_unresolved_failures(tmp_path, release):
+    smoke = module("smoke_windows_model_setup")
+    root = tmp_path / "bookpocket-fresh-model-locked"
+    root.mkdir()
+    locked = root / "locked.bin"
+    locked.write_bytes(b"test lock")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                  ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.CreateFileW(str(locked), 0x80000000, 0, None, 3, 0x80, None)
+    assert handle not in (None, ctypes.c_void_p(-1).value)
+    timer = threading.Timer(.2, lambda: kernel.CloseHandle(handle)) if release else None
+    try:
+        if timer:
+            timer.start()
+        result = smoke.cleanup_owned_root(root, tmp_path, attempts=5, retry_delay=.1)
+        assert result["removed"] == release
+        assert result["attempts"] > 1
+        assert set(result["last_error"]) == {"type", "errno", "winerror"}
+        assert result["last_error"]["type"] == "PermissionError"
+        assert result["last_error"]["winerror"] in {5, 32}
+        assert str(tmp_path) not in str(result)
+        if not release:
+            assert result["attempts"] == 5 and locked.exists()
+    finally:
+        if timer:
+            timer.join()
+        else:
+            kernel.CloseHandle(handle)

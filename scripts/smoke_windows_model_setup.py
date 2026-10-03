@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -487,6 +488,62 @@ def harmless_fixture(root, mode):
         child.wait()
 
 
+def cleanup_owned_root(root, parent, *, attempts=5, retry_delay=.5):
+    """Remove only this fresh root; repair in-root read-only files, never links.
+
+    rmtree removes Windows junctions and symlinks themselves without traversing
+    their targets. Its error callback may chmod only a verified ordinary entry.
+    Retries handle short-lived scanner/file locks after the owned job is empty.
+    """
+    root = root.absolute()
+    parent = parent.resolve(strict=True)
+    require(root.parent == parent and root.name.startswith("bookpocket-fresh-model-"), "Unsafe cleanup target")
+    require(1 <= attempts <= 10 and 0 <= retry_delay <= 2, "Cleanup retry bound is invalid")
+    outcome = {"removed": False, "attempts": 0, "read_only_repairs": 0, "last_error": None}
+
+    def ordinary(path):
+        value = path.lstat()
+        return not stat.S_ISLNK(value.st_mode) and not getattr(value, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+    def repair(function, name, exception_info):
+        error = exception_info[1]
+        if isinstance(error, FileNotFoundError):
+            return
+        path = Path(name).absolute()
+        # Check both the lexical path and all resolved ancestors before chmod.
+        # An external junction target is never made writable to aid deletion.
+        if (not path.is_relative_to(root) or not ordinary(path)
+                or not path.resolve(strict=True).is_relative_to(root)):
+            raise error
+        mode = path.stat().st_mode
+        if mode & stat.S_IWRITE:
+            raise error  # A real lock/other error needs a bounded outer retry.
+        path.chmod(mode | stat.S_IWRITE)
+        outcome["read_only_repairs"] += 1
+        if function not in (os.unlink, os.remove, os.rmdir):
+            raise error
+        function(name)
+
+    for attempt in range(1, attempts + 1):
+        outcome["attempts"] = attempt
+        if not os.path.lexists(root):
+            outcome["removed"] = True
+            break
+        # Recheck before every recursive removal, including after partial cleanup.
+        require(ordinary(root) and root.resolve(strict=True) == root, "Cleanup root must not be a link or junction")
+        try:
+            shutil.rmtree(root, onerror=repair)
+            outcome["removed"] = not os.path.lexists(root)
+            if outcome["removed"]:
+                break
+        except OSError as error:
+            outcome["last_error"] = {"type": type(error).__name__, "errno": error.errno,
+                                     "winerror": getattr(error, "winerror", None)}
+        if attempt < attempts:
+            time.sleep(retry_delay)
+    return outcome
+
+
 def hosted(report_path):
     require(os.name == "nt" and os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted", "Cold setup is allowed only on a GitHub-hosted Windows runner")
     runner = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
@@ -507,11 +564,11 @@ def hosted(report_path):
     finally:
         # Only the verified, fresh direct child of RUNNER_TEMP is removed.
         require(root.parent == runner and root.name.startswith("bookpocket-fresh-model-"), "Unsafe cleanup target")
-        try:
-            shutil.rmtree(root)
-            result["isolated_files_removed"] = not root.exists()
-        except OSError:
-            result.update(status="failed", isolated_files_removed=False)
+        cleanup = cleanup_owned_root(root, runner)
+        result["cleanup"] = cleanup
+        result["isolated_files_removed"] = cleanup["removed"]
+        if not cleanup["removed"]:
+            result["status"] = "failed"
         result["wall_seconds"] = round(time.monotonic() - started, 3)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
