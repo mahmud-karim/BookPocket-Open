@@ -50,13 +50,15 @@ import ReadiumZIPFoundation
     }
     private func persist() throws {
         guard let database else { throw BookError.message("Companion storage is unavailable.") }
-        try database.write("identity", value: identity)
-        try database.write("downloads", value: downloads)
-        try database.write("books", value: books)
-        try database.write("jobs", value: jobs)
-        try database.write("pendingRequests", value: pendingRequests)
-        try database.write("legacyRecordings", value: legacyRecordings)
-        try database.write("pronunciations", value: importedPronunciations)
+        try database.transaction {
+            try database.write("identity", value: identity)
+            try database.write("downloads", value: downloads)
+            try database.write("books", value: books)
+            try database.write("jobs", value: jobs)
+            try database.write("pendingRequests", value: pendingRequests)
+            try database.write("legacyRecordings", value: legacyRecordings)
+            try database.write("pronunciations", value: importedPronunciations)
+        }
     }
     func connect(qr: PairingQR) async {
         pairing = true; status = "Requesting a secure connection…"
@@ -444,7 +446,22 @@ import ReadiumZIPFoundation
         _ = try await archive.extract(manifest) { metadata.append($0) }
         struct Project: Decodable { var formatVersion: Int; var book: RemoteBook; var job: RemoteJob }
         let project = try CompanionClient.decoder.decode(Project.self, from: metadata)
-        try RangedAudioValidation.validate(job: project.job, book: project.book)
+        try ProjectImportValidation.validate(job: project.job, book: project.book)
+        func validateIdentities() throws {
+            let conflict = BookError.message("This project reuses an existing identity for different content or source passages. Export a fresh project from its original PC; your existing books and recordings have been kept.")
+            for book in books where book.id == project.book.id {
+                guard book.sourceSha256 == project.book.sourceSha256,
+                      try CompanionClient.encoder.encode(book.chapters) == CompanionClient.encoder.encode(project.book.chapters) else { throw conflict }
+            }
+            guard !jobs.contains(where: { $0.id == project.job.id && $0.bookId != project.book.id }) else { throw conflict }
+            for asset in project.job.assets {
+                let existing = downloads.filter { $0.asset.id == asset.id }.map(\.asset) + jobs.flatMap(\.assets).filter { $0.id == asset.id }
+                for previous in existing {
+                    guard try ProjectImportValidation.sameAudioIdentity(previous, asset) else { throw conflict }
+                }
+            }
+        }
+        try validateIdentities()
         guard project.formatVersion == 1, let original = entries.first(where: { ["source.epub", "source.txt"].contains($0.path) }) else { throw BookError.message("Unsupported project version or missing original book.") }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -452,23 +469,57 @@ import ReadiumZIPFoundation
         let source = folder.appendingPathComponent(original.path)
         _ = try await archive.extract(original, to: source)
         guard SourceIdentity.hash(try Data(contentsOf: source, options: .mappedIfSafe)) == project.book.sourceSha256 else { throw BookError.message("The original book failed its checksum.") }
-        var local = try await library.importBook(source)
-        local.title = project.book.title; local.author = project.book.author; local.companionBookID = project.book.id; library.update(local)
-        for asset in project.job.assets {
-            guard let entry = entries.first(where: { $0.path == "audio/\(asset.id).wav" }), entry.uncompressedSize == UInt64(asset.bytes) else { throw BookError.message("The archive is missing expected audio.") }
-            let extracted = folder.appendingPathComponent("audio.wav")
-            if FileManager.default.fileExists(atPath: extracted.path) { try FileManager.default.removeItem(at: extracted) }
+        // Stage and verify the entire archive before publishing any library or
+        // companion metadata. No partially validated recording becomes playable.
+        var staged: [(asset: AudioAsset, url: URL, file: String)] = []
+        for (index, asset) in project.job.assets.enumerated() {
+            guard asset.bytes > 0, let entry = entries.first(where: { $0.path == "audio/\(asset.id).wav" }), entry.uncompressedSize == UInt64(asset.bytes) else { throw BookError.message("The archive is missing expected audio.") }
+            let extracted = folder.appendingPathComponent("audio-\(index).wav")
             _ = try await archive.extract(entry, to: extracted)
             let data = try Data(contentsOf: extracted, options: .mappedIfSafe)
-            guard SourceIdentity.hash(data) == asset.sha256 else { throw BookError.message("An audio file failed its checksum.") }
-            let file = "Audio/" + SourceIdentity.hash(Data(asset.id.utf8)) + ".wav"
-            try FileManager.default.createDirectory(at: root.appendingPathComponent("Audio"), withIntermediateDirectories: true)
-            try data.write(to: root.appendingPathComponent(file), options: .atomic)
-            downloads.removeAll { $0.jobID == project.job.id && $0.asset.id == asset.id }; downloads.append(DownloadRecord(localBookID: local.id, jobID: project.job.id, asset: asset, file: file, segment: project.book.segments.first { $0.id == asset.segmentId }))
-            try persist()
+            let checksum = SourceIdentity.hash(data)
+            guard checksum == asset.sha256.lowercased() else { throw BookError.message("An audio file failed its checksum.") }
+            staged.append((asset, extracted, "Audio/" + checksum + ".wav"))
         }
-        books.removeAll { $0.id == project.book.id }; books.append(project.book)
-        jobs.removeAll { $0.id == project.job.id }; jobs.append(project.job)
-        try persist()
+        // Library import is independently durable and deduplicates by original
+        // SHA. An interruption may leave a valid standalone book, never half a take.
+        var local = try await library.importBook(source)
+        // Async extraction/import allows other store operations to finish. Check
+        // their latest state before the synchronous install-and-publish section.
+        try validateIdentities()
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Audio"), withIntermediateDirectories: true)
+        var installed: [URL] = []
+        let previous = (books: books, jobs: jobs, downloads: downloads)
+        do {
+            for item in staged {
+                let destination = root.appendingPathComponent(item.file)
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    guard SourceIdentity.hash(try Data(contentsOf: destination, options: .mappedIfSafe)) == item.asset.sha256.lowercased() else {
+                        throw BookError.message("An existing audio file is damaged. Restore its download before importing this project. No existing recording was overwritten.")
+                    }
+                } else {
+                    // The destination is content-addressed; moving a verified
+                    // staging file cannot overwrite another take's bytes.
+                    try FileManager.default.moveItem(at: item.url, to: destination)
+                    installed.append(destination)
+                }
+            }
+            downloads.removeAll { $0.jobID == project.job.id }
+            downloads += staged.map { item in DownloadRecord(localBookID: local.id, jobID: project.job.id, asset: item.asset, file: item.file, segment: project.book.segments.first { $0.id == item.asset.segmentId }) }
+            books.removeAll { $0.id == project.book.id }; books.append(project.book)
+            jobs.removeAll { $0.id == project.job.id }; jobs.append(project.job)
+            try persist()
+        } catch {
+            books = previous.books; jobs = previous.jobs; downloads = previous.downloads
+            for url in installed where !previous.downloads.contains(where: { root.appendingPathComponent($0.file) == url }) { try? FileManager.default.removeItem(at: url) }
+            throw error
+        }
+        // Migrate old asset-ID filenames only after the new metadata is durable.
+        // Files still referenced by another take remain untouched.
+        for record in previous.downloads where record.jobID == project.job.id && !downloads.contains(where: { $0.file == record.file }) {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(record.file))
+            verifiedFiles.removeValue(forKey: record.file)
+        }
+        local.title = project.book.title; local.author = project.book.author; local.companionBookID = project.book.id; library.update(local)
     }
 }

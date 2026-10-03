@@ -16,6 +16,19 @@ final class LibraryDatabase {
         guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else { throw failure() }
     }
     private func failure() -> BookError { .message("Library storage: \(String(cString: sqlite3_errmsg(database)))") }
+    /// Publish related records together. A thrown write or failed commit restores
+    /// the previous database state; callers restore their in-memory snapshot.
+    func transaction<T>(_ operation: () throws -> T) throws -> T {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            let result = try operation()
+            try execute("COMMIT")
+            return result
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
     func read<T: Decodable>(_ key: String, as type: T.Type) throws -> T? {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, "SELECT value FROM records WHERE key = ?", -1, &statement, nil) == SQLITE_OK else { throw failure() }
