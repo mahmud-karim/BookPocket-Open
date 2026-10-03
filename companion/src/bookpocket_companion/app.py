@@ -20,10 +20,11 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .engines import engines_for, ManagedEngine
-from .models import Config, ExportRequest, GenerationRequest, PairRequest, validate_source_ranges
+from .models import Config, ExportRequest, GenerationRequest, PairRequest, validate_source_ranges, validate_narration_plan, job_metadata
 from .publication import parse_book, extract_cover
 from .store import Store, canonical, digest, now
 from .worker import Worker
+from .scheduler import WorkScheduler, WorkCancelled, WorkOwnershipUncertain
 from .archiveio import MAX_ARCHIVE, require_disk
 
 
@@ -33,7 +34,12 @@ def create_app(config=None, engines=None, start_worker=True):
     from .legacy import initialize as initialize_legacy
     initialize_legacy(store)
     engines = engines if engines is not None else engines_for(config)
-    worker = Worker(store, engines, config)
+    def prepare_work(kind):
+        if kind != "render":
+            for engine in engines.values():
+                if hasattr(engine, "close"): engine.close()
+    scheduler = WorkScheduler(prepare_work)
+    worker = Worker(store, engines, config, scheduler)
     key_file = store.root / "pairing.key"
     if not key_file.exists(): key_file.write_bytes(Fernet.generate_key())
     cipher = Fernet(key_file.read_bytes())
@@ -41,17 +47,22 @@ def create_app(config=None, engines=None, start_worker=True):
         db.execute("UPDATE pairings SET encrypted_token=NULL WHERE expires<?", (time.time(),))
     attempts = defaultdict(deque)
     installs = {}
+    observed_voice_names = {}
     install_lock = threading.Lock()
     project_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app):
         if start_worker: worker.start()
-        yield
-        worker.close()
+        try: yield
+        finally:
+            scheduler.close()
+            try: worker.close()
+            finally: scheduler.join()
 
     app = FastAPI(title="Book Pocket Open", version=__version__, lifespan=lifespan)
     app.state.store, app.state.worker, app.state.config = store, worker, config
+    app.state.scheduler = scheduler
     allowed_origins = {f"https://localhost:{config.port}", f"https://127.0.0.1:{config.port}"}
     allowed_origins |= {f"http://localhost:{config.studio_port}", f"http://127.0.0.1:{config.studio_port}"}
     if config.dev:
@@ -135,7 +146,7 @@ def create_app(config=None, engines=None, start_worker=True):
                 if key != "global" and (not attempts[key] or attempts[key][-1] < current - 60): del attempts[key]
 
     @app.get("/v1/health")
-    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id"]}
+    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id", "source_ranges_cast"]}
 
     @app.get("/v1/admin/connection", dependencies=[Depends(admin)])
     def connection(): return {"url": config.public_url, "certificate_sha256": config.certificate_sha256}
@@ -212,7 +223,21 @@ def create_app(config=None, engines=None, start_worker=True):
     def list_engines(): return {"engines": [e.info() for e in engines.values()]}
 
     @app.get("/v1/voices", dependencies=[Depends(auth)])
-    def list_voices(): return {"voices": store.all("voices") + [v for e in engines.values() for v in e.voices()]}
+    def list_voices():
+        voices = store.all("voices") + [v for e in engines.values() for v in e.voices()]
+        names = {v["id"]: v["name"] for v in voices if v.get("name")}
+        if any(observed_voice_names.get(identity) != name for identity, name in names.items()):
+            # Resolve legacy names only from an actual available voice inventory.
+            # Once captured, a job's name remains a historical snapshot.
+            with store.db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                for row in db.execute("SELECT id,data FROM jobs").fetchall():
+                    job = json.loads(row["data"])
+                    if not job.get("voice_name") and job.get("voice_id") in names:
+                        job["voice_name"] = names[job["voice_id"]]
+                        db.execute("UPDATE jobs SET data=? WHERE id=?", (canonical(job), row["id"]))
+            observed_voice_names.update(names)
+        return {"voices": voices}
 
     @app.get("/v1/voices/{identity}", dependencies=[Depends(auth)])
     def get_voice(identity: str):
@@ -322,30 +347,30 @@ def create_app(config=None, engines=None, start_worker=True):
             try: previous_payload = GenerationRequest.model_validate_json(existing["request"]).model_dump()
             except ValueError: raise HTTPException(409, "request_id belongs to an imported or incompatible production")
             if canonical(previous_payload) != serialized: raise HTTPException(409, "request_id was already used with different settings")
-            return json.loads(existing["data"])
+            return job_metadata(json.loads(existing["data"]), previous_payload)
+        if scheduler.stopped.is_set(): raise HTTPException(503, scheduler.stop_reason)
         book = get_book(body.book_id)
         valid = {s["id"] for c in book["chapters"] for s in c["segments"]}
         lengths = {s["id"]: len(s["text"]) for c in book["chapters"] for s in c["segments"]}
         if len(set(body.segment_ids)) != len(body.segment_ids) or not set(body.segment_ids) <= valid:
             raise HTTPException(400, "Select unique segments belonging to this book")
-        if body.source_ranges and (body.cast or body.narration_plan or body.announce_chapters):
-            raise HTTPException(422, "Source ranges require one narrator and no chapter announcements; clear cast, narration_plan, and announce_chapters")
+        if body.source_ranges and (body.cast or body.announce_chapters):
+            raise HTTPException(422, "Source ranges cannot use whole-segment cast overrides or chapter announcements; use a clipped narration_plan")
         try: validate_source_ranges(payload["source_ranges"], body.segment_ids, lengths)
         except ValueError as exc: raise HTTPException(400, str(exc))
         if not set(body.cast) <= set(body.segment_ids): raise HTTPException(400, "Cast overrides must reference selected segments")
-        previous = {}
-        for span in sorted(body.narration_plan, key=lambda p: (p.segment_id, p.start_offset)):
-            if span.segment_id not in body.segment_ids or span.start_offset >= span.end_offset or span.end_offset > lengths.get(span.segment_id, 0) or span.start_offset < previous.get(span.segment_id, 0):
-                raise HTTPException(400, "Narration spans must be non-overlapping scalar ranges inside selected segments")
-            previous[span.segment_id] = span.end_offset
+        try: validate_narration_plan(payload["narration_plan"], body.segment_ids, lengths, payload["source_ranges"])
+        except ValueError as exc: raise HTTPException(400, str(exc))
         if body.engine not in engines or not engines[body.engine].info()["available"]: raise HTTPException(409, "Install or start the selected engine first")
         if body.language not in engines[body.engine].info()["languages"]: raise HTTPException(400, "Selected engine does not support this language")
         for identity in {body.voice_id, *body.cast.values(), *(p.voice_id for p in body.narration_plan)}:
             if get_voice(identity)["engine"] != body.engine: raise HTTPException(400, "All voices must belong to the selected engine")
         job = {"id": str(uuid.uuid4()), "book_id": body.book_id, "status": "queued", "engine": body.engine, "voice_id": body.voice_id,
+               "voice_name": observed_voice_names.get(body.voice_id),
                "segment_ids": body.segment_ids, "completed_segments": 0, "total_segments": len(body.segment_ids), "created_at": now(),
                "started_at": None, "finished_at": None, "generation_seconds": 0.0, "error": None, "assets": []}
         if body.source_ranges: job["source_ranges"] = payload["source_ranges"]
+        job = job_metadata(job, payload)
         try:
             with store.db() as db: db.execute("INSERT INTO jobs VALUES(?,?,?,?)", (job["id"], body.request_id, serialized, canonical(job)))
         except sqlite3.IntegrityError:
@@ -354,10 +379,14 @@ def create_app(config=None, engines=None, start_worker=True):
         return job
 
     @app.get("/v1/jobs", dependencies=[Depends(auth)])
-    def jobs(): return {"jobs": store.all("jobs")}
+    def jobs():
+        with store.db() as db: rows = db.execute("SELECT data,request FROM jobs ORDER BY rowid DESC").fetchall()
+        return {"jobs": [job_metadata(json.loads(row["data"]), json.loads(row["request"])) for row in rows]}
 
     @app.get("/v1/jobs/{identity}", dependencies=[Depends(auth)])
-    def get_job(identity: str): return json.loads(require("jobs", identity)["data"])
+    def get_job(identity: str):
+        row = require("jobs", identity)
+        return job_metadata(json.loads(row["data"]), json.loads(row["request"]))
 
     @app.post("/v1/jobs/{identity}/{action}", dependencies=[Depends(auth)])
     def action_job(identity: str, action: str):
@@ -369,7 +398,7 @@ def create_app(config=None, engines=None, start_worker=True):
         result = worker.update(identity, lambda j: j.update(status=after, error=None, finished_at=now() if after == "cancelled" else None), before)
         if not result: raise HTTPException(409, "This action is not available for the current job state")
         worker.wake.set()
-        return result
+        return get_job(identity)
 
     @app.get("/v1/assets/{identity}", dependencies=[Depends(auth)])
     def get_asset(identity: str):
@@ -394,19 +423,25 @@ def create_app(config=None, engines=None, start_worker=True):
     def install(identity: str):
         engine = engines.get(identity)
         if not isinstance(engine, ManagedEngine): raise HTTPException(400, "Only managed engines can be installed here")
-        if any(j["status"] in {"running", "queued"} for j in store.all("jobs")):
-            raise HTTPException(409, "Pause narration jobs before installing a model")
         with install_lock:
-            if any(v["status"] == "running" for v in installs.values()): raise HTTPException(409, "An engine installation is already running")
-            installs[identity] = {"engine": identity, "status": "running", "error": None, "started_at": now()}
+            if scheduler.stopped.is_set(): raise HTTPException(503, scheduler.stop_reason)
+            if any(v["status"] in {"queued", "running"} for v in installs.values()): raise HTTPException(409, "An engine installation is already queued or running")
+            installs[identity] = {"engine": identity, "status": "queued", "error": None, "created_at": now(), "started_at": None}
         def run_install():
             try:
-                engine.install()
-                installs[identity].update(status="completed", finished_at=now())
+                with scheduler.lease("install"):
+                    installs[identity].update(status="running", started_at=now())
+                    engine.install(cancel_event=scheduler.stopped)
+                    if scheduler.stopped.is_set(): raise WorkCancelled("Installation stopped during companion shutdown")
+                    installs[identity].update(status="completed", finished_at=now())
+            except (WorkCancelled, WorkOwnershipUncertain):
+                installs[identity].update(status="failed", finished_at=now(), error=scheduler.stop_reason)
             except Exception:
                 installs[identity].update(status="failed", finished_at=now(), error="Installation failed. See the engine install log in your local data folder")
-        threading.Thread(target=run_install, daemon=True).start()
-        return installs[identity]
+        try: scheduler.start_thread(run_install, "engine-install")
+        except Exception:
+            installs[identity].update(status="failed", finished_at=now(), error="Unable to start installation worker; retry installation")
+        return dict(installs[identity])
 
     @app.get("/v1/admin/engines/installations", dependencies=[Depends(admin)])
     def installations(): return {"installations": list(installs.values())}
@@ -439,7 +474,7 @@ def create_app(config=None, engines=None, start_worker=True):
         return {"pronunciation_rules": json.loads(row[0]) if row else []}
 
     from .casting import register_casting
-    register_casting(app, store, auth, admin, get_book)
+    register_casting(app, store, auth, admin, get_book, scheduler)
 
     if config.studio_dir and config.studio_dir.is_dir():
         app.mount("/", StaticFiles(directory=config.studio_dir, html=True), name="studio")

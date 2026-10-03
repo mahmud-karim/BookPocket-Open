@@ -24,6 +24,9 @@ if ($LASTEXITCODE) { throw 'Python pip bootstrap failed' }
 if ($LASTEXITCODE) { throw 'Locked runtime dependency installation failed' }
 & $python -I -m pip install --disable-pip-version-check --no-compile --no-deps --no-build-isolation (Join-Path $repo 'companion')
 if ($LASTEXITCODE) { throw 'Companion dependency installation failed' }
+$packagedVersion = & $python -I -c 'import bookpocket_companion; print(bookpocket_companion.__version__)'
+if ($LASTEXITCODE -or $packagedVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid packaged companion version' }
+('#define AppVersion "' + $packagedVersion + '"') | Set-Content -LiteralPath (Join-Path $bundle 'installer-version.iss') -Encoding ascii
 if (!(Test-Path -LiteralPath (Join-Path $repo 'studio\dist\index.html'))) { throw 'Build studio first' }
 Copy-Item -LiteralPath (Join-Path $repo 'studio\dist') -Destination (Join-Path $bundle 'studio') -Recurse
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows_launcher.py') -Destination (Join-Path $bundle 'launcher.py')

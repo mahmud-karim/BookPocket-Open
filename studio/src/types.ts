@@ -52,6 +52,7 @@ export type Timing = {
 };
 export type Asset = {
   id: string;
+  narration_mode?: "single" | "full_cast";
   segment_id: string;
   media_type: string;
   duration: number;
@@ -62,6 +63,7 @@ export type Asset = {
 };
 export type Job = {
   id: string;
+  narration_mode?: "single" | "full_cast";
   book_id: string;
   status:
     "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";

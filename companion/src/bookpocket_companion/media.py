@@ -7,6 +7,7 @@ import wave
 import zipfile
 from .store import canonical
 from .archiveio import file_digest, require_disk
+from .models import narration_mode, job_metadata
 
 
 def normalize_reference(content, path, ffmpeg, trim_start=0.0, trim_end=None):
@@ -30,6 +31,7 @@ def export_job(store, job, format, ffmpeg, include_voice_references=False):
     if not book_row: raise ValueError("The original book has been deleted")
     book = json.loads(book_row["data"])
     request = json.loads(store.item("jobs", job["id"])["request"])
+    job = job_metadata(job, request)
     identity = str(uuid.uuid4())
     duration = sum(a["duration"] for a in job["assets"])
     extension = ".zip" if format == "project" else "." + format
@@ -99,6 +101,6 @@ def export_job(store, job, format, ffmpeg, include_voice_references=False):
         output.replace(destination)
     media_type = {"project": "application/zip", "m4b": "audio/mp4", "mp3": "audio/mpeg"}[format]
     asset = {"id": identity, "segment_id": None, "media_type": media_type, "duration": duration,
-             "sha256": file_digest(destination), "bytes": destination.stat().st_size, "url": "/v1/assets/"+identity, "timings": []}
+             "sha256": file_digest(destination), "bytes": destination.stat().st_size, "url": "/v1/assets/"+identity, "timings": [], "narration_mode": narration_mode(request)}
     with store.db() as db: db.execute("INSERT INTO assets VALUES(?,?,?,?)", (identity, None, canonical(asset), str(destination)))
     return asset

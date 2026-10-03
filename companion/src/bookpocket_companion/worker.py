@@ -8,8 +8,9 @@ import uuid
 import wave
 from pathlib import Path
 from .store import canonical, digest, now
-from .models import validate_source_ranges
+from .models import validate_source_ranges, validate_narration_plan, narration_mode, job_metadata
 from .render_workspace import render_workspace, cleanup_abandoned_renders
+from .scheduler import WorkScheduler, WorkCancelled, WorkOwnershipUncertain
 
 def sentences(text):
     # Python string offsets count Unicode scalars, matching the wire contract.
@@ -55,8 +56,9 @@ def validate_wav(path):
         return audio.getnframes() / audio.getframerate()
 
 class Worker:
-    def __init__(self, store, engines, config):
+    def __init__(self, store, engines, config, scheduler=None):
         self.store, self.engines, self.config = store, engines, config
+        self.scheduler = scheduler or WorkScheduler()
         self.stop = threading.Event()
         self.wake = threading.Event()
         self.thread = None
@@ -76,12 +78,12 @@ class Worker:
     def close(self):
         self.stop.set()
         self.wake.set()
-        if self.thread: self.thread.join(timeout=3)
         for engine in self.engines.values():
             if hasattr(engine, "close"): engine.close()
+        if self.thread: self.thread.join(timeout=3)
 
     def loop(self):
-        while not self.stop.is_set():
+        while not self.stop.is_set() and not self.scheduler.stopped.is_set():
             queued = [j for j in reversed(self.store.all("jobs")) if j["status"] == "queued"]
             if queued:
                 self.run(queued[0]["id"])
@@ -111,6 +113,15 @@ class Worker:
         return next((v for v in engine.voices() if v["id"] == voice_id), None)
 
     def run(self, job_id):
+        def cancelled():
+            row = self.store.item("jobs", job_id)
+            return self.stop.is_set() or not row or json.loads(row["data"])["status"] != "queued"
+        try:
+            with self.scheduler.lease("render", cancelled): self._run(job_id)
+        except WorkCancelled:
+            return
+
+    def _run(self, job_id):
         def begin(j):
             j.update(status="running", started_at=j.get("started_at") or now(), error=None)
         job = self.update(job_id, begin, {"queued"})
@@ -121,8 +132,11 @@ class Worker:
             segment_map = {s["id"]: (s, c, i) for c in book["chapters"] for i, s in enumerate(c["segments"])}
             source_ranges = request.get("source_ranges", [])
             validate_source_ranges(source_ranges, request["segment_ids"], {sid: len(s[0]["text"]) for sid, s in segment_map.items()})
-            if source_ranges and (request.get("cast") or request.get("narration_plan") or request.get("announce_chapters")):
-                raise ValueError("Source ranges require one narrator and no chapter announcements")
+            if source_ranges and (request.get("cast") or request.get("announce_chapters")):
+                raise ValueError("Source ranges cannot use whole-segment cast overrides or chapter announcements")
+            validate_narration_plan(request.get("narration_plan", []), request["segment_ids"], {sid: len(s[0]["text"]) for sid, s in segment_map.items()}, source_ranges)
+            mode = narration_mode(request)
+            self.update(job_id, lambda j: j.update(job_metadata(j, request)), {"running"})
             source_by_segment = {value["segment_id"]: value for value in source_ranges}
             engine = self.engines[request["engine"]]
             for other in self.engines.values():
@@ -146,6 +160,7 @@ class Worker:
                                         "voice": voice_id, "voice_revision": digest(Path(voice["reference"]).read_bytes()) if voice.get("reference") else (request["request_id"] if engine.id == "voicestudio" else engine.version),
                                         "transcript": voice.get("transcript"), "narration_plan": span_plan, "voice_revisions": voice_revisions,
                                         "take_id": request.get("take_id"),
+                                        **({"narration_mode": mode} if mode == "full_cast" and not span_plan and segment_id not in request.get("cast", {}) else {}),
                                         **({"source_range": selected_range} if selected_range else {}),
                                         "rules": request["pronunciation_rules"], "language": request["language"], "announce": announce}))
                 with self.store.db() as db:
@@ -157,7 +172,7 @@ class Worker:
                     metadata = json.loads(cached["data"])
                     if path.exists() and digest(path.read_bytes()) == metadata["sha256"]:
                         validate_wav(path)
-                        asset = metadata
+                        asset = {**metadata, "narration_mode": mode}
                 if not asset:
                     asset = self.render(engine, voice, segment, request, announce, key, job_id, selected_range)
                 if not asset or not self.active(job_id): return
@@ -172,6 +187,7 @@ class Worker:
             self.update(job_id, lambda j: j.update(status="completed", finished_at=now()), {"running"})
         except Exception as exc:
             self.update(job_id, lambda j: j.update(status="failed", finished_at=now(), error=str(exc)[:2000]), {"running"})
+            if isinstance(exc, WorkOwnershipUncertain): raise
 
     def render(self, engine, voice, segment, request, announce, key, job_id, selected_range=None):
         with render_workspace(self.store, job_id, segment["id"]) as temp:
@@ -217,7 +233,8 @@ class Worker:
             destination = self.store.root / "assets" / (asset_id + ".wav")
             asset = {"id": asset_id, "segment_id": segment["id"], "media_type": "audio/wav", "duration": cursor,
                      "sha256": content_hash, "bytes": final.stat().st_size, "url": "/v1/assets/" + asset_id,
-                     "timings": timings, "alignment": "word" if word_aligned else "sentence", "source_start": source_start, "source_end": source_end, "cast_spans": plans}
+                     "timings": timings, "alignment": "word" if word_aligned else "sentence", "source_start": source_start, "source_end": source_end, "cast_spans": plans,
+                     "narration_mode": narration_mode(request)}
             if not self.active(job_id): return None
             final.replace(destination)
             with self.store.db() as db:

@@ -1,11 +1,11 @@
-#ifndef AppVersion
-  #define AppVersion "0.1.2"
-#endif
 #ifndef OutputBaseName
   #define OutputBaseName "BookPocketOpen-Setup-x64"
 #endif
 #ifndef BundleDir
   #define BundleDir "..\artifacts\windows\BookPocketOpen"
+#endif
+#ifndef AppVersion
+  #include BundleDir + "\installer-version.iss"
 #endif
 #ifndef OutputDir
   #define OutputDir "..\artifacts\windows"

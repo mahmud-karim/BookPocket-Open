@@ -81,11 +81,13 @@ export function EngineList({ engines }: { engines: Engine[] }) {
               <div className="grow">
                 <strong>{e.name}</strong>
                 <p>
-                  {working
-                    ? "Downloading and testing the voice model…"
-                    : e.available
-                      ? `${e.supports_cloning ? "Voice cloning · " : ""}${e.languages.join(", ")}`
-                      : (e.reason ?? "Not installed")}
+                  {task?.status === "queued"
+                    ? "Waiting for the current PC task to finish…"
+                    : working
+                      ? "Downloading and testing the voice model…"
+                      : e.available
+                        ? `${e.supports_cloning ? "Voice cloning · " : ""}${e.languages.join(", ")}`
+                        : (e.reason ?? "Not installed")}
                 </p>
                 <span className="license">{e.license}</span>
                 {task?.error && <p className="job-error">{task.error}</p>}
@@ -101,7 +103,11 @@ export function EngineList({ engines }: { engines: Engine[] }) {
                   ) : (
                     <Download size={15} />
                   )}{" "}
-                  {working ? "Installing" : "Install model"}
+                  {task?.status === "queued"
+                    ? "Queued"
+                    : working
+                      ? "Installing"
+                      : "Install model"}
                 </button>
               ) : (
                 <span

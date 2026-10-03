@@ -7,6 +7,8 @@ import sys
 import tempfile
 import httpx
 import hashlib
+from .setup_process import run_setup
+from .scheduler import WorkCancelled, WorkOwnershipUncertain
 
 
 def python_in(root):
@@ -28,13 +30,14 @@ class ManagedEngine:
         fingerprint = hashlib.sha256(json.dumps(provenance, sort_keys=True).encode()).hexdigest()[:16]
         return "adapter-3:" + fingerprint
 
-    def record_provenance(self, **extra):
-        result = subprocess.run([str(self.python), "-c", "import importlib.metadata,json; print(json.dumps({d.metadata['Name']:d.version for d in importlib.metadata.distributions()}))"], capture_output=True, text=True, check=True, timeout=30)
+    def record_provenance(self, cancel_event=None, **extra):
+        result = run_setup([str(self.python), "-c", "import importlib.metadata,json; print(json.dumps({d.metadata['Name']:d.version for d in importlib.metadata.distributions()}))"], cancel_event=cancel_event, capture_output=True, text=True, check=True, timeout=30)
         snapshots = sorted(str(path.relative_to(self.root / "models" / "hub")).replace("\\", "/") for path in (self.root / "models" / "hub").glob("models--*/snapshots/*") if path.is_dir())
         provenance = {"packages": json.loads(result.stdout), "model_snapshots": snapshots, "adapter": 3}
         marker = {"provenance": provenance, **extra}
         temporary = self.root / "ready.tmp"
         temporary.write_text(json.dumps(marker, sort_keys=True), encoding="utf-8")
+        if cancel_event is not None and cancel_event.is_set(): raise WorkCancelled("Model setup stopped")
         temporary.replace(self.root / "ready.json")
 
     def info(self):
@@ -80,7 +83,10 @@ class ManagedEngine:
         if self.process and self.process.poll() is None:
             self.process.terminate()
             try: self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired: self.process.kill()
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                try: self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired as exc: raise WorkOwnershipUncertain("The model process did not stop") from exc
         self.process = None
         if self.log_handle: self.log_handle.close()
         self.log_handle = None
@@ -95,25 +101,25 @@ class ManagedEngine:
         env["PYTHONUTF8"] = "1"
         return env
 
-    def install(self):
+    def install(self, cancel_event=None):
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "ready.json").unlink(missing_ok=True)
         log = self.root / "install.log"
         packages = ["kokoro==0.9.4", "soundfile", "numpy", "misaki[en]", "en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"] if self.id == "kokoro" else ["qwen-tts==0.1.1", "soundfile"]
         with log.open("w", encoding="utf-8") as out:
-            subprocess.run([sys.executable, "-m", "venv", str(self.root / "venv")], check=True, stdout=out, stderr=out)
-            subprocess.run([str(self.python), "-m", "pip", "install", *packages], check=True, stdout=out, stderr=out, env=self.environment())
+            run_setup([sys.executable, "-m", "venv", str(self.root / "venv")], cancel_event=cancel_event, check=True, stdout=out, stderr=out)
+            run_setup([str(self.python), "-m", "pip", "install", *packages], cancel_event=cancel_event, check=True, stdout=out, stderr=out, env=self.environment())
             try:
-                gpu = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], capture_output=True, text=True, timeout=10)
+                gpu = run_setup(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"], cancel_event=cancel_event, check=False, capture_output=True, text=True, timeout=10)
                 modern_cuda = gpu.returncode == 0 and int(gpu.stdout.strip().split(".")[0]) >= 570
             except (OSError, ValueError, subprocess.TimeoutExpired): modern_cuda = False
             if modern_cuda:
-                subprocess.run([str(self.python), "-m", "pip", "install", "torch==2.11.0", "torchaudio==2.11.0", "--index-url", "https://download.pytorch.org/whl/cu128"], check=True, stdout=out, stderr=out, env=self.environment())
+                run_setup([str(self.python), "-m", "pip", "install", "torch==2.11.0", "torchaudio==2.11.0", "--index-url", "https://download.pytorch.org/whl/cu128"], cancel_event=cancel_event, check=True, stdout=out, stderr=out, env=self.environment())
             # Kokoro performs a real synthesis; Qwen Base loads the model, then requires a user voice reference.
             probe = {"engine": self.id, "probe": True, "output": str(self.root / "probe.wav"), "text": "Your audiobook studio is ready.", "voice": {"id": "kokoro:af_heart"}, "language": "en"}
-            subprocess.run([str(self.python), str(Path(__file__).with_name("engine_worker.py"))], input=json.dumps(probe), text=True,
+            run_setup([str(self.python), str(Path(__file__).with_name("engine_worker.py"))], cancel_event=cancel_event, input=json.dumps(probe), text=True,
                            check=True, stdout=out, stderr=out, env=self.environment(), timeout=1800)
-        self.record_provenance(validated_synthesis=self.id == "kokoro", validated_model_load=True)
+        self.record_provenance(cancel_event=cancel_event, validated_synthesis=self.id == "kokoro", validated_model_load=True)
 
 
 class VoiceStudioEngine:

@@ -36,6 +36,9 @@ jobs:
           & $compiler "/DBundleDir=$pwd\artifacts\windows\BookPocketOpen" "/DOutputDir=$pwd\artifacts\windows" scripts/windows_installer.iss
           if ($LASTEXITCODE) { throw 'Installer compilation failed' }
           $installer = Resolve-Path artifacts/windows/BookPocketOpen-Setup-x64.exe
+          $packagedVersion = & artifacts/windows/BookPocketOpen/runtime/python.exe -I -c 'import bookpocket_companion; print(bookpocket_companion.__version__)'
+          if ($LASTEXITCODE) { throw 'Cannot read bundled companion version' }
+          if ((Get-Item -LiteralPath $installer).VersionInfo.ProductVersion.Trim() -ne $packagedVersion) { throw 'Installer and bundled companion versions differ' }
           $digest = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           "$digest  BookPocketOpen-Setup-x64.exe" | Set-Content artifacts/windows/BookPocketOpen-Setup-x64.exe.sha256 -Encoding ascii
       - name: Install into an isolated directory and verify clean-runtime operation

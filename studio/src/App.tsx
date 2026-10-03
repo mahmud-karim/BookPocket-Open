@@ -1219,6 +1219,7 @@ function BookStudio({
       return;
     }
     await onGenerate({
+      narration_mode: fullCast ? "full_cast" : "single",
       narration_plan: plan ?? [],
       take_id: freshTake ? crypto.randomUUID() : undefined,
       request_id: crypto.randomUUID(),

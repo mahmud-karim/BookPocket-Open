@@ -8,6 +8,7 @@ import httpx
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from .store import canonical, digest, now
+from .scheduler import WorkCancelled
 
 class Character(BaseModel):
     id: str = Field(min_length=1, max_length=100)
@@ -160,7 +161,7 @@ ANALYSIS_SCHEMA = {"type": "object", "additionalProperties": False, "required": 
     "assignments": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["utterance_id", "source_text", "character_id", "confidence"], "properties": {
         "utterance_id": {"type": "string"}, "source_text": {"type": "string"}, "character_id": {"type": "string"}, "confidence": {"type": "number", "minimum": 0, "maximum": 1}}}}}}
 
-def register_casting(app, store, auth, admin, get_book):
+def register_casting(app, store, auth, admin, get_book, scheduler):
     with store.db() as db:
         db.executescript("""CREATE TABLE IF NOT EXISTS casts(book_id TEXT PRIMARY KEY,data TEXT);
                           CREATE TABLE IF NOT EXISTS analyses(id TEXT PRIMARY KEY,data TEXT);
@@ -245,6 +246,7 @@ def register_casting(app, store, auth, admin, get_book):
                         if previous["fingerprint"] != fingerprint:
                             raise HTTPException(409, "This analysis request ID was already used with a different book or hosted consent")
                         return read_analysis(db, previous["analysis_id"])
+                if scheduler.stopped.is_set(): raise HTTPException(503, scheduler.stop_reason)
                 book, cfg = get_book(identity), settings()
                 if cfg["hosted"] and not body.allow_hosted: raise HTTPException(409, "Confirm sending this book to the configured hosted analysis API")
                 old = Cast.model_validate(get_cast(identity))
@@ -272,6 +274,13 @@ def register_casting(app, store, auth, admin, get_book):
                 analysis_lock.release()
         def run():
             try:
+                with scheduler.lease("analysis"): run_admitted()
+            except Exception as exc:
+                job.update(status="failed", error=str(exc)[:1500], finished_at=now())
+            finally:
+                finish()
+        def run_admitted():
+            try:
                 job["status"] = "running"
                 persist()
                 characters = {c.id: c for c in old.characters}
@@ -295,6 +304,7 @@ def register_casting(app, store, auth, admin, get_book):
                 segment_order = {s["id"]: index for index, s in enumerate(segments)}
                 with httpx.Client(timeout=600, follow_redirects=False) as client:
                     for batch in batches:
+                        if scheduler.stopped.is_set(): raise WorkCancelled("Analysis stopped during companion shutdown")
                         batch_ids = {s["segment_id"] for s in batch}
                         units = [u for u in all_units if u["segment_id"] in batch_ids]
                         if not units:
@@ -327,6 +337,7 @@ def register_casting(app, store, auth, admin, get_book):
                         validate_cast(Cast(characters=list(characters.values()), assignments=assignments), book)
                         job["completed_segments"] += len(batch)
                         persist()
+                if scheduler.stopped.is_set(): raise WorkCancelled("Analysis stopped during companion shutdown")
                 result = Cast(characters=list(characters.values()), assignments=assignments)
                 validate_cast(result, book)
                 # Merge against the current saved cast under a transaction, preserving edits made during analysis.
@@ -340,10 +351,8 @@ def register_casting(app, store, auth, admin, get_book):
                 job.update(status="completed", finished_at=now())
             except Exception as exc:
                 job.update(status="failed", error=str(exc)[:1500], finished_at=now())
-            finally:
-                finish()
         try:
-            threading.Thread(target=run, daemon=True, name="casting-analysis").start()
+            scheduler.start_thread(run, "casting-analysis")
         except Exception:
             job.update(status="failed", error="Unable to start analysis worker; start a new analysis to retry", finished_at=now())
             finish()

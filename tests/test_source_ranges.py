@@ -122,12 +122,10 @@ def test_range_validation_rejects_ambiguous_or_invalid_selection(selected, fault
     assert engine.calls == []
 
 
-@pytest.mark.parametrize("combination", ["cast", "narration_plan", "announce_chapters"])
+@pytest.mark.parametrize("combination", ["cast", "announce_chapters"])
 def test_partial_selection_rejects_incompatible_narration_options(selected, combination):
     _, client, _, _, _, request, _ = selected
     if combination == "cast": request["cast"] = {request["segment_ids"][0]: request["voice_id"]}
-    elif combination == "narration_plan":
-        request["narration_plan"] = [{**request["source_ranges"][0], "voice_id": request["voice_id"]}]
     else: request["announce_chapters"] = True
     response = client.post("/v1/jobs", json=request)
     assert response.status_code == 422, response.text

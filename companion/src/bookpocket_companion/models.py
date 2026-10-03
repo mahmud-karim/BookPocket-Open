@@ -1,5 +1,6 @@
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from typing import Literal
 import os
 import secrets
 
@@ -37,16 +38,57 @@ class GenerationRequest(BaseModel):
     announce_chapters: bool = False
     cast: dict[str, str] = Field(default_factory=dict)
     narration_plan: list["NarrationSpan"] = Field(default_factory=list)
+    narration_mode: Literal["single", "full_cast"] = "single"
     source_ranges: list[SourceRange] = Field(default_factory=list, max_length=100000)
     take_id: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_mode(cls, value):
+        if isinstance(value, dict):
+            value = {**value, "narration_mode": narration_mode(value)}
+        return value
+
 class NarrationSpan(BaseModel):
     segment_id: str
-    start_offset: int = Field(ge=0)
-    end_offset: int = Field(gt=0)
+    start_offset: int = Field(ge=0, strict=True)
+    end_offset: int = Field(gt=0, strict=True)
     voice_id: str
 
 GenerationRequest.model_rebuild()
+
+
+def narration_mode(value, fallback="single"):
+    inferred = "full_cast" if value.get("cast") or value.get("narration_plan") or value.get("cast_spans") else fallback
+    mode = value.get("narration_mode", inferred)
+    if not isinstance(mode, str) or mode not in {"single", "full_cast"} or (mode == "single" and inferred == "full_cast"):
+        raise ValueError("Cast narration requires narration_mode full_cast")
+    return mode
+
+
+def job_metadata(job, request):
+    mode = narration_mode(request)
+    return {**job, "narration_mode": mode, "narration_plan": request.get("narration_plan", []), "cast": request.get("cast", {}),
+            "assets": [{**asset, "narration_mode": narration_mode(asset, mode)} for asset in job.get("assets", [])]}
+
+
+def validate_narration_plan(plan, segment_ids, lengths, source_ranges=()):
+    if not isinstance(plan, list) or len(plan) > 100000:
+        raise ValueError("Narration plan must be a list containing at most 100,000 intervals")
+    for value in plan:
+        if (not isinstance(value, dict) or not {"segment_id", "start_offset", "end_offset", "voice_id"} <= value.keys()
+                or not isinstance(value["segment_id"], str) or not isinstance(value["voice_id"], str) or not value["voice_id"]
+                or type(value["start_offset"]) is not int or type(value["end_offset"]) is not int):
+            raise ValueError("Each narration span requires a segment, voice and integer scalar bounds")
+    scopes = {scope["segment_id"]: (scope["start_offset"], scope["end_offset"]) for scope in source_ranges}
+    previous = {}
+    selected = set(segment_ids)
+    for value in sorted(plan, key=lambda span: (span["segment_id"], span["start_offset"])):
+        identity, start, end = value["segment_id"], value["start_offset"], value["end_offset"]
+        low, high = scopes.get(identity, (0, lengths.get(identity, 0)))
+        if identity not in selected or not low <= start < end <= high or start < previous.get(identity, low):
+            raise ValueError("Narration spans must be non-overlapping scalar ranges inside the selected source ranges")
+        previous[identity] = end
 
 
 def validate_source_ranges(ranges, segment_ids, lengths):
