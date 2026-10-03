@@ -6,8 +6,11 @@ struct ListenView: View {
     @Environment(CompanionStore.self) private var companion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showDownloads = false
-    @State private var showChapters = false
-    @State private var audioChapters: [DownloadedChapterGroup] = []
+    @State private var chapterPresentation: ChapterPresentation?
+    private struct ChapterPresentation: Identifiable {
+        let id = UUID()
+        let groups: [DownloadedChapterGroup]
+    }
     private var hasBookDownloads: Bool {
         companion.downloads.contains { $0.localBookID == player.bookID }
     }
@@ -50,7 +53,7 @@ struct ListenView: View {
                     Button("Downloaded narration", systemImage: "tray.full") { showDownloads = true }.accessibilityIdentifier("listen.downloads")
                 } }
                 .sheet(isPresented: $showDownloads) { DownloadedNarrationView() }
-                .sheet(isPresented: $showChapters) { chapters }
+                .sheet(item: $chapterPresentation) { presentation in chapters(presentation.groups) }
         }
     }
     @ViewBuilder private func artwork(_ book: LocalBook, height: CGFloat) -> some View {
@@ -67,8 +70,10 @@ struct ListenView: View {
     }
     private var chaptersButton: some View {
         Button {
-            if let id = player.bookID, let book = library.book(id) { audioChapters = companion.downloadedChapterGroups(for: book) }
-            showChapters = true
+            let groups = player.bookID.flatMap { library.book($0) }.map { companion.downloadedChapterGroups(for: $0) } ?? []
+            // Publish the snapshot and presentation together. Separate state
+            // writes can present the sheet with its previous empty snapshot.
+            chapterPresentation = ChapterPresentation(groups: groups)
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "list.bullet")
@@ -122,7 +127,7 @@ struct ListenView: View {
                 .accessibilityIdentifier("listen.sleep")
         }
     }
-    private var chapters: some View {
+    private func chapters(_ audioChapters: [DownloadedChapterGroup]) -> some View {
         NavigationStack {
             List {
                 if !player.speechChapters.isEmpty {
@@ -132,7 +137,7 @@ struct ListenView: View {
                                 Task {
                                     if await player.selectSpeechChapter(chapter) {
                                         if let id = player.bookID, let locator = player.speechLocator { library.saveLocation(id, locator: locator) }
-                                        showChapters = false
+                                        chapterPresentation = nil
                                     }
                                 }
                             }
@@ -145,7 +150,7 @@ struct ListenView: View {
                             ForEach(chapter.takes) { take in
                                 Button {
                                     companion.play(take.firstRecord, library: library, player: player, fromBeginning: true)
-                                    if player.isPlaying { showChapters = false }
+                                    if player.isPlaying { chapterPresentation = nil }
                                 } label: {
                                     HStack {
                                         VStack(alignment: .leading, spacing: 5) {
@@ -165,7 +170,7 @@ struct ListenView: View {
                     } footer: { Text("Choose a downloaded take for any chapter. Excerpts contain only part of a chapter. Playback continues within the selected take; it never switches to another take automatically.") }
                 }
             }.navigationTitle("Chapters").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showChapters = false } } }
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { chapterPresentation = nil } } }
         }.tint(Obsidian.accent)
     }
     private func isCurrentTake(_ take: DownloadedChapterTake) -> Bool {
