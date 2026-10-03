@@ -28,7 +28,47 @@ enum DeviceKeychain {
     static func remove(account: String) { SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "org.bookpocket.open.companion", kSecAttrAccount as String: account] as CFDictionary) }
 }
 
-/// Trust is confined to one origin and one QR-verified leaf certificate.
+/// Strict paths avoid proxy/browser disagreements about escaping and traversal.
+enum CompanionEndpoint {
+    private static func components(_ url: URL) -> URLComponents? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme == "https", let host = parts.host, !host.isEmpty,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              parts.percentEncodedHost?.contains("%") != true,
+              parts.port.map({ (1...65535).contains($0) }) ?? true else { return nil }
+        return parts
+    }
+    private static func safePath(_ path: String) -> Bool {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~/")
+        return path.unicodeScalars.allSatisfy { allowed.contains($0) }
+            && !path.contains("//")
+            && !path.split(separator: "/").contains { $0 == "." || $0 == ".." }
+    }
+    static func normalizedBase(_ url: URL) throws -> URL {
+        guard var parts = components(url), safePath(parts.percentEncodedPath) else {
+            throw BookError.message("Use the companion's HTTPS address with a plain path, without credentials, queries, fragments, or encoded characters.")
+        }
+        if parts.percentEncodedPath.hasSuffix("/") { parts.percentEncodedPath.removeLast() }
+        guard let normalized = parts.url else { throw BookError.message("Invalid companion address.") }
+        return normalized
+    }
+    static func resource(_ path: String, base: URL) throws -> URL {
+        guard path.hasPrefix("/v1/"), safePath(path), var parts = components(base) else {
+            throw BookError.message("The companion returned an invalid resource address.")
+        }
+        parts.percentEncodedPath += path
+        guard let url = parts.url, allows(url, base: base) else { throw BookError.message("The companion returned an invalid resource address.") }
+        return url
+    }
+    static func allows(_ url: URL, base: URL) -> Bool {
+        guard let target = components(url), let origin = components(base),
+              target.host?.lowercased() == origin.host?.lowercased(),
+              (target.port ?? 443) == (origin.port ?? 443), safePath(target.percentEncodedPath) else { return false }
+        return target.percentEncodedPath.hasPrefix(origin.percentEncodedPath + "/v1/")
+    }
+}
+
+/// Public certificates use system PKI; a supplied QR fingerprint also pins the leaf.
 final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
     let origin: URL
     let fingerprint: String?
@@ -50,7 +90,7 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskD
         return octets[0] == 10 || octets[0] == 127 || (octets[0] == 192 && octets[1] == 168) || (octets[0] == 172 && (16...31).contains(octets[1])) || (octets[0] == 169 && octets[1] == 254) || (octets[0] == 100 && (64...127).contains(octets[1]))
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        guard let url = request.url, url.scheme == origin.scheme, url.host == origin.host, (url.port ?? 443) == (origin.port ?? 443) else { completionHandler(nil); return }
+        guard let url = request.url, CompanionEndpoint.allows(url, base: origin) else { completionHandler(nil); return }
         completionHandler(request)
     }
 }
@@ -64,11 +104,11 @@ final class CompanionClient {
     static let decoder: JSONDecoder = { let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase; return d }()
     static let encoder: JSONEncoder = { let e = JSONEncoder(); e.keyEncodingStrategy = .convertToSnakeCase; e.outputFormatting = [.sortedKeys]; return e }()
     init(url: URL, fingerprint: String?, token: String? = nil, configuration: URLSessionConfiguration? = nil) throws {
-        guard url.scheme == "https", url.host != nil, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { throw BookError.message("Use the companion's HTTPS address without credentials, queries, or fragments.") }
+        let normalized = try CompanionEndpoint.normalizedBase(url)
         let cleaned = fingerprint?.replacingOccurrences(of: ":", with: "").lowercased()
         if let cleaned, !cleaned.isEmpty, cleaned.count != 64 || cleaned.contains(where: { !$0.isHexDigit }) { throw BookError.message("The certificate fingerprint must contain 64 hexadecimal characters.") }
-        baseURL = url; self.fingerprint = cleaned?.isEmpty == false ? cleaned : nil; self.token = token
-        delegate = PinnedSessionDelegate(origin: url, fingerprint: self.fingerprint)
+        baseURL = normalized; self.fingerprint = cleaned?.isEmpty == false ? cleaned : nil; self.token = token
+        delegate = PinnedSessionDelegate(origin: normalized, fingerprint: self.fingerprint)
         let config = configuration ?? URLSessionConfiguration.default
         config.tlsMinimumSupportedProtocolVersion = .TLSv12
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 3600
@@ -76,7 +116,7 @@ final class CompanionClient {
         session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
     }
     func request(_ path: String, method: String = "GET", body: Data? = nil, contentType: String = "application/json", bearer: String? = nil) throws -> URLRequest {
-        guard path.starts(with: "/v1/"), !path.contains(".."), let url = URL(string: path, relativeTo: baseURL)?.absoluteURL, url.host == baseURL.host, url.scheme == baseURL.scheme, url.port == baseURL.port else { throw BookError.message("The companion returned an invalid resource address.") }
+        let url = try CompanionEndpoint.resource(path, base: baseURL)
         var request = URLRequest(url: url); request.httpMethod = method; request.httpBody = body
         if path == "/v1/health" { request.timeoutInterval = 8 }
         if path.hasSuffix("/export") { request.timeoutInterval = 3600 }
@@ -88,7 +128,7 @@ final class CompanionClient {
         guard let failure = error as? URLError else { return error.localizedDescription }
         switch failure.code {
         case .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .networkConnectionLost, .notConnectedToInternet:
-            return "PC companion is offline or unreachable. Open Book Pocket Open on your PC, check that both devices are on the same Wi-Fi or connected through Tailscale, then refresh."
+            return "PC companion is offline or unreachable. Open Book Pocket Open on your PC, check your internet connection and companion address, then refresh."
         default: return error.localizedDescription
         }
     }

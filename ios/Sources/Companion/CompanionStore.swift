@@ -86,7 +86,7 @@ import ReadiumZIPFoundation
                 if result.status == "approved", let token = result.deviceToken, let device = result.deviceId {
                     try DeviceKeychain.save(token, account: device)
                     candidate.token = token
-                    identity = CompanionIdentity(url: url, fingerprint: candidate.fingerprint, deviceID: device)
+                    identity = CompanionIdentity(url: candidate.baseURL, fingerprint: candidate.fingerprint, deviceID: device)
                     client = candidate; try persist(); status = "Paired securely"; await refresh(); return
                 }
                 if ["rejected", "expired"].contains(result.status) { throw BookError.message("Pairing \(result.status). Create a new code in your PC's Studio.") }
@@ -94,7 +94,7 @@ import ReadiumZIPFoundation
             }
             throw BookError.message("Pairing timed out. Create a new code in the PC Studio.")
         } catch is CancellationError { status = nil }
-        catch { self.error = error.localizedDescription; status = nil }
+        catch { self.error = CompanionClient.narrationMessage(for: error); status = nil }
     }
     func disconnect() async {
         do {
@@ -133,7 +133,7 @@ import ReadiumZIPFoundation
             books = result.3.books + books.filter { neededBookIDs.contains($0.id) && !remoteBookIDs.contains($0.id) }
             legacyRecordings = result.4.recordings; importedPronunciations = result.5.pronunciationRules
             try persist(); status = "Connected to your companion"
-        } catch { status = "Companion unavailable · downloaded books stay ready"; if reportErrors { self.error = error.localizedDescription } }
+        } catch { status = "Companion unavailable · downloaded books stay ready"; if reportErrors { self.error = CompanionClient.narrationMessage(for: error) } }
     }
     func receiveBook(_ remote: RemoteBook, library: LibraryStore) async {
         guard let client, !receivingBook else { return }

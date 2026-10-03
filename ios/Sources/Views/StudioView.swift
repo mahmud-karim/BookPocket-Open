@@ -160,11 +160,11 @@ struct PairingView: View {
         NavigationStack {
             Form {
                 Section { Button("Scan companion QR", systemImage: "qrcode.viewfinder") { scanner = true } } footer: { Text("Open Devices in your PC Studio, create a pairing code, and scan its QR. The QR verifies your companion's HTTPS identity.") }
-                Section("Or enter pairing details") {
+                Section {
                     TextField("https://your-pc:8765", text: $url).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                     TextField("Pairing code", text: $code).textInputAutocapitalization(.characters).autocorrectionDisabled()
-                    TextField("Certificate SHA-256", text: $fingerprint, axis: .vertical).textInputAutocapitalization(.never).autocorrectionDisabled().font(.caption.monospaced())
-                }
+                    TextField("Certificate SHA-256 (if supplied)", text: $fingerprint, axis: .vertical).textInputAutocapitalization(.never).autocorrectionDisabled().font(.caption.monospaced())
+                } header: { Text("Or enter pairing details") } footer: { Text("Public HTTPS addresses use the system's certificate verification. For a local connection, enter the certificate fingerprint shown by your PC.") }
                 if let status = companion.status { Text(status).foregroundStyle(.secondary) }
                 if let error = companion.error { Text(error).foregroundStyle(.red) }
                 Button(companion.pairing ? "Waiting for PC approval…" : "Request pairing") { begin() }.disabled(url.isEmpty || code.isEmpty || companion.pairing)
