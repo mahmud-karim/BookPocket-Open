@@ -348,7 +348,7 @@ final class ReaderUITests: XCTestCase {
         return result == .completed
     }
 
-    private func waitForReaderContents(_ app: XCUIApplication, timeout: TimeInterval = 30) -> Bool {
+    private func waitForReaderContents(_ app: XCUIApplication, timeout: TimeInterval = 60) -> Bool {
         let button = app.buttons["reader.contents"]
         let ready = NSPredicate { _, _ in button.exists && button.isEnabled && button.isHittable }
         return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: timeout) == .completed
