@@ -2,7 +2,7 @@
 
 A local-first EPUB reader and audiobook studio. Read on iPhone, generate narration on your Windows PC, and keep your original books and audio.
 
-**Development preview available:** [download the latest unsigned iOS IPA (0.1.4)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.4-preview.1/BookPocketOpen.ipa) and [the compatible Windows installer (0.1.1)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.3-preview.1/BookPocketOpen-Setup-x64.exe). Published downloads were retrieved and checksum-verified; [iOS release notes and checksums](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.4-preview.1) are available. Listen now fits on one screen with chapter selection and a downloads tray. Generate the current page or chapter with the PC's external OmniVoice Kyon profile directly from the reader, with actionable connection errors. This includes the previous bottom-navigation and incomplete-EPUB import fixes. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
+**Development preview available:** [download the latest unsigned iOS IPA (0.1.5)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.5-preview.1/BookPocketOpen.ipa) and [the compatible Windows installer (0.1.1)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.3-preview.1/BookPocketOpen-Setup-x64.exe). Published downloads were retrieved and checksum-verified; [iOS release notes and checksums](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.5-preview.1) are available. Listen fits on one screen with a book-wide chapter selector, explicit downloaded takes and excerpts, and a downloads tray. Generate the current page or chapter with the PC's external OmniVoice Kyon profile directly from the reader, with actionable connection errors. This includes the previous bottom-navigation and incomplete-EPUB import fixes. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
 
 ## Obsidian in the actual app
 
@@ -20,6 +20,8 @@ Simulator screenshots show the original public test book. These are rendered app
 The narration screenshot uses an unpaired simulator. A paired phone exposes **Generate with Kyon** in this panel.
 
 Listen keeps its player controls on one screen, with a chapter selector and a tray for downloaded recordings. The [compact portrait](docs/screenshots/ios-listen-compact.png) and [landscape](docs/screenshots/ios-listen-landscape.png) screenshots show the same controls on an iPhone SE simulator.
+
+The [downloaded chapter panel](docs/screenshots/ios-chapter-takes.png) and [compact panel](docs/screenshots/ios-chapter-takes-compact.png) show separately generated chapters and an alternate excerpt. These isolated offline playback tests use explicitly labelled non-speech tones, not a synthesized narrator.
 
 ![Windows Obsidian library](docs/screenshots/windows-library.png)
 
