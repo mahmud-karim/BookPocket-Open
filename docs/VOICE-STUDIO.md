@@ -17,7 +17,7 @@ Keep VoiceStudio and the PC companion running while generating narration. A shor
 
 ## Generate from the iPhone
 
-In iOS 0.1.3 with PC Companion 0.1.1 or later, open a book and tap the **waveform plus** button in the reader's top bar. Choose **Generate current page** or **Generate current chapter**. The narration panel previews the captured original words and uses the uniquely named **Kyon** profile from the external OmniVoice service. Tap **Generate with Kyon**. With **Play when ready** enabled, the app downloads the finished audio and starts it in the reader; you can also use **Download & play in reader**.
+In iOS 0.1.3 or later with PC Companion 0.1.1 or later, open a book and tap the **waveform plus** button in the reader's top bar. Choose **Generate current page** or **Generate current chapter**. The narration panel previews the captured original words and uses the uniquely named **Kyon** profile from the external OmniVoice service. Tap **Generate with Kyon**. With **Play when ready** enabled, the app downloads the finished audio and starts it in the reader; you can also use **Download & play in reader**.
 
 The page is captured before the panel opens, including partial paragraphs. A chapter follows table-of-contents boundaries across intervening EPUB resources. If a book's visible text or chapter boundaries cannot be matched exactly, the app explains the problem before requesting audio. It never expands a page request into whole paragraphs. Reopen the panel after changing pages or reading appearance to capture a new selection.
 
