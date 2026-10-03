@@ -1,4 +1,5 @@
 import XCTest
+import ReadiumShared
 @testable import BookPocketOpen
 
 private final class ReaderJobProtocol: URLProtocol {
@@ -26,6 +27,13 @@ private final class ReaderJobProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+@MainActor private final class ReaderDownloadGate {
+    let started = XCTestExpectation(description: "Download is awaiting completion")
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async { await withCheckedContinuation { continuation = $0; started.fulfill() } }
+    func complete() { continuation?.resume(); continuation = nil }
+}
+
 final class ReaderPlayerTests: XCTestCase {
     private let words = "A compass 🧭 said, “Stay.” Then Mira replied, “Go.”"
     private var book: RemoteBook { .init(id: "original-book", title: "Original reader fixture", author: "Test", language: "en", sourceSha256: "original-sha", chapters: [.init(id: "chapter", title: "Original", href: "text.xhtml", segments: [.init(id: "segment", text: words, kind: "paragraph", locator: .object([:]))])]) }
@@ -35,6 +43,40 @@ final class ReaderPlayerTests: XCTestCase {
     private var selection: ReaderSourceSelection { .init(title: "Page", ranges: [range], excerpts: ["🧭 said, “S"]) }
     private func job(_ id: String = "take") -> RemoteJob {
         .init(id: id, bookId: book.id, status: "completed", engine: voice.engine, voiceId: voice.id, segmentIds: ["segment"], completedSegments: 1, totalSegments: 1, assets: [], narrationMode: "single", voiceName: "Kyon")
+    }
+    @MainActor func testDelayedDownloadPreservesResultButCannotAutoplayAStaleReaderIntent() async throws {
+        for change in ["unchanged", "take", "narrator", "selection", "snapshot", "position", "book", "dismissed", "away-and-back", "manual-pause"] {
+            let state = ReaderPlayerState()
+            state.mode = .kyon; state.selectedJobID = "take-A"; state.selection = selection
+            var currentBook = "local"
+            var location: Locator?
+            let intent = state.playbackIntent(jobID: "take-A", bookID: currentBook, location: location)
+            let gate = ReaderDownloadGate()
+            var saved = false, played: [String] = []
+            let operation = Task {
+                await state.downloadWithIntent(intent, currentBookID: { currentBook }, currentLocation: { location }, download: {
+                    await gate.wait(); saved = true; return true
+                }, play: { played.append(intent.jobID) })
+            }
+            await fulfillment(of: [gate.started], timeout: 2)
+            XCTAssertTrue(state.working)
+            switch change {
+            case "take": state.selectedJobID = "ready-take-B"
+            case "narrator": state.mode = .cast
+            case "selection": state.selection?.ranges[0].endOffset += 1
+            case "snapshot": state.snapshot = .init(scope: .page, hrefs: ["text.xhtml"], documents: [:], current: .init(resource: 0, block: 0, offset: 10), boundaries: [], isText: false)
+            case "position": location = try Locator(jsonString: #"{"href":"text.xhtml","type":"application/xhtml+xml","locations":{"progression":0.5}}"#)
+            case "book": currentBook = "another-book"
+            case "dismissed", "manual-pause": state.invalidatePlaybackIntent()
+            case "away-and-back": state.invalidatePlaybackIntent(); state.selectedJobID = "ready-take-B"; state.selectedJobID = "take-A"
+            default: break
+            }
+            gate.complete()
+            let result = await operation.value
+            XCTAssertTrue(result && saved, "\(change): a completed download must remain available")
+            XCTAssertFalse(state.working)
+            XCTAssertEqual(played, change == "unchanged" ? ["take-A"] : [], "\(change): only the unchanged captured intent may start its own take")
+        }
     }
     func testFullCastClipsReviewedUnicodeSpansWithoutChangingOriginalOffsets() throws {
         let cast = BookCast(characters: [.init(id: "narrator", name: "Narrator", aliases: [], voiceId: voice.id), .init(id: "mira", name: "Mira", aliases: [], voiceId: "mira-voice")], assignments: [

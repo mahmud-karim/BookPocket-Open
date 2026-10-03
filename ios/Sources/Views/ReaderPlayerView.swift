@@ -48,7 +48,7 @@ struct ReaderPlayerView: View {
                                     VStack(alignment: .leading, spacing: 20) {
                                         generatedControls
                                         if let error = state.error { Text(error).foregroundStyle(.red) }
-                                        if state.mode == .cast { Button("Set up cast", systemImage: "person.2") { Task { await openCast() } }.frame(minHeight: 44).disabled(state.working).accessibilityIdentifier("reader.player.cast") }
+                                        if state.mode == .cast { Button("Set up cast", systemImage: "person.2") { Task { await openCast() } }.frame(minHeight: 48).disabled(state.working).accessibilityIdentifier("reader.player.cast") }
                                         if state.showingSelection {
                                             Text(state.selection?.title ?? state.snapshot?.scope.title ?? "Selected words").font(.headline)
                                             Text(state.preview).font(.system(.body, design: .serif)).textSelection(.enabled).accessibilityIdentifier("reader.generation.preview")
@@ -73,9 +73,10 @@ struct ReaderPlayerView: View {
                 }
                 .onChange(of: reader.location) { if !active && !state.working && !reader.capturingScope && !state.showingSelection && state.mode != .device { refreshLocal() } }
         }.tint(Obsidian.accent)
+            .onDisappear { state.invalidatePlaybackIntent() }
             .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(370), .large])
             .presentationDragIndicator(.visible)
-            .presentationBackgroundInteraction(.enabled(upThrough: .height(370)))
+            .presentationBackgroundInteraction(.disabled)
     }
     private var transport: some View {
         VStack(spacing: 12) {
@@ -85,25 +86,25 @@ struct ReaderPlayerView: View {
                         Button { select(mode) } label: { Label(mode.title, systemImage: state.mode == mode ? "checkmark" : "waveform") }
                             .accessibilityIdentifier("reader.voice." + mode.rawValue)
                     }
-                } label: { HStack { Text(state.mode.title).font(.headline); Image(systemName: "chevron.down").font(.system(size: 14)) }.frame(minHeight: 44).contentShape(.rect) }
+                } label: { HStack { Text(state.mode.title).font(.headline); Image(systemName: "chevron.down").font(.system(size: 14)) }.frame(minHeight: 48).contentShape(.rect) }
                     .disabled(state.working || reader.capturingScope).accessibilityIdentifier("reader.player.narrator")
                 Spacer(minLength: 4)
                 Menu {
                     ForEach([0.75, 1, 1.25, 1.5, 2], id: \.self) { rate in Button("\(rate.formatted())×") { player.rate = rate } }
-                } label: { Text("\(player.rate.formatted())×").font(.system(size: 17, weight: .medium)).monospacedDigit().frame(minWidth: 44, minHeight: 44).contentShape(.rect) }
+                } label: { Text("\(player.rate.formatted())×").font(.system(size: 17, weight: .medium)).monospacedDigit().frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
                     .accessibilityLabel("Playback speed").accessibilityIdentifier("reader.player.speed")
             }
             if active && player.duration > 0 {
-                Slider(value: Binding(get: { player.elapsed }, set: { player.seek($0) }), in: 0...max(1, player.duration)) { Text("Audio position") }
+                Slider(value: Binding(get: { player.elapsed }, set: { state.invalidatePlaybackIntent(); player.seek($0) }), in: 0...max(1, player.duration)) { Text("Audio position") }
                     .accessibilityIdentifier("reader.player.seek")
             }
             HStack {
-                control(state.mode == .device ? "Previous passage" : "Back 15 seconds", icon: state.mode == .device ? "backward.end" : "gobackward.15", id: "backward") { player.skip(-15) }.disabled(!active)
+                control(state.mode == .device ? "Previous passage" : "Back 15 seconds", icon: state.mode == .device ? "backward.end" : "gobackward.15", id: "backward") { state.invalidatePlaybackIntent(); player.skip(-15) }.disabled(!active)
                 Spacer(minLength: 0)
                 control(active && player.isPlaying ? "Pause" : "Play", icon: active && player.isPlaying ? "pause.fill" : "play.fill", id: "toggle") { play() }
                     .disabled(!canPlay).accessibilityValue(active && player.isPlaying ? "Playing" : "Paused")
                 Spacer(minLength: 0)
-                control(state.mode == .device ? "Next passage" : "Forward 15 seconds", icon: state.mode == .device ? "forward.end" : "goforward.15", id: "forward") { player.skip(15) }.disabled(!active)
+                control(state.mode == .device ? "Next passage" : "Forward 15 seconds", icon: state.mode == .device ? "forward.end" : "goforward.15", id: "forward") { state.invalidatePlaybackIntent(); player.skip(15) }.disabled(!active)
             }
             Text(active ? (player.isPlaying ? "Playing" : "Paused") : state.mode == .device ? "Ready on this iPhone" : canPlay ? "Ready offline" : "No matching audio")
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("reader.player.readiness")
@@ -118,7 +119,7 @@ struct ReaderPlayerView: View {
                 Menu {
                     Button("Off") { player.sleep(minutes: nil) }
                     ForEach([5, 15, 30, 60], id: \.self) { minutes in Button("\(minutes) minutes") { player.sleep(minutes: minutes) } }
-                } label: { Image(systemName: "moon").font(.system(size: 22)).frame(minWidth: 44, minHeight: 44).contentShape(.rect) }
+                } label: { Image(systemName: "moon").font(.system(size: 22)).frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
                     .accessibilityLabel("Sleep timer").accessibilityIdentifier("reader.player.sleep")
                 if state.mode != .device { control("Narration details and takes", icon: "ellipsis.circle", id: "details") { detail = .production } }
             }
@@ -126,8 +127,8 @@ struct ReaderPlayerView: View {
             else if let job, ["queued", "running", "paused"].contains(job.status) {
                 ProgressView(value: Double(job.completedSegments), total: Double(max(1, job.totalSegments))) { Text("\(job.status.capitalized) · \(job.completedSegments)/\(job.totalSegments)").font(.caption) }
             } else if let job, job.status == "completed", !state.readyIDs.contains(job.id) {
-                Button("Download & play") { Task { await downloadAndPlay(job) } }.frame(minHeight: 44).accessibilityIdentifier("reader.player.download")
-            } else if state.error != nil { Button("Needs attention — details") { detail = .production }.font(.caption).frame(minHeight: 44) }
+                Button("Download & play") { Task { await downloadAndPlay(job) } }.frame(minHeight: 48).accessibilityIdentifier("reader.player.download")
+            } else if state.error != nil { Button("Needs attention — details") { detail = .production }.font(.caption).frame(minHeight: 48) }
         }.frame(maxWidth: .infinity)
     }
     private var generateMenu: some View {
@@ -139,7 +140,7 @@ struct ReaderPlayerView: View {
             Group {
                 if dynamicTypeSize.isAccessibilitySize { Label("Generate", systemImage: "waveform.badge.plus").labelStyle(.iconOnly) }
                 else { Label("Generate", systemImage: "waveform.badge.plus") }
-            }.font(dynamicTypeSize.isAccessibilitySize ? .system(size: 22) : .body).frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+            }.font(dynamicTypeSize.isAccessibilitySize ? .system(size: 22) : .body).frame(minWidth: 48, minHeight: 48).contentShape(.rect)
         }.disabled(state.working || reader.capturingScope || !reader.pageReady).accessibilityIdentifier("reader.player.generate")
     }
     private func chapters(_ chapterGroups: [DownloadedChapterGroup]) -> some View {
@@ -178,6 +179,7 @@ struct ReaderPlayerView: View {
     private func selectChapter(_ take: DownloadedChapterTake) {
         guard let job = companion.jobs.first(where: { $0.id == take.jobID }), ReaderTakeMatch.mode(job) == state.mode,
               let remote = companion.books.first(where: { $0.id == job.bookId }), remote.sourceSha256 == reader.book?.sourceSHA256 else { return }
+        state.invalidatePlaybackIntent()
         companion.play(take.firstRecord, library: library, player: player, fromBeginning: true)
         guard player.isPlaying else { state.error = player.error; return }
         state.remote = remote; state.selectedJobID = job.id; state.readyIDs.insert(job.id)
@@ -198,7 +200,7 @@ struct ReaderPlayerView: View {
                     Text("Your PC keeps this job when you close the player.").font(.caption).foregroundStyle(.secondary)
                 }
                 if let error = job.error { Text(error).font(.caption).foregroundStyle(.red) }
-                if ["failed", "cancelled"].contains(job.status) { Button("Retry generation") { action("retry") }.frame(minHeight: 44) }
+                if ["failed", "cancelled"].contains(job.status) { Button("Retry generation") { action("retry") }.frame(minHeight: 48) }
                 if job.status == "completed", !state.readyIDs.contains(job.id) {
                     Button("Download & play", systemImage: "arrow.down.circle") { Task { await downloadAndPlay(job) } }
                         .buttonStyle(.borderedProminent).foregroundStyle(Obsidian.onAccent).disabled(state.working)
@@ -210,10 +212,11 @@ struct ReaderPlayerView: View {
             Menu {
                 ForEach(Array(state.candidates.enumerated()), id: \.element.id) { index, take in
                     Button("Take \(state.candidates.count - index) · \(take.createdAt ?? "Imported") · \(state.readyIDs.contains(take.id) ? "Offline" : take.status)") {
+                        state.invalidatePlaybackIntent()
                         if active { player.pause() }; state.selectedJobID = take.id; state.showingSelection = false; state.pollRevision += 1
                     }
                 }
-            } label: { Label(state.selectedJobID == nil ? "Choose a matching take" : "Change take", systemImage: "list.bullet").frame(minHeight: 44) }
+            } label: { Label(state.selectedJobID == nil ? "Choose a matching take" : "Change take", systemImage: "list.bullet").frame(minHeight: 48) }
             .accessibilityIdentifier("reader.player.takes")
         }
         if state.showingSelection, state.voice != nil, state.selection != nil {
@@ -225,15 +228,16 @@ struct ReaderPlayerView: View {
             ForEach(NarrationScope.allCases) { scope in
                 Button(scope.title, systemImage: scope == .page ? "doc.text" : "book") { capture(scope) }.accessibilityIdentifier("reader.generate." + scope.rawValue)
             }
-        } label: { Label(canPlay ? "Generate another selection" : "Generate", systemImage: "waveform.badge.plus").frame(minHeight: 44) }
+        } label: { Label(canPlay ? "Generate another selection" : "Generate", systemImage: "waveform.badge.plus").frame(minHeight: 48) }
             .buttonStyle(.bordered).disabled(state.working || reader.capturingScope || !reader.pageReady).accessibilityIdentifier("reader.player.generate")
-        if !companion.paired { Button("Pair your PC", systemImage: "qrcode.viewfinder") { showPairing = true }.frame(minHeight: 44) }
-        else { Button("Refresh connection & takes", systemImage: "arrow.clockwise") { refresh() }.font(.caption).frame(minHeight: 44).disabled(state.working) }
+        if !companion.paired { Button("Pair your PC", systemImage: "qrcode.viewfinder") { showPairing = true }.frame(minHeight: 48) }
+        else { Button("Refresh connection & takes", systemImage: "arrow.clockwise") { refresh() }.font(.caption).frame(minHeight: 48).disabled(state.working) }
     }
     private func control(_ title: String, icon: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Label(title, systemImage: icon).labelStyle(.iconOnly).font(.system(size: 22)).frame(minWidth: 44, minHeight: 44).contentShape(.rect) }.accessibilityIdentifier("reader.player." + id)
+        Button(action: action) { Label(title, systemImage: icon).labelStyle(.iconOnly).font(.system(size: 22)).frame(minWidth: 48, minHeight: 48).contentShape(.rect) }.accessibilityIdentifier("reader.player." + id)
     }
     private func select(_ mode: ReaderVoiceMode) {
+        state.invalidatePlaybackIntent()
         if active && state.mode != mode { player.pause() }
         state.mode = mode; state.error = nil; state.needsCast = false; state.showingSelection = false; state.voice = nil; state.selectedJobID = nil
         if mode != .device { refreshLocal() }
@@ -247,6 +251,7 @@ struct ReaderPlayerView: View {
         }
     }
     private func capture(_ scope: NarrationScope) {
+        state.invalidatePlaybackIntent()
         Task {
             do { let snapshot = try await reader.captureScope(scope); detail = .production; await state.prepare(snapshot: snapshot, reader: reader, library: library, companion: companion) }
             catch { state.error = error.localizedDescription }
@@ -260,12 +265,17 @@ struct ReaderPlayerView: View {
         Task { await companion.refresh(reportErrors: false); if state.showingSelection { refreshPreparation() } else { refreshLocal() } }
     }
     private func play() {
+        state.invalidatePlaybackIntent()
         if active { player.toggle(); reader.connectPlayback(player); return }
         if state.mode == .device {
             guard let publication = reader.publication, let book = reader.book else { return }
             player.speak(publication: publication, book: book, from: reader.navigator?.currentLocation); reader.connectPlayback(player); return
         }
-        guard let job, state.readyIDs.contains(job.id), let first = state.selection?.ranges.first,
+        guard let job, state.readyIDs.contains(job.id), let selection = state.selection else { return }
+        playDownloaded(job, selection: selection)
+    }
+    private func playDownloaded(_ job: RemoteJob, selection: ReaderSourceSelection) {
+        guard let first = selection.ranges.first,
               let record = companion.orderedDownloads(jobID: job.id).first(where: { $0.asset.segmentId == first.segmentId }) else { return }
         companion.play(record, library: library, player: player, fromBeginning: true)
         guard player.isPlaying else { state.error = player.error; state.readyIDs.remove(job.id); return }
@@ -279,12 +289,16 @@ struct ReaderPlayerView: View {
         Task { if await companion.jobAction(job, action) { state.error = nil; state.pollRevision += 1 } else { state.error = companion.error } }
     }
     private func downloadAndPlay(_ job: RemoteJob) async {
-        guard let local = reader.book, !state.working else { return }
-        state.working = true; defer { state.working = false }
-        guard await companion.download(job, localBook: local) else { state.error = companion.error ?? "Wait for the current download, then retry."; return }
-        guard let remote = state.remote, let selection = state.selection,
-              ReaderTakeMatch.ready(job, book: remote, selection: selection, records: companion.orderedDownloads(jobID: job.id), localBookID: local.id) else { state.error = "Some passages are missing. Reconnect your PC and retry the download."; return }
-        state.readyIDs.insert(job.id); play()
+        guard let local = reader.book, let remote = state.remote, let selection = state.selection, !state.working else { return }
+        let intent = state.playbackIntent(jobID: job.id, bookID: local.id, location: reader.location)
+        await state.downloadWithIntent(intent, currentBookID: { reader.bookID }, currentLocation: { reader.location }, download: {
+            guard await companion.download(job, localBook: local) else { state.error = companion.error ?? "Wait for the current download, then retry."; return false }
+            let records = companion.orderedDownloads(jobID: job.id)
+            guard ReaderTakeMatch.ready(job, book: remote, selection: selection, records: records, localBookID: local.id) else { state.error = "Some passages are missing. Reconnect your PC and retry the download."; return false }
+            if state.mode == intent.mode, let current = state.selection,
+               ReaderTakeMatch.ready(job, book: remote, selection: current, records: records, localBookID: local.id) { state.readyIDs.insert(job.id) }
+            return true
+        }, play: { playDownloaded(job, selection: selection) })
     }
     private func openCast() async {
         guard !state.working else { return }

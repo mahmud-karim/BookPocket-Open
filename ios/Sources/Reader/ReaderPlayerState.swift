@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import ReadiumShared
 
 enum ReaderVoiceMode: String, CaseIterable, Identifiable {
     case device, kyon, cast
@@ -37,6 +38,16 @@ struct ReaderCastPlan {
         }
         return Self(narrator: narrator, spans: plan)
     }
+}
+
+struct ReaderPlaybackIntent {
+    let session: UUID
+    let jobID: String
+    let bookID: String
+    let mode: ReaderVoiceMode
+    let ranges: [SourceRange]
+    let snapshotID: UUID?
+    let location: Locator?
 }
 
 enum ReaderTakeMatch {
@@ -90,6 +101,27 @@ enum ReaderTakeMatch {
     var needsCast = false
     var showingSelection = false
     var pollRevision = 0
+    private var playbackSession = UUID()
+
+    func invalidatePlaybackIntent() { playbackSession = UUID() }
+    func playbackIntent(jobID: String, bookID: String, location: Locator?) -> ReaderPlaybackIntent {
+        .init(session: playbackSession, jobID: jobID, bookID: bookID, mode: mode,
+              ranges: selection?.ranges ?? [], snapshotID: snapshot?.id, location: location)
+    }
+    /// A download remains useful after navigation/dismissal. Only its playback
+    /// permission expires; completed files stay in the ordinary durable store.
+    @discardableResult func downloadWithIntent(_ intent: ReaderPlaybackIntent,
+        currentBookID: () -> String, currentLocation: () -> Locator?,
+        download: () async -> Bool, play: () -> Void) async -> Bool {
+        guard !working else { return false }
+        working = true; defer { working = false }
+        guard await download() else { return false }
+        guard playbackSession == intent.session, selectedJobID == intent.jobID,
+              mode == intent.mode, selection?.ranges == intent.ranges, snapshot?.id == intent.snapshotID,
+              currentBookID() == intent.bookID, currentLocation() == intent.location else { return true }
+        play()
+        return true
+    }
 
     var preview: String {
         if let selection { return selection.text }

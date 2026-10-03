@@ -88,12 +88,13 @@ struct ReaderView: View {
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { panel = nil } } }
                 }.presentationDetents([.medium, .large])
             }
-            .sheet(isPresented: $showPlayer) { ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID)) }
+            .sheet(isPresented: $showPlayer, onDismiss: { companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent() }) { ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID)) }
             .alert("Reader", isPresented: Binding(get: { model.error != nil && !model.loading && model.navigator != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
         }.tint(Obsidian.accent)
     }
     private func openPlayer() {
         let state = companion.readerPlayer(for: model.bookID)
+        state.invalidatePlaybackIntent()
         Task {
             if !state.working && !state.showingSelection && state.mode != .device {
                 do { let snapshot = try await model.captureScope(.page); if let local = model.book { state.discover(snapshot: snapshot, local: local, companion: companion) } }
