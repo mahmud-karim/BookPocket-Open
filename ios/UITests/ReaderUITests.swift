@@ -2,6 +2,98 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters() {
+        executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--offline-transport-fixture", "-playbackRate", "1"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        // The DEBUG fixture installs original PCM tones, not synthesized speech,
+        // in isolated unpaired stores and opens Listen only after installation.
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30))
+        app.buttons["listen.downloads"].tap()
+        let recording = app.buttons["listen.download.transport-job"]
+        XCTAssertTrue(recording.waitForExistence(timeout: 10)); recording.tap()
+        let play = app.buttons["player.full.toggle"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        XCTAssertEqual(play.value as? String, "Playing")
+        play.tap()
+        XCTAssertEqual(play.value as? String, "Paused")
+        XCTAssertEqual(app.buttons["listen.chapters"].value as? String, "Tone one — 90 seconds")
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 90)
+        let position = app.sliders["listen.position"]
+        XCTAssertTrue(position.exists && position.isHittable)
+        position.adjust(toNormalizedSliderPosition: 0.5)
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), 45, accuracy: 3)
+        app.buttons["listen.backward"].tap()
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), 30, accuracy: 3)
+        app.buttons["listen.forward"].tap()
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), 45, accuracy: 3)
+        app.buttons["listen.speed"].tap()
+        XCTAssertTrue(app.buttons["1.5×"].waitForExistence(timeout: 5)); app.buttons["1.5×"].tap()
+        XCTAssertEqual(app.buttons["listen.speed"].value as? String, "1.5×")
+        assertDownloadedListenFits(app, name: "Obsidian offline transport tone portrait")
+        let frame = play.frame
+        app.swipeUp()
+        XCTAssertEqual(play.frame, frame, "Downloaded player must also fit without scrolling")
+        app.buttons["listen.chapters"].tap()
+        XCTAssertTrue(app.navigationBars["Chapters"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["listen.chapter.transport-chapter-0"].exists)
+        XCTAssertFalse(app.buttons["listen.chapter.transport-chapter-2"].exists, "An asset with no local file cannot be offered as an offline chapter")
+        let next = app.buttons["listen.chapter.transport-chapter-1"]
+        XCTAssertTrue(next.exists && next.isHittable); next.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Tone two — 120 seconds"), object: app.buttons["listen.chapters"])], timeout: 10), .completed)
+        XCTAssertEqual(play.value as? String, "Playing", "Selecting downloaded chapter must start the real local recording")
+        play.tap()
+        XCTAssertEqual(play.value as? String, "Paused")
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 120)
+        XCTAssertLessThan(audioSeconds(app.staticTexts["listen.elapsed"]), 15, "Chapter selection must start at its beginning, not the preceding 45-second position")
+        XCTAssertEqual(app.buttons["listen.speed"].value as? String, "1.5×")
+        assertDownloadedListenFits(app, name: "Obsidian offline transport selected chapter")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
+        assertDownloadedListenFits(app, name: "Obsidian offline transport tone landscape")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
+        app.tabBars.buttons["Studio"].tap()
+        XCTAssertTrue(app.buttons["studio.primary"].waitForExistence(timeout: 10))
+        XCTAssertEqual(playbackMiniState(app), "Paused")
+        // This is the normal unpaired Studio action, never a fabricated PC-ready state.
+        XCTAssertTrue(app.buttons["studio.primary"].label.contains("Pair"))
+        app.tabBars.buttons["Listen"].tap()
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 120)
+        XCTAssertEqual(play.value as? String, "Paused")
+    }
+
+    private func audioSeconds(_ label: XCUIElement) -> Double {
+        let components = label.label.split(separator: ":").compactMap { Double($0) }
+        guard components.count == 2 else { XCTFail("Expected an actual minute:second playback value, received \(label.label)"); return -.infinity }
+        return components[0] * 60 + components[1]
+    }
+
+    private func playbackMiniState(_ app: XCUIApplication) -> String? {
+        assertMiniPlayerAboveTabs(in: app)
+        return app.buttons["player.mini.toggle"].value as? String
+    }
+
+    private func assertDownloadedListenFits(_ app: XCUIApplication, name: String, file: StaticString = #filePath, line: UInt = #line) {
+        assertListenFits(app, name: name, file: file, line: line)
+        let slider = app.sliders["listen.position"]
+        XCTAssertTrue(slider.exists && slider.isHittable, file: file, line: line)
+        XCTAssertGreaterThan(slider.frame.width, 44, file: file, line: line)
+        XCTAssertGreaterThan(slider.frame.height, 0, file: file, line: line)
+        XCTAssertTrue(app.frame.contains(slider.frame), file: file, line: line)
+        XCTAssertLessThanOrEqual(slider.frame.maxY, app.buttons["player.full.toggle"].frame.minY, "Seek control must not overlap playback controls", file: file, line: line)
+        for id in ["listen.elapsed", "listen.duration"] {
+            let label = app.staticTexts[id]
+            XCTAssertTrue(label.exists && app.frame.contains(label.frame), file: file, line: line)
+            XCTAssertLessThanOrEqual(label.frame.maxY, app.buttons["player.full.toggle"].frame.minY, file: file, line: line)
+        }
+        let geometry = XCTAttachment(string: "Seek slider: \(slider.frame)\nElapsed: \(app.staticTexts["listen.elapsed"].frame)\nDuration: \(app.staticTexts["listen.duration"].frame)")
+        geometry.name = name + " audio timeline geometry"; geometry.lifetime = .keepAlways; add(geometry)
+    }
+
     func testListenFitsOneScreenAndSelectsChapters() {
         executionTimeAllowance = 240
         let app = XCUIApplication()

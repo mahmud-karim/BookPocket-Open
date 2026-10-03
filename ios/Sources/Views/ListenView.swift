@@ -85,8 +85,10 @@ struct ListenView: View {
                     .accessibilityLabel("Audio position").accessibilityIdentifier("listen.position")
                 HStack {
                     Text(Duration.seconds(player.elapsed).formatted(.time(pattern: .minuteSecond)))
+                        .accessibilityIdentifier("listen.elapsed")
                     Spacer()
                     Text(Duration.seconds(player.duration).formatted(.time(pattern: .minuteSecond)))
+                        .accessibilityIdentifier("listen.duration")
                 }.font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
             }
         } else { Text(player.isPlaying ? "Reading aloud" : "Ready when you are").font(.caption).foregroundStyle(.secondary) }
@@ -109,7 +111,7 @@ struct ListenView: View {
         HStack {
             Menu { ForEach([0.75, 1, 1.25, 1.5, 1.75, 2], id: \.self) { value in Button("\(value.formatted())×") { player.rate = value } } } label: {
                 Text("\(player.rate.formatted())×").font(.headline).lineLimit(1).minimumScaleFactor(0.6).frame(minWidth: 64, minHeight: 44)
-            }.accessibilityLabel("Playback speed").accessibilityIdentifier("listen.speed")
+            }.accessibilityLabel("Playback speed").accessibilityValue("\(player.rate.formatted())×").accessibilityIdentifier("listen.speed")
             Spacer()
             Menu {
                 Button("Off") { player.sleep(minutes: nil) }
@@ -176,7 +178,7 @@ private struct DownloadedNarrationView: View {
                                 }
                                 Spacer(); Image(systemName: "play.circle").font(.title2)
                             }
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.plain).accessibilityIdentifier("listen.download.\(jobID)")
                             .swipeActions { Button("Remove", systemImage: "trash", role: .destructive) { removingJob = jobID } }
                             .contextMenu { Button("Remove download", systemImage: "trash", role: .destructive) { removingJob = jobID } }
                     }

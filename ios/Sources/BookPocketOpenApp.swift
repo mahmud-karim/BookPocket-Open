@@ -6,6 +6,18 @@ import SwiftUI
     @State private var companion = CompanionStore()
     @State private var selectedTab = "library"
     @AppStorage("appTheme") private var theme = "dark"
+    #if DEBUG
+    @State private var installedTransportFixture = false
+    init() {
+        if UITestTransportFixture.enabled {
+            // A fresh isolated store prevents existing pairing credentials or
+            // personal downloads from entering the offline transport test.
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("TransportUITest-" + UUID().uuidString)
+            _library = State(initialValue: LibraryStore(root: root.appendingPathComponent("Library")))
+            _companion = State(initialValue: CompanionStore(root: root.appendingPathComponent("Companion")))
+        }
+    }
+    #endif
     var body: some Scene {
         WindowGroup {
             TabView(selection: $selectedTab) {
@@ -20,6 +32,15 @@ import SwiftUI
             .tint(Obsidian.accent)
             .preferredColorScheme(theme == "system" ? nil : theme == "light" ? .light : .dark)
             .environment(library).environment(player).environment(companion)
+            .task {
+                #if DEBUG
+                if UITestTransportFixture.enabled && !installedTransportFixture {
+                    installedTransportFixture = true
+                    do { try await UITestTransportFixture.install(library: library, companion: companion); selectedTab = "listen" }
+                    catch { library.error = error.localizedDescription }
+                }
+                #endif
+            }
             .onOpenURL { url in Task { do { try await library.importBook(url) } catch { library.error = error.localizedDescription } } }
             .alert("Book Pocket Open", isPresented: Binding(get: { library.error != nil || player.error != nil }, set: { if !$0 { library.error = nil; player.error = nil } })) { Button("OK") { library.error = nil; player.error = nil } } message: { Text(library.error ?? player.error ?? "") }
         }
