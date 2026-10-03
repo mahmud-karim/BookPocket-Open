@@ -65,7 +65,7 @@ final class ReaderUITests: XCTestCase {
             geometry.append("\(id): \(control.frame)")
         }
         XCTAssertTrue(app.buttons["listen.downloads"].isHittable, file: file, line: line)
-        let screenshot = XCTAttachment(screenshot: XCUIDevice.shared.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
         let frames = XCTAttachment(string: geometry.joined(separator: "\n")); frames.name = name + " geometry"; frames.lifetime = .keepAlways; add(frames)
     }
 
@@ -233,7 +233,7 @@ final class ReaderUITests: XCTestCase {
         }
         let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: rendered, object: nil)], timeout: 30)
         if result != .completed {
-            let screen = XCTAttachment(screenshot: XCUIDevice.shared.screenshot())
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             screen.name = "Reader paint timeout screen"; screen.lifetime = .keepAlways; add(screen)
             let hierarchy = XCTAttachment(string: XCUIApplication().debugDescription)
             hierarchy.name = "Reader paint timeout hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
@@ -251,7 +251,7 @@ final class ReaderUITests: XCTestCase {
     private func waitForScreenshotOrientation(landscape: Bool) -> Bool {
         var consecutiveMatches = 0
         let ready = NSPredicate { _, _ in
-            let size = XCUIDevice.shared.screenshot().image.size
+            let size = XCUIScreen.main.screenshot().image.size
             let matches = landscape ? size.width > size.height : size.height > size.width
             consecutiveMatches = matches ? consecutiveMatches + 1 : 0
             return consecutiveMatches >= 2
