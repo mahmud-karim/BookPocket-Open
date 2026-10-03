@@ -24,9 +24,7 @@ extension ReaderModel {
         guard navigator.viewport == viewport else {
             throw BookError.message("No stable visible text was found. Stop scrolling and try again on a text page.")
         }
-        let first = visible.blocks.enumerated().first(where: { !$0.element.visible.isEmpty })
-        if scope == .page && first == nil { throw BookError.message("There is no visible text on this page. Turn to a text page or generate its chapter.") }
-        let current = SourcePoint(resource: currentIndex, block: first?.offset ?? 0, offset: first?.element.visible.first?.start ?? 0)
+        let current = try ReaderSourceMapper.currentPoint(resource: currentIndex, document: visible, scope: scope)
         var documents = [currentHref: visible]
         var boundaries: [ChapterBoundary] = []
         if scope == .chapter {

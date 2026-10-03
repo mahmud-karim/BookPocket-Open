@@ -32,6 +32,14 @@ struct ReaderSourceSelection {
 }
 
 enum ReaderSourceMapper {
+    static func currentPoint(resource: Int, document: SourceDocument, scope: NarrationScope) throws -> SourcePoint {
+        if let first = document.blocks.enumerated().first(where: { !$0.element.visible.isEmpty }), let range = first.element.visible.first {
+            return SourcePoint(resource: resource, block: first.offset, offset: range.start)
+        }
+        if scope == .chapter && document.blocks.isEmpty { return SourcePoint(resource: resource, block: 0, offset: 0) }
+        if scope == .chapter { throw BookError.message("This illustration doesn't reveal which chapter you're in. Open a nearby text page, then generate its chapter.") }
+        throw BookError.message("There is no visible text on this page. Turn to a text page or generate its chapter.")
+    }
     static func href(_ value: String) -> String {
         let path = String(value.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")
         return path.removingPercentEncoding ?? path

@@ -44,8 +44,11 @@ final class ReaderScopeTests: XCTestCase {
         XCTAssertEqual(selection.title, "The journey")
         XCTAssertEqual(selection.excerpts, ["Start 🧭 begins.", "Continuation. "])
         XCTAssertEqual(selection.ranges.last?.endOffset, 14)
-        var illustration = snapshot; illustration.current = .init(resource: 1, block: 0, offset: 0)
+        var illustration = snapshot
+        illustration.current = try ReaderSourceMapper.currentPoint(resource: 1, document: .init(blocks: [], anchors: []), scope: .chapter)
         XCTAssertEqual(try ReaderSourceMapper.resolve(illustration, book: remote).ranges, selection.ranges, "An illustration inside a chapter still selects that semantic chapter")
+        XCTAssertThrowsError(try ReaderSourceMapper.currentPoint(resource: 2, document: last, scope: .chapter), "Offscreen text plus an illustration must not silently choose the first of several fragment chapters")
+        XCTAssertThrowsError(try ReaderSourceMapper.currentPoint(resource: 1, document: .init(blocks: [], anchors: []), scope: .page))
         var ambiguous = first; ambiguous.anchors.append(first.anchors[0])
         XCTAssertThrowsError(try ReaderSourceMapper.boundary(fragment: "start", resource: 0, document: ambiguous))
         var noTOC = snapshot; noTOC.boundaries = []
