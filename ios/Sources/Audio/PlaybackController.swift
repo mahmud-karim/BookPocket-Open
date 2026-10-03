@@ -110,7 +110,9 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     func pause() {
         speech?.pause()
         if let player {
-            player.pause(); elapsed = player.currentTime; onProgress?(elapsed)
+            let wasPlaying = player.isPlaying
+            player.pause(); elapsed = player.currentTime
+            if wasPlaying { onProgress?(elapsed) }
         }
         isPlaying = false; nowPlaying()
     }
