@@ -2,6 +2,16 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
+## Public HTTPS connection
+
+With iOS 0.1.11 and Companion 0.1.7 or later, configure [Funnel](FUNNEL.md) and
+pair using the public-address QR. Disable Tailscale and Wi-Fi on the iPhone,
+leaving cellular internet enabled. Refresh the companion, generate one short
+page with Kyon, download and play it. Confirm the selected source and narrator,
+then enable airplane mode and play the downloaded take again. Keep the PC and
+voice engine running during generation. An external VPS smoke proves public
+reachability and API behavior; it does not pass this physical-device check.
+
 ## Install and read offline
 
 Download the release IPA to Files. In an existing working LiveContainer installation, use its plus button to import the IPA and launch Book Pocket Open. The app requires iOS 18 or newer. Follow the project's [official installation guide](https://livecontainer.github.io/docs/installation) if LiveContainer itself needs setup; the unsigned guest IPA is not an App Store installation.

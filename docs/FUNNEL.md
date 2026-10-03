@@ -38,6 +38,9 @@ In PC Studio, open Devices and create a new connection code. In the iPhone's
 Studio tab, scan its QR code and approve that request on the PC. The QR carries
 the public HTTPS address without the private LAN certificate fingerprint.
 Previously paired devices retain their old address until paired again.
+For an existing LAN pairing, while still on home Wi-Fi, open Studio's companion
+settings menu and choose **Revoke this device**, then **Pair a companion**.
+Downloaded books and audio remain available.
 
 Test with phone Wi-Fi and Tailscale disabled, using cellular: refresh the
 connection, generate one short page with Kyon, download it and play it. Once
