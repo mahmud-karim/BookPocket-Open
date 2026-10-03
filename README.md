@@ -2,7 +2,7 @@
 
 A local-first EPUB reader and audiobook studio. Read on iPhone, generate narration on your Windows PC, and keep your original books and audio.
 
-**Development preview available:** [download the unsigned iPhone IPA (0.1.11)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.11-preview.1/BookPocketOpen.ipa) and [the compatible Windows installer (0.1.7)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/windows-v0.1.7-preview.1/BookPocketOpen-Setup-x64.exe). Published downloads were retrieved and checksum-verified; [iPhone release notes](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.11-preview.1) and [Windows release notes](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/windows-v0.1.7-preview.1) record their checks. An optional [Funnel connection](docs/FUNNEL.md) supports ordinary phone internet without a phone VPN. Tap **Read aloud** in the reader to open its player and choose **On-device**, **Kyon**, or **Full cast**. PC voices require matching, verified downloaded audio before Play becomes available. **Generate** first asks for the current page or chapter, then previews the exact original words. Listen keeps its controls on one screen with chapter selection and explicit alternate takes. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
+**Development preview available:** [download the unsigned iPhone IPA (0.1.12)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.12-preview.1/BookPocketOpen.ipa) and [the compatible Windows installer (0.1.7)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/windows-v0.1.7-preview.1/BookPocketOpen-Setup-x64.exe). Published downloads were retrieved and checksum-verified; [iPhone release notes](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.12-preview.1) and [Windows release notes](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/windows-v0.1.7-preview.1) record their checks. An optional [Funnel connection](docs/FUNNEL.md) supports ordinary phone internet without a phone VPN. Tap **Read aloud** in the reader to open its player and choose **On-device**, **Kyon**, or **Full cast**. PC voices require matching, verified downloaded audio before Play becomes available. **Generate** asks for the current page or chapter and starts generation in the player; **Details** opens the exact original source preview. Existing paired phones can change to the public HTTPS address from **Studio → … → Companion connection** while away from home. Listen keeps its controls on one screen with chapter selection and explicit alternate takes. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
 
 ## Obsidian in the actual app
 
@@ -11,14 +11,15 @@ Simulator screenshots show the original public test book. These are rendered app
 <p>
 <img src="docs/screenshots/ios-library.png" alt="Native Obsidian library" width="220">
 <img src="docs/screenshots/ios-reader.png" alt="Native cream EPUB reader" width="220">
-<img src="docs/screenshots/ios-reader-player.png" alt="Integrated reader player with verified offline Kyon take" width="220">
-<img src="docs/screenshots/ios-page-narration.png" alt="Exact current-page narration preview" width="220">
+<img src="docs/screenshots/ios-reader-player-missing.png" alt="Integrated reader player with disabled missing Kyon audio" width="220">
+<img src="docs/screenshots/ios-reader-generate.png" alt="Current page or chapter generation choices" width="220">
+<img src="docs/screenshots/ios-page-narration.png" alt="Optional exact current-page narration preview" width="220">
 <img src="docs/screenshots/ios-studio.png" alt="Native Obsidian audiobook studio" width="220">
 <img src="docs/screenshots/ios-playing-tabs.png" alt="Narration controls above accessible native tabs" width="220">
 <img src="docs/screenshots/ios-listen.png" alt="Fixed Listen player with chapter selection" width="220">
 </p>
 
-The page preview uses an unpaired simulator. A paired phone exposes **Generate with Kyon** after selecting its scope. Offline player screenshots use explicitly labelled transport tones; these fixtures prove playback behavior, not narrator quality.
+Generate starts preparation and generation after selecting page or chapter; the separate Details view retains the exact source preview. The public-book screens use an unpaired simulator, so they do not establish real phone generation. Offline player screenshots use explicitly labelled transport tones; these fixtures prove playback behavior, not narrator quality.
 
 The integrated player also fits a [compact iPhone](docs/screenshots/ios-reader-player-compact.png). Largest-text checks show [disabled playback](docs/screenshots/ios-reader-player-accessibility-compact.png), its [landscape layout](docs/screenshots/ios-reader-player-accessibility-compact-landscape.png), and the generation choices in [portrait](docs/screenshots/ios-reader-generate-accessibility-compact.png) and [landscape](docs/screenshots/ios-reader-generate-accessibility-compact-landscape.png).
 

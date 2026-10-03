@@ -40,7 +40,8 @@ the public HTTPS address without the private LAN certificate fingerprint.
 For an existing pairing with the same PC, iOS 0.1.12 or later can switch addresses
 while away from home. Open **Studio → … → Companion connection**, enter the
 public HTTPS address including its mount path, and leave the certificate
-fingerprint empty for a public certificate. Choose **Verify & save**. The app
+fingerprint empty for a public certificate. Clear the old fingerprint if it is
+filled in. Choose **Verify & save address**. The app
 checks the existing device credential at the new address before saving it;
 books, downloads and pairing remain intact. A failed check retains the old
 connection. Changing the address does not require a new pairing code or PC
