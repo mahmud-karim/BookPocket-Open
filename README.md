@@ -2,7 +2,7 @@
 
 A local-first EPUB reader and audiobook studio. Read on iPhone, generate narration on your Windows PC, and keep your original books and audio.
 
-**Development preview available:** [download the latest unsigned iOS IPA (0.1.2)](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.2-preview.1) and [the compatible Windows installer (0.1.0)](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.0-preview.1). Published downloads were retrieved and checksum-verified. The iOS update keeps bottom navigation accessible during narration and includes the incomplete-EPUB import fix. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
+**Development preview available:** [download the latest unsigned iOS IPA (0.1.3)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.3-preview.1/BookPocketOpen.ipa) and [the compatible Windows installer (0.1.1)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.3-preview.1/BookPocketOpen-Setup-x64.exe). Published downloads were retrieved and checksum-verified; [release notes and checksums](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.3-preview.1) are available together. Generate the current page or chapter with the PC's external OmniVoice Kyon profile directly from the reader. This includes the bottom-navigation and incomplete-EPUB import fixes. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
 
 ## Obsidian in the actual app
 
@@ -11,15 +11,19 @@ Simulator screenshots show the original public test book. These are rendered app
 <p>
 <img src="docs/screenshots/ios-library.png" alt="Native Obsidian library" width="220">
 <img src="docs/screenshots/ios-reader.png" alt="Native cream EPUB reader" width="220">
+<img src="docs/screenshots/ios-page-narration.png" alt="Exact page narration preview with Kyon and OmniVoice" width="220">
 <img src="docs/screenshots/ios-studio.png" alt="Native Obsidian audiobook studio" width="220">
 <img src="docs/screenshots/ios-playing-tabs.png" alt="Narration controls above accessible native tabs" width="220">
 </p>
+
+The narration screenshot uses an unpaired simulator. A paired phone exposes **Generate with Kyon** in this panel.
 
 ![Windows Obsidian library](docs/screenshots/windows-library.png)
 
 ## The experience
 
 - Native SwiftUI iOS reader using Readium: EPUB and text import, offline books, reading preferences, navigation, bookmarks, highlights, and Apple text-to-speech.
+- Generate the current visible page or table-of-contents chapter from the reader with the PC's external OmniVoice Kyon profile. Preview the exact source text, follow durable progress, and download finished narration for offline playback.
 - Windows companion and an Obsidian desktop studio: local library, durable narration jobs, voice collection, device approval, and audio exports.
 - Managed Kokoro preset narration and Qwen3-TTS voice cloning, installed separately. Optional integration with an existing VoiceStudio service.
 - Full-cast narration from exact source passages, with editable voices and explicit review of model suggestions.
