@@ -31,6 +31,7 @@ struct ReaderView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var panel: ReaderPanel?
     @State private var query = ""
+    @State private var contentsError: String?
     @State private var narration: ReaderNarrationPresentation?
     @AppStorage("readerFontSize") private var fontSize = 110.0
     @AppStorage("readerScroll") private var scroll = false
@@ -49,7 +50,7 @@ struct ReaderView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("Library", systemImage: "chevron.down") { dismiss() }.labelStyle(.iconOnly).accessibilityIdentifier("reader.close") }
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Contents", systemImage: "list.bullet") { panel = .contents }.labelStyle(.iconOnly).accessibilityIdentifier("reader.contents")
+                    Button("Contents", systemImage: "list.bullet") { contentsError = nil; panel = .contents }.labelStyle(.iconOnly).disabled(!model.pageReady).accessibilityIdentifier("reader.contents")
                     Menu {
                         Button("Generate current page", systemImage: "doc.text") { captureNarration(.page) }.accessibilityIdentifier("reader.generate.page")
                         Button("Generate current chapter", systemImage: "book") { captureNarration(.chapter) }.accessibilityIdentifier("reader.generate.chapter")
@@ -58,7 +59,7 @@ struct ReaderView: View {
                         }) { Button("Recent narration", systemImage: "clock") { narration = ReaderNarrationPresentation(jobID: recent.id) } }
                         Button("Use on-device voice", systemImage: "speaker.wave.2") { speakOnDevice() }
                     } label: { Label(model.capturingScope ? "Capturing text…" : "Generate narration", systemImage: "waveform.badge.plus") }
-                    .disabled(model.capturingScope || model.navigator == nil).accessibilityIdentifier("reader.generate")
+                    .disabled(model.capturingScope || !model.pageReady).accessibilityIdentifier("reader.generate")
                     Menu {
                         Button("Search book", systemImage: "magnifyingglass") { panel = .search }
                         Button("Add bookmark", systemImage: "bookmark") { model.addAnnotation(highlight: false) }
@@ -103,8 +104,12 @@ struct ReaderView: View {
         switch selected {
         case .contents:
             List {
+                if let contentsError { Text(contentsError).foregroundStyle(.secondary) }
                 ForEach(Array(flatten(model.chapters).enumerated()), id: \.offset) { _, link in
-                    Button(link.title ?? link.href) { Task { await model.navigator?.go(to: link); panel = nil } }
+                    Button(link.title ?? link.href) { Task {
+                        if await model.navigator?.go(to: link) == true { panel = nil }
+                        else { contentsError = "This chapter isn't ready to open yet. Wait for the page to finish loading, then try again." }
+                    } }
                 }
             }
         case .search:

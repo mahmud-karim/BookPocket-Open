@@ -4,7 +4,7 @@ import ReadiumNavigator
 
 extension ReaderModel {
     func captureScope(_ scope: NarrationScope) async throws -> ReaderScopeSnapshot {
-        guard let navigator, let publication, let book, !capturingScope else { throw BookError.message("Wait for the current page to finish opening.") }
+        guard let navigator, let publication, let book, pageReady, !capturingScope else { throw BookError.message("Wait for the current page to finish opening.") }
         capturingScope = true; defer { capturingScope = false }
         guard let viewport = navigator.viewport, viewport.resources.count == 1 else { throw BookError.message("This spread contains more than one resource. Switch to a single-page reading layout before generating narration.") }
         let links = publication.readingOrder

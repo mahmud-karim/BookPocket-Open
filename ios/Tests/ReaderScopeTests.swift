@@ -104,7 +104,22 @@ final class ReaderScopeTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(scrolled.blocks[1].visible.first).start, 0)
         XCTAssertTrue(scrolled.blocks[0].visible.isEmpty)
         // Hidden interior content creates disjoint visible intervals, which the mapper rejects.
-        _ = try await web.evaluateJavaScript("document.body.innerHTML='<p>One<span style=\"display:none\">secret</span>two 🧭</p>';window.scrollTo(0,0)")
+        _ = try await web.evaluateJavaScript("document.body.innerHTML='<p>One<span style=\"display:none\">secret</span>two 🧭</p>';document.body.offsetHeight;window.scrollTo(0,0)")
+        // DOM replacement shrinks the scroll range. Wait for WebKit's asynchronous
+        // scroll adjustment and layout before measuring the replacement glyphs.
+        var stableSamples = 0
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline && stableSamples < 2 {
+            let settled = try await web.evaluateJavaScript("(() => { const r=document.querySelector('p').getBoundingClientRect(); return Math.abs(scrollY)<0.01 && r.width>0 && r.height>0 && r.top>=0 && r.bottom<=innerHeight; })()") as? Bool == true
+            stableSamples = settled ? stableSamples + 1 : 0
+            if stableSamples < 2 { try await Task.sleep(for: .milliseconds(100)) }
+        }
+        if stableSamples < 2 {
+            let details = try await web.evaluateJavaScript("JSON.stringify({scrollY,innerHeight,rect:document.querySelector('p').getBoundingClientRect().toJSON()})")
+            let attachment = XCTAttachment(string: String(describing: details))
+            attachment.name = "Replacement paragraph layout"; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        XCTAssertEqual(stableSamples, 2, "Replacement paragraph must settle at the top of the viewport")
         let hidden = try await capture()
         XCTAssertEqual(hidden.blocks[0].text, "Onesecrettwo 🧭")
         XCTAssertEqual(hidden.blocks[0].visible, [.init(start: 0, end: 3), .init(start: 9, end: 14)])

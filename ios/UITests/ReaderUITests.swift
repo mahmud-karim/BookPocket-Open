@@ -11,7 +11,7 @@ final class ReaderUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 30)); book.tap()
-        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 30)); app.buttons["reader.contents"].tap()
+        XCTAssertTrue(waitForReaderContents(app)); app.buttons["reader.contents"].tap()
         XCTAssertTrue(app.buttons["The Lantern"].waitForExistence(timeout: 10)); app.buttons["The Lantern"].tap()
         let paragraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
         XCTAssertTrue(paragraph.waitForExistence(timeout: 30)); assertVisibleInk(in: paragraph)
@@ -39,9 +39,11 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Paused"), object: play)], timeout: 10), .completed)
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)], timeout: 10), .completed)
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: true), "Device capture must finish rotating before landscape evidence")
         assertListenFits(app, name: "Obsidian Listen landscape")
         XCUIDevice.shared.orientation = .portrait
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)], timeout: 10), .completed)
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
         app.tabBars.buttons["Library"].tap(); book.tap()
         XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 20))
         let target = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Across the Bridge")).firstMatch
@@ -55,28 +57,34 @@ final class ReaderUITests: XCTestCase {
         for id in ["listen.chapters", "listen.backward", "player.full.toggle", "listen.forward", "listen.speed", "listen.sleep"] {
             let control = app.buttons[id]
             XCTAssertTrue(control.exists && control.isHittable, id, file: file, line: line)
-            XCTAssertGreaterThanOrEqual(control.frame.width, 44, id, file: file, line: line)
-            XCTAssertGreaterThanOrEqual(control.frame.height, 44, id, file: file, line: line)
+            // AX may report a 44pt transformed rect as 43.99999999999994.
+            XCTAssertGreaterThanOrEqual(control.frame.width + 0.001, 44, id, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(control.frame.height + 0.001, 44, id, file: file, line: line)
             XCTAssertTrue(app.frame.contains(control.frame), "\(id) must fit on screen", file: file, line: line)
             XCTAssertLessThanOrEqual(control.frame.maxY, tabTop, "\(id) must remain above tabs", file: file, line: line)
             geometry.append("\(id): \(control.frame)")
         }
         XCTAssertTrue(app.buttons["listen.downloads"].isHittable, file: file, line: line)
-        let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
+        let screenshot = XCTAttachment(screenshot: XCUIDevice.shared.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
         let frames = XCTAttachment(string: geometry.joined(separator: "\n")); frames.name = name + " geometry"; frames.lifetime = .keepAlways; add(frames)
     }
 
     func testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet() {
+        executionTimeAllowance = 180
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--import-fixture"]
         app.launch()
         let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 30)); book.tap()
-        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 30))
+        XCTAssertTrue(waitForReaderContents(app))
+        let paragraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
+        // Cold WebKit exposes the toolbar before revealing its initial spread.
+        // Do not open another presentation until the original page is painted.
+        guard assertVisibleInk(in: paragraph) else { return }
         app.buttons["reader.contents"].tap()
         XCTAssertTrue(app.buttons["The Lantern"].waitForExistence(timeout: 10)); app.buttons["The Lantern"].tap()
-        let paragraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
-        XCTAssertTrue(paragraph.waitForExistence(timeout: 30)); assertVisibleInk(in: paragraph)
+        XCTAssertTrue(paragraph.waitForExistence(timeout: 30))
+        guard assertVisibleInk(in: paragraph) else { return }
         app.buttons["reader.generate"].tap()
         let page = app.buttons["reader.generate.page"]
         XCTAssertTrue(page.waitForExistence(timeout: 10)); page.tap()
@@ -101,7 +109,7 @@ final class ReaderUITests: XCTestCase {
         let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 30))
         book.tap()
-        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 30))
+        XCTAssertTrue(waitForReaderContents(app))
         app.buttons["reader.contents"].tap()
         XCTAssertTrue(app.navigationBars["Contents"].waitForExistence(timeout: 10))
         app.buttons["The Lantern"].tap()
@@ -175,7 +183,7 @@ final class ReaderUITests: XCTestCase {
         let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 30))
         book.tap()
-        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 30))
+        XCTAssertTrue(waitForReaderContents(app))
         XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 30))
         let firstParagraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
         XCTAssertTrue(firstParagraph.waitForExistence(timeout: 30))
@@ -204,7 +212,7 @@ final class ReaderUITests: XCTestCase {
 
     /// WebKit exposes accessibility text before Readium finishes revealing its spread.
     /// Require actual dark glyph pixels on the fixture's cream page, not just DOM presence.
-    private func assertVisibleInk(in element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+    @discardableResult private func assertVisibleInk(in element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) -> Bool {
         let rendered = NSPredicate { _, _ in
             guard element.exists, element.isHittable,
                   let image = element.screenshot().image.cgImage else { return false }
@@ -224,6 +232,30 @@ final class ReaderUITests: XCTestCase {
             return count > 30
         }
         let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: rendered, object: nil)], timeout: 30)
+        if result != .completed {
+            let screen = XCTAttachment(screenshot: XCUIDevice.shared.screenshot())
+            screen.name = "Reader paint timeout screen"; screen.lifetime = .keepAlways; add(screen)
+            let hierarchy = XCTAttachment(string: XCUIApplication().debugDescription)
+            hierarchy.name = "Reader paint timeout hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        }
         XCTAssertEqual(result, .completed, "EPUB text must be visibly painted, not only present in accessibility", file: file, line: line)
+        return result == .completed
+    }
+
+    private func waitForReaderContents(_ app: XCUIApplication) -> Bool {
+        let button = app.buttons["reader.contents"]
+        let ready = NSPredicate { _, _ in button.exists && button.isEnabled && button.isHittable }
+        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 30) == .completed
+    }
+
+    private func waitForScreenshotOrientation(landscape: Bool) -> Bool {
+        var consecutiveMatches = 0
+        let ready = NSPredicate { _, _ in
+            let size = XCUIDevice.shared.screenshot().image.size
+            let matches = landscape ? size.width > size.height : size.height > size.width
+            consecutiveMatches = matches ? consecutiveMatches + 1 : 0
+            return consecutiveMatches >= 2
+        }
+        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 15) == .completed
     }
 }
