@@ -154,7 +154,10 @@ struct ReaderNarrationView: View {
     private func downloadAndPlay() async {
         guard let job, let local = reader.book, !working else { return }
         working = true; error = nil; defer { working = false }
-        await companion.download(job, localBook: local)
+        guard await companion.download(job, localBook: local) else {
+            error = companion.error ?? "Another download is in progress. Wait for it to finish, then retry."
+            return
+        }
         let sequence = companion.orderedDownloads(jobID: job.id)
         guard sequence.count == job.assets.count, !sequence.isEmpty, let record = sequence.first else { error = companion.error ?? "Some audio is still missing. Reconnect your PC and retry the download."; return }
         companion.play(record, library: library, player: player)

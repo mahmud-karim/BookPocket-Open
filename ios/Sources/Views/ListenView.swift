@@ -204,10 +204,8 @@ private struct DownloadedNarrationView: View {
                 ForEach(Array(Set(companion.downloads.map(\.jobID))).sorted(), id: \.self) { jobID in
                     if let first = companion.orderedDownloads(jobID: jobID).first, let book = library.book(first.localBookID) {
                         Button {
-                            if let record = companion.resumeRecord(jobID: jobID, library: library) {
-                                companion.play(record, library: library, player: player)
-                                if player.isPlaying { dismiss() }
-                            }
+                            companion.playDownloadedTake(jobID: jobID, library: library, player: player)
+                            if player.isPlaying { dismiss() }
                         } label: {
                             HStack(spacing: 14) {
                                 BookCover(book: book, url: library.cover(book)).frame(width: 42)

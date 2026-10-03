@@ -24,6 +24,13 @@ import ReadiumZIPFoundation
     var paired: Bool { identity != nil && client != nil }
     private var client: CompanionClient?
     private var database: LibraryDatabase?
+    private struct VerifiedFile {
+        var size: Int
+        var modified: Date
+        var checksum: String
+        var valid: Bool
+    }
+    @ObservationIgnored private var verifiedFiles: [String: VerifiedFile] = [:]
     let root: URL
     init(root: URL? = nil, client: CompanionClient? = nil) {
         self.root = root ?? URL.documentsDirectory.appendingPathComponent("Companion", isDirectory: true)
@@ -210,31 +217,42 @@ import ReadiumZIPFoundation
         let voice = try await client.cloneVoice(name: name, engine: engine, language: language, transcript: transcript, sample: sample)
         voices.append(voice)
     }
-    func download(_ job: RemoteJob, localBook: LocalBook) async {
-        guard let client, downloading == nil else { return }
+    @discardableResult func download(_ job: RemoteJob, localBook: LocalBook) async -> Bool {
+        guard downloading == nil else { return false }
         downloading = job.id; defer { downloading = nil }
+        error = nil
         do {
             guard let remote = books.first(where: { $0.id == job.bookId }) else { throw BookError.message("Refresh the companion library before downloading.") }
             try RangedAudioValidation.validate(job: job, book: remote)
             for asset in job.assets {
                 let file = "Audio/" + SourceIdentity.hash(Data(asset.id.utf8)) + (asset.mediaType.contains("mpeg") ? ".mp3" : ".wav")
+                verifiedFiles.removeValue(forKey: file)
+                for record in downloads where record.asset.id == asset.id { verifiedFiles.removeValue(forKey: record.file) }
                 if let cached = downloads.first(where: { $0.asset.id == asset.id && $0.asset.sha256 == asset.sha256 }),
                    let data = try? Data(contentsOf: root.appendingPathComponent(cached.file), options: .mappedIfSafe), data.count == asset.bytes, SourceIdentity.hash(data) == asset.sha256 {
                     if cached.file != file { try data.write(to: root.appendingPathComponent(file), options: .atomic) }
-                } else { try await client.download(asset, to: root.appendingPathComponent(file)) }
+                } else {
+                    guard let client else { throw BookError.message("Reconnect your PC and retry the download to restore the missing audio.") }
+                    try await client.download(asset, to: root.appendingPathComponent(file))
+                }
                 let replaced = downloads.filter { $0.jobID == job.id && ($0.asset.id == asset.id || $0.asset.segmentId == asset.segmentId) }
                 downloads.removeAll { $0.jobID == job.id && ($0.asset.id == asset.id || $0.asset.segmentId == asset.segmentId) }
                 downloads.append(DownloadRecord(localBookID: localBook.id, jobID: job.id, asset: asset, file: file, segment: remote.segments.first { $0.id == asset.segmentId }))
                 try persist()
                 for old in replaced where !downloads.contains(where: { $0.file == old.file }) { try? FileManager.default.removeItem(at: root.appendingPathComponent(old.file)) }
             }
-        } catch { self.error = error.localizedDescription }
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
     func play(_ record: DownloadRecord, library: LibraryStore, player: PlaybackController, fromBeginning: Bool = false) {
         guard var book = library.book(record.localBookID) else {
             error = "Import the original book to read alongside this narration."; player.error = error; return
         }
         do {
+            guard available(record, recheck: true) else {
+                player.pause()
+                throw BookError.message("This recording is missing, damaged, or no longer matches this take. Reconnect your PC and retry its download in Studio.")
+            }
             let offset = !fromBeginning && (book.audioAssetID == record.id || book.audioAssetID == record.asset.id) ? book.audioSeconds : 0
             let currentFollow = player.bookID == book.id ? player.onLocator : nil
             try player.play(url: root.appendingPathComponent(record.file), book: book, start: offset)
@@ -264,17 +282,43 @@ import ReadiumZIPFoundation
             player.onFinished = { [weak self, weak library, weak player] in
                 guard let self, let library, let player else { return }
                 if var current = library.book(record.localBookID) { current.audioSeconds = 0; library.update(current) }
-                let sequence = self.orderedDownloads(jobID: record.jobID)
-                if let index = sequence.firstIndex(where: { $0.id == record.id }), index + 1 < sequence.count { self.play(sequence[index + 1], library: library, player: player) }
+                guard let job = self.jobs.first(where: { $0.id == record.jobID }),
+                      let index = job.segmentIds.firstIndex(where: { $0 == record.asset.segmentId }), index + 1 < job.segmentIds.count else { return }
+                let nextID = job.segmentIds[index + 1]
+                guard let next = self.orderedDownloads(jobID: job.id).first(where: { $0.asset.segmentId == nextID }) else {
+                    player.pause()
+                    player.error = "The next passage is not available on this device. Reconnect your PC and download this take in Studio to continue without skipping text."
+                    return
+                }
+                self.play(next, library: library, player: player)
             }
         } catch { self.error = error.localizedDescription; player.error = error.localizedDescription }
     }
     func orderedDownloads(jobID: String) -> [DownloadRecord] {
-        guard let job = jobs.first(where: { $0.id == jobID }) else { return downloads.filter { $0.jobID == jobID } }
+        guard let job = jobs.first(where: { $0.id == jobID }) else { return downloads.filter { $0.jobID == jobID && available($0) } }
         return job.segmentIds.compactMap { id in
             guard let asset = job.assets.first(where: { $0.segmentId == id }) else { return nil }
-            return downloads.first { $0.jobID == jobID && $0.asset.id == asset.id }
+            return downloads.first { $0.jobID == jobID && $0.asset.id == asset.id && available($0) }
         }
+    }
+    /// Cache hashes for unchanged files when listing takes; playback always rechecks.
+    /// A persisted record alone is never evidence that its audio is still available.
+    private func available(_ record: DownloadRecord, recheck: Bool = false) -> Bool {
+        if let job = jobs.first(where: { $0.id == record.jobID }) {
+            guard let asset = job.assets.first(where: { $0.id == record.asset.id }),
+                  asset.sha256.lowercased() == record.asset.sha256.lowercased(), asset.bytes == record.asset.bytes,
+                  asset.segmentId == record.asset.segmentId, asset.sourceStart == record.asset.sourceStart,
+                  asset.sourceEnd == record.asset.sourceEnd else { return false }
+        } else if !record.jobID.hasPrefix("legacy:") { return false }
+        let url = root.appendingPathComponent(record.file)
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+              let size = values.fileSize, size == record.asset.bytes, let modified = values.contentModificationDate else { return false }
+        let checksum = record.asset.sha256.lowercased()
+        if !recheck, let cached = verifiedFiles[record.file], cached.size == size,
+           cached.modified == modified, cached.checksum == checksum { return cached.valid }
+        let valid = (try? Data(contentsOf: url, options: .mappedIfSafe)).map { SourceIdentity.hash($0) == checksum } ?? false
+        verifiedFiles[record.file] = VerifiedFile(size: size, modified: modified, checksum: checksum, valid: valid)
+        return valid
     }
     func downloadedChapters(jobID: String) -> [DownloadedChapter] {
         guard let job = jobs.first(where: { $0.id == jobID }), let book = books.first(where: { $0.id == job.bookId }) else { return [] }
@@ -347,7 +391,19 @@ import ReadiumZIPFoundation
     func resumeRecord(jobID: String, library: LibraryStore) -> DownloadRecord? {
         let sequence = orderedDownloads(jobID: jobID)
         guard let first = sequence.first, let book = library.book(first.localBookID) else { return sequence.first }
-        return sequence.first { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID } ?? first
+        if let saved = downloads.first(where: { $0.jobID == jobID && ($0.id == book.audioAssetID || $0.asset.id == book.audioAssetID) }) {
+            return sequence.first { $0.id == saved.id }
+        }
+        guard let job = jobs.first(where: { $0.id == jobID }) else { return first }
+        return sequence.first { $0.asset.segmentId == job.segmentIds.first }
+    }
+    func playDownloadedTake(jobID: String, library: LibraryStore, player: PlaybackController) {
+        guard let record = resumeRecord(jobID: jobID, library: library) else {
+            player.pause()
+            player.error = "The passage needed to resume this take is missing or damaged. Reconnect your PC and retry its download in Studio."
+            return
+        }
+        play(record, library: library, player: player)
     }
     func takeDescription(jobID: String) -> String {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return "Available offline" }

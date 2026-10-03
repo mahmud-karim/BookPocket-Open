@@ -71,7 +71,7 @@ struct StudioView: View {
                                     Text(recording.title).font(.headline)
                                     Text(recording.mapping == "text_match_without_timings" ? "Source passage matched · no synchronized text" : "Unmapped recording · no synchronized text").font(.caption).foregroundStyle(.secondary)
                                     if let local = library.books.first(where: { $0.companionBookID == recording.bookId || $0.sourceSHA256 == companion.books.first(where: { $0.id == recording.bookId })?.sourceSha256 }) {
-                                        if let downloaded = companion.downloads.first(where: { $0.asset.id == recording.asset.id }) { Button("Play recording", systemImage: "play.circle") { companion.play(downloaded, library: library, player: player) } }
+                                        if let downloaded = companion.orderedDownloads(jobID: "legacy:" + recording.id).first { Button("Play recording", systemImage: "play.circle") { companion.play(downloaded, library: library, player: player) } }
                                         else { Button("Download recording", systemImage: "arrow.down.circle") { Task { await companion.downloadLegacy(recording, localBook: local) } }.disabled(companion.downloading != nil) }
                                     } else { Text("Download its original book from Books on your PC first.").font(.caption).foregroundStyle(.secondary) }
                                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(Obsidian.surface, in: .rect(cornerRadius: 16))
@@ -82,7 +82,7 @@ struct StudioView: View {
                         Text("On this device").font(.title2.bold())
                         ForEach(Array(Set(companion.downloads.map(\.jobID))).sorted(), id: \.self) { id in
                             if let first = companion.orderedDownloads(jobID: id).first, let book = library.book(first.localBookID) {
-                                Button { if let record = companion.resumeRecord(jobID: id, library: library) { companion.play(record, library: library, player: player) } } label: { Label("\(book.title) · \(companion.orderedDownloads(jobID: id).count) passages", systemImage: "play.circle.fill") }.padding(.vertical, 8)
+                                Button { companion.playDownloadedTake(jobID: id, library: library, player: player) } label: { Label("\(book.title) · \(companion.orderedDownloads(jobID: id).count) passages", systemImage: "play.circle.fill") }.padding(.vertical, 8)
                             }
                         }
                     }

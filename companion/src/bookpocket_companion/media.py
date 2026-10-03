@@ -31,6 +31,7 @@ def export_job(store, job, format, ffmpeg, include_voice_references=False):
     book = json.loads(book_row["data"])
     request = json.loads(store.item("jobs", job["id"])["request"])
     identity = str(uuid.uuid4())
+    duration = sum(a["duration"] for a in job["assets"])
     extension = ".zip" if format == "project" else "." + format
     destination = store.root / "exports" / (identity + extension)
     with tempfile.TemporaryDirectory(dir=store.root / "exports") as temporary:
@@ -64,31 +65,40 @@ def export_job(store, job, format, ffmpeg, include_voice_references=False):
         else:
             # Build one stream instead of trusting arbitrary concat paths or loading the book in RAM.
             joined = temp / "joined.pcm"
+            frame_counts = []
             with joined.open("wb") as writer:
                 for a in assets:
                     with wave.open(a["path"], "rb") as reader:
                         if (reader.getnchannels(), reader.getsampwidth(), reader.getframerate()) != (1, 2, 24000):
                             raise ValueError("Audio must be normalized to mono 24 kHz PCM16")
-                        while chunk := reader.readframes(24000 * 10): writer.write(chunk)
+                        frames = 0
+                        while chunk := reader.readframes(24000 * 10):
+                            if len(chunk) % 2: raise ValueError("Audio contains an incomplete PCM16 frame")
+                            writer.write(chunk)
+                            frames += len(chunk) // 2
+                        frame_counts.append(frames)
             def escape(value): return str(value).replace("\\", "\\\\").replace("=", "\\=").replace(";", "\\;").replace("#", "\\#").replace("\n", " ")
             metadata = [";FFMETADATA1", "title="+escape(book["title"]), "artist="+escape(book["author"])]
             chapter_by_segment = {s["id"]: c for c in book["chapters"] for s in c["segments"]}
             groups, cursor = [], 0
-            for asset in job["assets"]:
+            for asset, frames in zip(job["assets"], frame_counts):
                 chapter = chapter_by_segment[asset["segment_id"]]
-                end = cursor + round(asset["duration"] * 1000)
+                # Keep exact cumulative source frames; per-segment millisecond
+                # rounding can move later chapter boundaries by whole seconds.
+                end = cursor + frames
                 if groups and groups[-1][0] == chapter["id"]: groups[-1][3] = end
                 else: groups.append([chapter["id"], chapter["title"], cursor, end])
                 cursor = end
             for _, title, start, end in groups:
-                metadata += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={end}", "title="+escape(title)]
+                metadata += ["[CHAPTER]", "TIMEBASE=1/24000", f"START={start}", f"END={end}", "title="+escape(title)]
+            duration = cursor / 24000
             meta_file = temp / "chapters.txt"
             meta_file.write_text("\n".join(metadata), encoding="utf-8")
             codec = ["-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart"] if format == "m4b" else ["-c:a", "libmp3lame", "-b:a", "128k", "-id3v2_version", "3"]
             subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "s16le", "-ar", "24000", "-ac", "1", "-i", str(joined), "-i", str(meta_file), "-map_metadata", "1", "-map_chapters", "1", *codec, str(output)], check=True, capture_output=True, timeout=3600)
         output.replace(destination)
     media_type = {"project": "application/zip", "m4b": "audio/mp4", "mp3": "audio/mpeg"}[format]
-    asset = {"id": identity, "segment_id": None, "media_type": media_type, "duration": sum(a["duration"] for a in job["assets"]),
+    asset = {"id": identity, "segment_id": None, "media_type": media_type, "duration": duration,
              "sha256": file_digest(destination), "bytes": destination.stat().st_size, "url": "/v1/assets/"+identity, "timings": []}
     with store.db() as db: db.execute("INSERT INTO assets VALUES(?,?,?,?)", (identity, None, canonical(asset), str(destination)))
     return asset
