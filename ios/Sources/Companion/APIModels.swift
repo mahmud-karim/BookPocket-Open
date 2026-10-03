@@ -178,6 +178,11 @@ struct DownloadRecord: Codable, Identifiable {
     var legacyTitle: String?
     var legacyMapping: String?
 }
+struct DownloadedChapter: Identifiable {
+    var id: String
+    var title: String
+    var firstRecord: DownloadRecord
+}
 struct LegacyRecording: Codable, Identifiable {
     var id: String
     var bookId: String

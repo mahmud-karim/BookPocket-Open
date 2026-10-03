@@ -8,8 +8,8 @@ settings:
     SWIFT_VERSION: '5.0'
     TARGETED_DEVICE_FAMILY: '1,2'
     CODE_SIGNING_ALLOWED: NO
-    MARKETING_VERSION: '0.1.3'
-    CURRENT_PROJECT_VERSION: '4'
+    MARKETING_VERSION: '0.1.4'
+    CURRENT_PROJECT_VERSION: '5'
 packages:
   Readium:
     url: https://github.com/readium/swift-toolkit.git
@@ -72,6 +72,8 @@ targets:
       - path: ../tests/fixtures/contract-v1.json
         buildPhase: resources
       - path: ../tests/fixtures/lantern.epub
+        buildPhase: resources
+      - path: ../tests/fixtures/test-tone.wav
         buildPhase: resources
     settings:
       base:

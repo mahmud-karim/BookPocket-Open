@@ -4,71 +4,194 @@ struct ListenView: View {
     @Environment(PlaybackController.self) private var player
     @Environment(LibraryStore.self) private var library
     @Environment(CompanionStore.self) private var companion
-    @State private var removingJob: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var showDownloads = false
+    @State private var showChapters = false
+    private var audioChapters: [DownloadedChapter] {
+        guard player.speechChapters.isEmpty, let id = player.bookID, let book = library.book(id),
+              let record = companion.downloads.first(where: { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID }) else { return [] }
+        return companion.downloadedChapters(jobID: record.jobID)
+    }
     var body: some View {
-        @Bindable var player = player
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 28) {
-                    if let id = player.bookID, let book = library.book(id) {
-                        BookCover(book: book, url: library.cover(book)).frame(maxWidth: 240).padding(.top, 20).shadow(color: .black.opacity(0.2), radius: 24, y: 16)
-                        VStack(spacing: 8) { Text(player.title).font(.system(.title, design: .serif)).multilineTextAlignment(.center); Text(player.subtitle).font(.subheadline).foregroundStyle(.secondary) }
-                        if player.duration > 0 {
-                            Slider(value: Binding(get: { player.elapsed }, set: { player.seek($0) }), in: 0...max(1, player.duration)).accessibilityLabel("Audio position")
-                            HStack { Text(Duration.seconds(player.elapsed).formatted(.time(pattern: .minuteSecond))); Spacer(); Text(Duration.seconds(player.duration).formatted(.time(pattern: .minuteSecond))) }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            GeometryReader { geometry in
+                if let id = player.bookID, let book = library.book(id) {
+                    let landscape = geometry.size.width > geometry.size.height
+                    let compact = geometry.size.height < 600 || dynamicTypeSize.isAccessibilitySize
+                    Group {
+                        if landscape {
+                            HStack(spacing: 28) {
+                                VStack(spacing: 8) {
+                                    artwork(book, height: dynamicTypeSize.isAccessibilitySize ? 0 : max(0, min(120, geometry.size.height - 152)))
+                                    heading(compact: true)
+                                    chaptersButton
+                                }.frame(maxWidth: .infinity)
+                                VStack(spacing: 12) { timeline; transport(compact: true); settings }.frame(maxWidth: .infinity)
+                            }
+                        } else {
+                            VStack(spacing: compact ? 10 : 16) {
+                                Spacer(minLength: 0).layoutPriority(-2)
+                                artwork(book, height: dynamicTypeSize.isAccessibilitySize ? 0 : max(0, min(250, geometry.size.height - 390)))
+                                heading(compact: compact)
+                                chaptersButton
+                                timeline
+                                transport(compact: compact)
+                                settings
+                                Spacer(minLength: 0).layoutPriority(-2)
+                            }
                         }
-                        HStack(spacing: 42) {
-                            Button("Back 15 seconds or previous sentence", systemImage: "gobackward.15") { player.skip(-15) }.font(.title)
-                            Button(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill") { player.toggle() }.font(.largeTitle).frame(width: 78, height: 78).background(Obsidian.accent.opacity(0.16), in: .circle).accessibilityIdentifier("player.full.toggle").accessibilityValue(player.isPlaying ? "Playing" : "Paused")
-                            Button("Forward 15 seconds or next sentence", systemImage: "goforward.15") { player.skip(15) }.font(.title)
-                        }.labelStyle(.iconOnly)
-                        HStack {
-                            Menu { ForEach([0.75, 1, 1.25, 1.5, 1.75, 2], id: \.self) { value in Button("\(value.formatted())×") { player.rate = value } } } label: { Text("\(player.rate.formatted())×").font(.headline) }.accessibilityLabel("Playback speed")
-                            Spacer()
-                            Menu { Button("Off") { player.sleep(minutes: nil) }; ForEach([5, 15, 30, 45, 60], id: \.self) { minutes in Button("\(minutes) minutes") { player.sleep(minutes: minutes) } } } label: { Label(player.sleepUntil == nil ? "Sleep timer" : "Timer set", systemImage: "moon") }
-                        }.padding(.horizontal, 20)
-                        if let current = companion.downloads.first(where: { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID }), let remote = companion.books.first(where: { $0.id == companion.jobs.first(where: { $0.id == current.jobID })?.bookId }) {
-                            Menu("Chapters", systemImage: "list.bullet") {
-                                ForEach(remote.chapters) { chapter in
-                                    if let record = companion.orderedDownloads(jobID: current.jobID).first(where: { record in chapter.segments.contains { $0.id == record.asset.segmentId } }) {
-                                        Button(chapter.title) { companion.play(record, library: library, player: player) }
+                    }.padding(.horizontal, landscape ? 28 : 24).padding(.vertical, 12)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .accessibilityIdentifier("listen.surface")
+                } else {
+                    ContentUnavailableView("Your next listening chapter", systemImage: "headphones", description: Text("Open a book and choose Read aloud, or choose a downloaded narration from the tray above."))
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+            }.background(Obsidian.background).navigationTitle("Listen").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .topBarTrailing) {
+                    Button("Downloaded narration", systemImage: "tray.full") { showDownloads = true }.accessibilityIdentifier("listen.downloads")
+                } }
+                .sheet(isPresented: $showDownloads) { DownloadedNarrationView() }
+                .sheet(isPresented: $showChapters) { chapters }
+        }
+    }
+    @ViewBuilder private func artwork(_ book: LocalBook, height: CGFloat) -> some View {
+        if height >= 48 {
+            BookCover(book: book, url: library.cover(book)).frame(maxWidth: height * 0.68, maxHeight: height)
+                .layoutPriority(-1).shadow(color: .black.opacity(0.2), radius: 18, y: 10)
+        }
+    }
+    private func heading(compact: Bool) -> some View {
+        VStack(spacing: 4) {
+            Text(player.title).font(.system(compact ? .title3 : .title2, design: .serif)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.8)
+            Text(player.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+    private var chaptersButton: some View {
+        Button { showChapters = true } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "list.bullet")
+                Text(player.chapterTitle.isEmpty ? "Choose chapter" : player.chapterTitle).lineLimit(1)
+                Spacer(minLength: 8); Image(systemName: "chevron.down").font(.caption)
+            }.font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
+                .background(Obsidian.surface, in: .rect(cornerRadius: 12))
+        }.buttonStyle(.plain).foregroundStyle(Obsidian.accent)
+            .disabled(player.speechChapters.isEmpty && audioChapters.isEmpty)
+            .accessibilityLabel("Chapters").accessibilityValue(player.chapterTitle).accessibilityIdentifier("listen.chapters")
+    }
+    @ViewBuilder private var timeline: some View {
+        if player.duration > 0 {
+            VStack(spacing: 0) {
+                Slider(value: Binding(get: { player.elapsed }, set: { player.seek($0) }), in: 0...max(1, player.duration))
+                    .accessibilityLabel("Audio position").accessibilityIdentifier("listen.position")
+                HStack {
+                    Text(Duration.seconds(player.elapsed).formatted(.time(pattern: .minuteSecond)))
+                    Spacer()
+                    Text(Duration.seconds(player.duration).formatted(.time(pattern: .minuteSecond)))
+                }.font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            }
+        } else { Text(player.isPlaying ? "Reading aloud" : "Ready when you are").font(.caption).foregroundStyle(.secondary) }
+    }
+    private func transport(compact: Bool) -> some View {
+        HStack(spacing: compact ? 30 : 42) {
+            Button("Back 15 seconds or previous sentence", systemImage: "gobackward.15") { player.skip(-15) }
+                .font(.title2).frame(width: 44, height: 44).accessibilityIdentifier("listen.backward")
+            Button(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill") { player.toggle() }
+                .font(.system(size: compact ? 26 : 30)).frame(width: compact ? 64 : 76, height: compact ? 64 : 76)
+                .background(Obsidian.accent.opacity(0.16), in: .circle)
+                .accessibilityIdentifier("player.full.toggle").accessibilityValue(player.isPlaying ? "Playing" : "Paused")
+            Button("Forward 15 seconds or next sentence", systemImage: "goforward.15") { player.skip(15) }
+                .font(.title2).frame(width: 44, height: 44).accessibilityIdentifier("listen.forward")
+        }.labelStyle(.iconOnly)
+    }
+    private var settings: some View {
+        HStack {
+            Menu { ForEach([0.75, 1, 1.25, 1.5, 1.75, 2], id: \.self) { value in Button("\(value.formatted())×") { player.rate = value } } } label: {
+                Text("\(player.rate.formatted())×").font(.headline).lineLimit(1).minimumScaleFactor(0.6).frame(minWidth: 64, minHeight: 44)
+            }.accessibilityLabel("Playback speed").accessibilityIdentifier("listen.speed")
+            Spacer()
+            Menu {
+                Button("Off") { player.sleep(minutes: nil) }
+                ForEach([5, 15, 30, 45, 60], id: \.self) { minutes in Button("\(minutes) minutes") { player.sleep(minutes: minutes) } }
+            } label: { Label(player.sleepUntil == nil ? "Sleep timer" : "Timer set", systemImage: "moon").font(.subheadline).lineLimit(1).minimumScaleFactor(0.6).frame(minHeight: 44) }
+                .accessibilityIdentifier("listen.sleep")
+        }
+    }
+    private var chapters: some View {
+        NavigationStack {
+            List {
+                if !player.speechChapters.isEmpty {
+                    Section {
+                        ForEach(Array(player.speechChapters.enumerated()), id: \.offset) { index, chapter in
+                            Button(chapter.title ?? "Chapter \(index + 1)") {
+                                Task {
+                                    if await player.selectSpeechChapter(chapter) {
+                                        if let id = player.bookID, let locator = player.speechLocator { library.saveLocation(id, locator: locator) }
+                                        showChapters = false
                                     }
                                 }
                             }
+                                .accessibilityIdentifier("listen.chapter.\(index)")
                         }
-                    } else {
-                        ContentUnavailableView("Your next listening chapter", systemImage: "headphones", description: Text("Open a book and choose Read aloud. Generated narration downloaded from your PC also plays here."))
-                    }
-                    if !companion.downloads.isEmpty {
-                        VStack(alignment: .leading, spacing: 18) {
-                            Text("Downloaded narration").font(.title2.bold())
-                            ForEach(Array(Set(companion.downloads.map(\.jobID))).sorted(), id: \.self) { jobID in
-                                if let first = companion.orderedDownloads(jobID: jobID).first, let book = library.book(first.localBookID) {
-                                    Button { if let record = companion.resumeRecord(jobID: jobID, library: library) { companion.play(record, library: library, player: player) } } label: {
-                                        HStack(spacing: 14) {
-                                            BookCover(book: book, url: library.cover(book)).frame(width: 46)
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                Text(first.legacyTitle ?? book.title).font(.headline).foregroundStyle(.primary)
-                                                Text(first.legacyTitle != nil ? "Legacy audio · no synchronized text" : companion.takeDescription(jobID: jobID)).font(.caption).foregroundStyle(.secondary)
-                                            }
-                                            Spacer(); Image(systemName: "play.circle").font(.title2)
-                                        }
-                                    }.buttonStyle(.plain).contextMenu { Button("Remove download", systemImage: "trash", role: .destructive) { removingJob = jobID } }
-                                }
-                            }
-                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 16)
-                    }
-                }.padding(28)
-            }.background(Obsidian.background).navigationTitle("Listen")
-            .confirmationDialog("Remove this take from your device? The PC copy is kept.", isPresented: Binding(get: { removingJob != nil }, set: { if !$0 { removingJob = nil } }), titleVisibility: .visible) {
-                Button("Remove download", role: .destructive) {
-                    if let removingJob {
-                        if companion.downloads.contains(where: { $0.jobID == removingJob && $0.localBookID == player.bookID }) { player.stop() }
-                        do { try companion.removeDownloadedTake(removingJob) } catch { companion.error = error.localizedDescription }
-                    }
-                    removingJob = nil
+                    } footer: { Text("Starts on-device narration at the selected chapter.") }
+                } else {
+                    Section {
+                        ForEach(audioChapters) { chapter in
+                            Button(chapter.title) {
+                                companion.play(chapter.firstRecord, library: library, player: player, fromBeginning: true)
+                                if player.isPlaying { showChapters = false }
+                            }.accessibilityIdentifier("listen.chapter.\(chapter.id)")
+                        }
+                    } footer: { Text("Only chapters with audio downloaded in this take are available. Page narrations contain just the selected portion.") }
                 }
-            }
-        }
+            }.navigationTitle("Chapters").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showChapters = false } } }
+        }.tint(Obsidian.accent)
+    }
+}
+
+private struct DownloadedNarrationView: View {
+    @Environment(PlaybackController.self) private var player
+    @Environment(LibraryStore.self) private var library
+    @Environment(CompanionStore.self) private var companion
+    @Environment(\.dismiss) private var dismiss
+    @State private var removingJob: String?
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(Array(Set(companion.downloads.map(\.jobID))).sorted(), id: \.self) { jobID in
+                    if let first = companion.orderedDownloads(jobID: jobID).first, let book = library.book(first.localBookID) {
+                        Button {
+                            if let record = companion.resumeRecord(jobID: jobID, library: library) {
+                                companion.play(record, library: library, player: player)
+                                if player.isPlaying { dismiss() }
+                            }
+                        } label: {
+                            HStack(spacing: 14) {
+                                BookCover(book: book, url: library.cover(book)).frame(width: 42)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(first.legacyTitle ?? book.title).font(.headline).foregroundStyle(.primary)
+                                    Text(first.legacyTitle != nil ? "Legacy audio · no synchronized text" : companion.takeDescription(jobID: jobID)).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(); Image(systemName: "play.circle").font(.title2)
+                            }
+                        }.buttonStyle(.plain)
+                            .swipeActions { Button("Remove", systemImage: "trash", role: .destructive) { removingJob = jobID } }
+                            .contextMenu { Button("Remove download", systemImage: "trash", role: .destructive) { removingJob = jobID } }
+                    }
+                }
+            }.overlay { if companion.downloads.isEmpty { ContentUnavailableView("No downloaded narration", systemImage: "tray", description: Text("Download a completed narration from your reader or Studio.")) } }
+                .navigationTitle("Downloads").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+                .confirmationDialog("Remove this take from your device? The PC copy is kept.", isPresented: Binding(get: { removingJob != nil }, set: { if !$0 { removingJob = nil } }), titleVisibility: .visible) {
+                    Button("Remove download", role: .destructive) {
+                        if let removingJob {
+                            if companion.downloads.contains(where: { $0.jobID == removingJob && $0.localBookID == player.bookID }) { player.stop() }
+                            do { try companion.removeDownloadedTake(removingJob) } catch { companion.error = error.localizedDescription }
+                        }
+                        removingJob = nil
+                    }
+                }
+        }.tint(Obsidian.accent)
     }
 }

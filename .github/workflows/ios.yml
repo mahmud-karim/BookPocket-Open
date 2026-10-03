@@ -22,7 +22,16 @@ jobs:
       - run: xcodegen generate
         working-directory: ios
       - id: device
-        run: echo "id=$(python3 scripts/select_simulator.py)" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          DEVICE=$(python3 scripts/select_simulator.py --report artifacts/primary-device.json)
+          echo "id=$DEVICE" >> "$GITHUB_OUTPUT"
+      - id: compact
+        name: Select an installed compact iPhone
+        run: |
+          set -euo pipefail
+          DEVICE=$(python3 scripts/select_simulator.py --compact --exclude '${{ steps.device.outputs.id }}' --report artifacts/compact-device.json)
+          echo "id=$DEVICE" >> "$GITHUB_OUTPUT"
       - name: Compile simulator app and tests
         run: |
           set -euo pipefail
@@ -49,6 +58,30 @@ jobs:
           mkdir -p artifacts
           xcrun simctl io '${{ steps.device.outputs.id }}' screenshot artifacts/final-screen.png || true
           xcrun xcresulttool export attachments --path artifacts/Tests.xcresult --output-path artifacts/screenshots || true
+      - name: Boot compact iPhone
+        timeout-minutes: 10
+        run: |
+          xcrun simctl shutdown '${{ steps.device.outputs.id }}' || true
+          python3 scripts/boot_simulator.py '${{ steps.compact.outputs.id }}'
+      - name: Verify Listen controls and chapter selection on compact iPhone
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
+            -destination 'platform=iOS Simulator,id=${{ steps.compact.outputs.id }}' \
+            -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testListenFitsOneScreenAndSelectsChapters \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 180 -resultBundlePath artifacts/CompactListen.xcresult \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
+          # A typo in a filtered test name must never pass without exercising the UI.
+          grep -E 'Test Case.*testListenFitsOneScreenAndSelectsChapters.*passed' artifacts/compact-tests.log
+      - name: Capture compact Listen evidence
+        if: always()
+        run: |
+          mkdir -p artifacts
+          xcrun simctl io '${{ steps.compact.outputs.id }}' screenshot artifacts/compact-final-screen.png || true
+          xcrun xcresulttool export attachments --path artifacts/CompactListen.xcresult --output-path artifacts/compact-screenshots || true
       - if: always()
         uses: actions/upload-artifact@v4
         with:

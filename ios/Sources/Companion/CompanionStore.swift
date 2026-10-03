@@ -230,18 +230,22 @@ import ReadiumZIPFoundation
             }
         } catch { self.error = error.localizedDescription }
     }
-    func play(_ record: DownloadRecord, library: LibraryStore, player: PlaybackController) {
-        guard var book = library.book(record.localBookID) else { error = "Import the original book to read alongside this narration."; return }
+    func play(_ record: DownloadRecord, library: LibraryStore, player: PlaybackController, fromBeginning: Bool = false) {
+        guard var book = library.book(record.localBookID) else {
+            error = "Import the original book to read alongside this narration."; player.error = error; return
+        }
         do {
-            let offset = book.audioAssetID == record.id || book.audioAssetID == record.asset.id ? book.audioSeconds : 0
+            let offset = !fromBeginning && (book.audioAssetID == record.id || book.audioAssetID == record.asset.id) ? book.audioSeconds : 0
             let currentFollow = player.bookID == book.id ? player.onLocator : nil
             try player.play(url: root.appendingPathComponent(record.file), book: book, start: offset)
+            let remoteBookID = jobs.first(where: { $0.id == record.jobID })?.bookId
+            player.chapterTitle = books.first(where: { $0.id == remoteBookID })?.chapters.first(where: { chapter in chapter.segments.contains { $0.id == record.asset.segmentId } })?.title ?? ""
             if let legacyTitle = record.legacyTitle { player.title = legacyTitle; player.subtitle = "Legacy recording · no synchronized text" }
             var locationSaved = Date.distantPast
             player.onLocator = currentFollow ?? { [weak library] locator in
                 if Date().timeIntervalSince(locationSaved) >= 3 { library?.saveLocation(record.localBookID, locator: locator); locationSaved = Date() }
             }
-            book.audioAssetID = record.id; library.update(book)
+            book.audioAssetID = record.id; book.audioSeconds = offset; library.update(book)
             var lastSaved = -5.0
             player.onProgress = { [weak library, weak player] seconds in
                 guard let library, var current = library.book(record.localBookID) else { return }
@@ -263,7 +267,7 @@ import ReadiumZIPFoundation
                 let sequence = self.orderedDownloads(jobID: record.jobID)
                 if let index = sequence.firstIndex(where: { $0.id == record.id }), index + 1 < sequence.count { self.play(sequence[index + 1], library: library, player: player) }
             }
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = error.localizedDescription; player.error = error.localizedDescription }
     }
     func orderedDownloads(jobID: String) -> [DownloadRecord] {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return downloads.filter { $0.jobID == jobID } }
@@ -271,6 +275,26 @@ import ReadiumZIPFoundation
             guard let asset = job.assets.first(where: { $0.segmentId == id }) else { return nil }
             return downloads.first { $0.jobID == jobID && $0.asset.id == asset.id }
         }
+    }
+    func downloadedChapters(jobID: String) -> [DownloadedChapter] {
+        guard let job = jobs.first(where: { $0.id == jobID }), let book = books.first(where: { $0.id == job.bookId }) else { return [] }
+        let records = orderedDownloads(jobID: jobID).filter { FileManager.default.fileExists(atPath: root.appendingPathComponent($0.file).path) }
+        return book.chapters.compactMap { chapter in
+            guard let first = records.first(where: { record in chapter.segments.contains { $0.id == record.asset.segmentId } }) else { return nil }
+            return DownloadedChapter(id: chapter.id, title: chapter.title, firstRecord: first)
+        }
+    }
+    func refreshNarrationInventory() async throws {
+        guard let client else { throw BookError.message("Pair your PC companion in Studio first.") }
+        struct Engines: Decodable { var engines: [RemoteEngine] }
+        struct Voices: Decodable { var voices: [RemoteVoice] }
+        struct Pronunciations: Decodable { var pronunciationRules: [PronunciationRule] }
+        async let e: Engines = client.send("/v1/engines")
+        async let v: Voices = client.send("/v1/voices")
+        async let p: Pronunciations = client.send("/v1/pronunciations")
+        let inventory = try await (e, v, p)
+        engines = inventory.0.engines; voices = inventory.1.voices; importedPronunciations = inventory.2.pronunciationRules
+        try persist()
     }
     func resumeRecord(jobID: String, library: LibraryStore) -> DownloadRecord? {
         let sequence = orderedDownloads(jobID: jobID)

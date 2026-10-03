@@ -2,6 +2,67 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testListenFitsOneScreenAndSelectsChapters() {
+        executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--import-fixture", "-playbackRate", "0.75"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 30)); book.tap()
+        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 30)); app.buttons["reader.contents"].tap()
+        XCTAssertTrue(app.buttons["The Lantern"].waitForExistence(timeout: 10)); app.buttons["The Lantern"].tap()
+        let paragraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
+        XCTAssertTrue(paragraph.waitForExistence(timeout: 30)); assertVisibleInk(in: paragraph)
+        let speak = app.buttons["reader.speak"]; speak.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Pause"), object: speak)], timeout: 20), .completed)
+        app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
+        XCTAssertTrue(app.buttons["listen.chapters"].waitForExistence(timeout: 10))
+        assertListenFits(app, name: "Obsidian Listen portrait before chapter selection")
+        let position = app.buttons["player.full.toggle"].frame
+        app.swipeUp()
+        XCTAssertEqual(app.buttons["player.full.toggle"].frame, position, "The player surface must not scroll")
+        app.buttons["listen.chapters"].tap()
+        XCTAssertTrue(app.navigationBars["Chapters"].waitForExistence(timeout: 10))
+        let chapter = app.buttons["Across the Bridge"]
+        XCTAssertTrue(chapter.exists && chapter.isHittable); chapter.tap()
+        let selected = app.buttons["listen.chapters"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Across the Bridge"), object: selected)], timeout: 20), .completed)
+        let play = app.buttons["player.full.toggle"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: play)], timeout: 15), .completed)
+        assertListenFits(app, name: "Obsidian Listen selected chapter")
+        play.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Paused"), object: play)], timeout: 10), .completed)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)], timeout: 10), .completed)
+        assertListenFits(app, name: "Obsidian Listen landscape")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)], timeout: 10), .completed)
+        app.tabBars.buttons["Library"].tap(); book.tap()
+        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 20))
+        let target = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Across the Bridge")).firstMatch
+        XCTAssertTrue(target.waitForExistence(timeout: 20)); assertVisibleInk(in: target)
+    }
+
+    private func assertListenFits(_ app: XCUIApplication, name: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(app.scrollViews.count, 0, "Main Listen must fit without a scrolling container", file: file, line: line)
+        let tabTop = app.tabBars.buttons["Listen"].frame.minY
+        var geometry: [String] = ["Screen: \(app.frame)", "Tabs begin: \(tabTop)"]
+        for id in ["listen.chapters", "listen.backward", "player.full.toggle", "listen.forward", "listen.speed", "listen.sleep"] {
+            let control = app.buttons[id]
+            XCTAssertTrue(control.exists && control.isHittable, id, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44, id, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44, id, file: file, line: line)
+            XCTAssertTrue(app.frame.contains(control.frame), "\(id) must fit on screen", file: file, line: line)
+            XCTAssertLessThanOrEqual(control.frame.maxY, tabTop, "\(id) must remain above tabs", file: file, line: line)
+            geometry.append("\(id): \(control.frame)")
+        }
+        XCTAssertTrue(app.buttons["listen.downloads"].isHittable, file: file, line: line)
+        let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
+        let frames = XCTAttachment(string: geometry.joined(separator: "\n")); frames.name = name + " geometry"; frames.lifetime = .keepAlways; add(frames)
+    }
+
     func testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--import-fixture"]

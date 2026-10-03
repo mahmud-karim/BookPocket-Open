@@ -22,6 +22,8 @@ Choose **Generate current chapter**, check the preview's start/end against Conte
 
 ## Playback and hardware
 
+In iOS 0.1.4, open **Listen** with on-device speech and downloaded narration. Confirm all player controls fit without scrolling in portrait and landscape. Tap the chapter row, select a different chapter, and check playback and the saved reading position. Downloaded takes should offer only chapters with audio on this phone. Open the tray to select or remove a downloaded recording.
+
 With a sufficiently long downloaded recording, test pause/resume, seek, speed, sleep timer, Bluetooth controls, lock-screen controls, a call or other audio interruption, and Bluetooth disconnection. Then play for at least one hour with the screen locked. Record whether it continued, whether controls worked, and whether the final reading/audio position reopened correctly.
 
 The application remains a development preview until these device gates have evidence. A failed check should be reported and repaired before promoting the release.

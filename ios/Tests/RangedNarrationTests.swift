@@ -18,6 +18,72 @@ private final class NarrationProtocol: URLProtocol {
 }
 
 final class RangedNarrationTests: XCTestCase {
+    @MainActor func testOfflinePreparationIsActionableAndNeverAcceptsStaleVoiceInventory() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder); NarrationProtocol.handler = nil }
+        let connection = try client()
+        XCTAssertEqual(try connection.request("/v1/health").timeoutInterval, 8)
+        XCTAssertEqual(try connection.request("/v1/jobs/job/export", method: "POST").timeoutInterval, 3600)
+        XCTAssertNotEqual(try connection.request("/v1/books", method: "POST").timeoutInterval, 8)
+        let store = CompanionStore(root: folder, client: connection)
+        store.voices = [.init(id: "old-voice", name: "Kyon", engine: "voicestudio", kind: "clone", language: "en")]
+        NarrationProtocol.handler = { _ in throw URLError(.timedOut) }
+        do { try await store.requireSourceRanges(); XCTFail("Offline health must fail before preparation") }
+        catch {
+            let message = CompanionClient.narrationMessage(for: error)
+            XCTAssertTrue(message.contains("offline or unreachable")); XCTAssertTrue(message.contains("Open Book Pocket Open on your PC"))
+        }
+        do { try await store.refreshNarrationInventory(); XCTFail("Cached voices cannot make a failed refresh look ready") }
+        catch { XCTAssertTrue(CompanionClient.narrationMessage(for: error).contains("refresh")) }
+        let certificateError = URLError(.serverCertificateUntrusted)
+        XCTAssertEqual(CompanionClient.narrationMessage(for: certificateError), certificateError.localizedDescription, "Certificate failures must not masquerade as an offline PC")
+    }
+    @MainActor func testDownloadedChaptersUseExistingCurrentAssetsAndStartSelectedAudioAtBeginning() async throws {
+        let f = try fixture(); let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let library = LibraryStore(root: folder.appendingPathComponent("Library"))
+        let epub = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lantern", withExtension: "epub"))
+        var local = try await library.importBook(epub)
+        let store = CompanionStore(root: folder.appendingPathComponent("Companion"))
+        var remote = f.book
+        let second = RemoteSegment(id: "second-source", text: "Original second chapter.", kind: "paragraph", locator: .object([:]))
+        remote.chapters.append(.init(id: "second-chapter", title: "Second chapter", href: "EPUB/chapter2.xhtml", segments: [second]))
+        var job = f.job; job.segmentIds.append(second.id)
+        var asset = job.assets[0]; asset.id = "second-audio"; asset.segmentId = second.id; job.assets.append(asset)
+        let tone = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "test-tone", withExtension: "wav"))
+        // This is a real decodable PCM test tone, explicitly not generated speech.
+        try FileManager.default.copyItem(at: tone, to: store.root.appendingPathComponent("first.wav"))
+        try FileManager.default.copyItem(at: tone, to: store.root.appendingPathComponent("second.wav"))
+        store.books = [remote]; store.jobs = [job]
+        let first = DownloadRecord(localBookID: local.id, jobID: job.id, asset: job.assets[0], file: "first.wav", segment: remote.segments[0])
+        let last = DownloadRecord(localBookID: local.id, jobID: job.id, asset: asset, file: "second.wav", segment: second)
+        store.downloads = [last, first]
+        XCTAssertEqual(store.downloadedChapters(jobID: job.id).map(\.firstRecord.asset.id), [first.asset.id, last.asset.id], "Chapter order follows the original book, not download completion")
+        local.audioAssetID = last.id; local.audioSeconds = 0.12; library.update(local)
+        let player = PlaybackController(); defer { player.stop() }
+        store.play(last, library: library, player: player)
+        XCTAssertTrue(player.isPlaying); XCTAssertGreaterThan(player.duration, 0.2)
+        player.pause()
+        XCTAssertGreaterThan(player.elapsed, 0.1)
+        store.play(last, library: library, player: player, fromBeginning: true)
+        XCTAssertTrue(player.isPlaying); XCTAssertEqual(player.elapsed, 0, accuracy: 0.02)
+        XCTAssertEqual(player.chapterTitle, "Second chapter")
+        XCTAssertEqual(library.book(local.id)?.audioAssetID, last.id)
+        XCTAssertEqual(library.book(local.id)?.audioSeconds, 0, "A chapter jump must persist its starting position before the first playback tick")
+        player.pause()
+        try FileManager.default.removeItem(at: store.root.appendingPathComponent("second.wav"))
+        XCTAssertEqual(store.downloadedChapters(jobID: job.id).map(\.id), [remote.chapters[0].id], "Missing files must not appear as playable chapters")
+        store.play(last, library: library, player: player, fromBeginning: true)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertNotNil(player.error, "A recording lost after opening the selector must surface through the app's playback alert")
+        store.play(first, library: library, player: player, fromBeginning: true)
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertNil(player.error, "Successful playback must clear the prior recording failure")
+        player.pause()
+        var stale = first; stale.asset.id = "obsolete-first"
+        store.downloads = [stale]
+        XCTAssertTrue(store.downloadedChapters(jobID: job.id).isEmpty, "A replaced asset must never be offered as a chapter")
+    }
     private struct Fixture: Decodable {
         var book: RemoteBook
         var job: RemoteJob

@@ -24,6 +24,9 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
         didSet { UserDefaults.standard.set(rate, forKey: "playbackRate"); player?.rate = Float(rate); nowPlaying() }
     }
     var speechLocator: Locator?
+    var speechChapters: [ReadiumShared.Link] = []
+    var chapterTitle = ""
+    private var speechPublication: Publication?
     var onLocator: ((Locator) -> Void)?
     var onProgress: ((Double) -> Void)?
     var onFinished: (() -> Void)?
@@ -59,20 +62,38 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     }
     func speak(publication: Publication, book: LocalBook, from locator: Locator?) {
         stop()
+        error = nil
         title = book.title; subtitle = "On-device voice"; bookID = book.id
+        speechPublication = publication
+        func flatten(_ links: [ReadiumShared.Link]) -> [ReadiumShared.Link] { links.flatMap { [$0] + flatten($0.children) } }
+        speechChapters = flatten(publication.manifest.tableOfContents)
+        if speechChapters.isEmpty { speechChapters = publication.readingOrder }
         let delegate = rateDelegate
         speech = PublicationSpeechSynthesizer(publication: publication, config: .init(voiceIdentifier: UserDefaults.standard.string(forKey: "speechVoice")), engineFactory: { AVTTSEngine(delegate: delegate) }, delegate: self)
         guard let speech else { error = "This publication does not contain text that can be read aloud."; return }
         speech.start(from: locator)
     }
+    func selectSpeechChapter(_ chapter: ReadiumShared.Link) async -> Bool {
+        error = nil
+        guard let publication = speechPublication, let synthesizer = speech,
+              let locator = await publication.locate(chapter), synthesizer === speech else {
+            error = "This chapter cannot be opened for narration. Open it in the reader and choose Read aloud."
+            return false
+        }
+        chapterTitle = chapter.title ?? "Chapter"
+        speechLocator = locator; onLocator?(locator)
+        synthesizer.start(from: locator)
+        return true
+    }
     func play(url: URL, book: LocalBook, start: Double = 0) throws {
         stop()
+        error = nil
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.allowAirPlay, .allowBluetoothA2DP])
         try AVAudioSession.sharedInstance().setActive(true)
         let audio = try AVAudioPlayer(contentsOf: url)
         audio.delegate = self; audio.enableRate = true; audio.rate = Float(rate)
         audio.currentTime = min(max(0, start), audio.duration)
-        player = audio; duration = audio.duration; title = book.title; subtitle = "Downloaded narration"; bookID = book.id
+        player = audio; duration = audio.duration; elapsed = audio.currentTime; title = book.title; subtitle = "Downloaded narration"; bookID = book.id
         isPlaying = audio.play(); nowPlaying()
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -85,7 +106,7 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     func toggle() { isPlaying ? pause() : resume() }
     func pause() { speech?.pause(); player?.pause(); isPlaying = false; nowPlaying() }
     func resume() { speech?.resume(); if let player { isPlaying = player.play() }; nowPlaying() }
-    func stop() { speech?.stop(); speech = nil; player?.stop(); player = nil; tickTask?.cancel(); isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
+    func stop() { speech?.stop(); speech = nil; speechPublication = nil; speechChapters = []; chapterTitle = ""; player?.stop(); player = nil; tickTask?.cancel(); isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
     func skip(_ seconds: Double) { if let player { seek(player.currentTime + seconds) } else if seconds > 0 { speech?.next() } else { speech?.previous() } }
     func seek(_ value: Double) { guard let player else { return }; player.currentTime = min(max(0, value), player.duration); elapsed = player.currentTime; onProgress?(elapsed); nowPlaying() }
     func sleep(minutes: Int?) {
@@ -106,7 +127,11 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
         switch state {
         case .stopped: isPlaying = false
         case .paused: isPlaying = false
-        case .playing(let utterance, let range): isPlaying = true; speechLocator = range ?? utterance.locator; onLocator?(range ?? utterance.locator)
+        case .playing(let utterance, let range):
+            isPlaying = true; speechLocator = range ?? utterance.locator; onLocator?(range ?? utterance.locator)
+            let candidates = speechChapters.filter { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href((range ?? utterance.locator).href.string) }
+            if candidates.count == 1, let title = candidates.first?.title { chapterTitle = title }
+            else if chapterTitle.isEmpty, let title = speechLocator?.title { chapterTitle = title }
         }
         nowPlaying()
     }

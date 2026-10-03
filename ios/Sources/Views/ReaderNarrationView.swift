@@ -91,7 +91,7 @@ struct ReaderNarrationView: View {
                 .task(id: (job?.id ?? "") + ":\(pollingRevision)") {
                     guard let id = job?.id else { return }
                     while !Task.isCancelled {
-                        do { _ = try await companion.refreshJob(id) } catch { self.error = error.localizedDescription }
+                        do { _ = try await companion.refreshJob(id) } catch { self.error = CompanionClient.narrationMessage(for: error) }
                         if job?.status == "completed" { if startedHere && playWhenReady { await downloadAndPlay() }; return }
                         if ["failed", "cancelled"].contains(job?.status ?? "") { return }
                         do { try await Task.sleep(for: .seconds(3)) } catch { return }
@@ -132,15 +132,16 @@ struct ReaderNarrationView: View {
         guard !preparing, companion.paired else { return }
         preparing = true; error = nil; defer { preparing = false }
         if let id = presentation.jobID { jobID = id; return }
+        selection = nil; voice = nil; remote = nil
         do {
             try await companion.requireSourceRanges()
-            await companion.refresh(reportErrors: false)
+            try await companion.refreshNarrationInventory()
             voice = try ReaderNarrator.kyon(voices: companion.voices, engines: companion.engines)
             guard let local = reader.book, let snapshot = presentation.snapshot else { throw BookError.message("Reopen this book and capture its page again.") }
             let book = try await companion.upload(local, library: library)
             let selected = try ReaderSourceMapper.resolve(snapshot, book: book)
             remote = book; selection = selected
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = CompanionClient.narrationMessage(for: error) }
     }
     private func generate() async {
         guard let remote, let selection, let voice, !working else { return }
@@ -148,7 +149,7 @@ struct ReaderNarrationView: View {
         do {
             let result = try await companion.generate(book: remote, segments: selection.ranges.map(\.segmentId), voice: voice, rules: companion.importedPronunciations, announce: false, sourceRanges: selection.ranges)
             startedHere = true; jobID = result.id
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = CompanionClient.narrationMessage(for: error) }
     }
     private func downloadAndPlay() async {
         guard let job, let local = reader.book, !working else { return }

@@ -71,10 +71,19 @@ final class CompanionClient {
     func request(_ path: String, method: String = "GET", body: Data? = nil, contentType: String = "application/json", bearer: String? = nil) throws -> URLRequest {
         guard path.starts(with: "/v1/"), !path.contains(".."), let url = URL(string: path, relativeTo: baseURL)?.absoluteURL, url.host == baseURL.host, url.scheme == baseURL.scheme, url.port == baseURL.port else { throw BookError.message("The companion returned an invalid resource address.") }
         var request = URLRequest(url: url); request.httpMethod = method; request.httpBody = body
+        if path == "/v1/health" { request.timeoutInterval = 8 }
         if path.hasSuffix("/export") { request.timeoutInterval = 3600 }
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         if let bearer = bearer ?? token { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
         return request
+    }
+    static func narrationMessage(for error: Error) -> String {
+        guard let failure = error as? URLError else { return error.localizedDescription }
+        switch failure.code {
+        case .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .networkConnectionLost, .notConnectedToInternet:
+            return "PC companion is offline or unreachable. Open Book Pocket Open on your PC, check that both devices are on the same Wi-Fi or connected through Tailscale, then refresh."
+        default: return error.localizedDescription
+        }
     }
     func send<T: Decodable>(_ path: String, method: String = "GET", body: Data? = nil, contentType: String = "application/json", bearer: String? = nil) async throws -> T {
         let (data, response) = try await session.data(for: request(path, method: method, body: body, contentType: contentType, bearer: bearer))
