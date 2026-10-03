@@ -9,6 +9,7 @@ import uuid
 import wave
 from pathlib import Path
 from .store import canonical, digest, now
+from .models import validate_source_ranges
 
 def sentences(text):
     # Python string offsets count Unicode scalars, matching the wire contract.
@@ -117,6 +118,11 @@ class Worker:
             request = json.loads(self.store.item("jobs", job_id)["request"])
             book = json.loads(self.store.item("books", request["book_id"])["data"])
             segment_map = {s["id"]: (s, c, i) for c in book["chapters"] for i, s in enumerate(c["segments"])}
+            source_ranges = request.get("source_ranges", [])
+            validate_source_ranges(source_ranges, request["segment_ids"], {sid: len(s[0]["text"]) for sid, s in segment_map.items()})
+            if source_ranges and (request.get("cast") or request.get("narration_plan") or request.get("announce_chapters")):
+                raise ValueError("Source ranges require one narrator and no chapter announcements")
+            source_by_segment = {value["segment_id"]: value for value in source_ranges}
             engine = self.engines[request["engine"]]
             for other in self.engines.values():
                 if other is not engine and hasattr(other, "close"): other.close()
@@ -134,10 +140,12 @@ class Worker:
                     if not selected: raise RuntimeError("A cast voice no longer exists")
                     voice_revisions[span_voice] = {"reference": digest(Path(selected["reference"]).read_bytes()) if selected.get("reference") else None, "transcript": selected.get("transcript")}
                 announce = chapter["title"] if request["announce_chapters"] and index == 0 and segment["text"] != chapter["title"] else None
+                selected_range = source_by_segment.get(segment_id)
                 key = digest(canonical({"segment": segment_id, "engine": engine.id, "version": engine.version,
                                         "voice": voice_id, "voice_revision": digest(Path(voice["reference"]).read_bytes()) if voice.get("reference") else (request["request_id"] if engine.id == "voicestudio" else engine.version),
                                         "transcript": voice.get("transcript"), "narration_plan": span_plan, "voice_revisions": voice_revisions,
                                         "take_id": request.get("take_id"),
+                                        **({"source_range": selected_range} if selected_range else {}),
                                         "rules": request["pronunciation_rules"], "language": request["language"], "announce": announce}))
                 with self.store.db() as db:
                     cached = db.execute("SELECT data,path FROM assets WHERE cache_key=?", (key,)).fetchone()
@@ -150,7 +158,7 @@ class Worker:
                         validate_wav(path)
                         asset = metadata
                 if not asset:
-                    asset = self.render(engine, voice, segment, request, announce, key, job_id)
+                    asset = self.render(engine, voice, segment, request, announce, key, job_id, selected_range)
                 if not asset or not self.active(job_id): return
                 elapsed = time.monotonic() - started
                 def complete_segment(j):
@@ -164,19 +172,21 @@ class Worker:
         except Exception as exc:
             self.update(job_id, lambda j: j.update(status="failed", finished_at=now(), error=str(exc)[:2000]), {"running"})
 
-    def render(self, engine, voice, segment, request, announce, key, job_id):
+    def render(self, engine, voice, segment, request, announce, key, job_id, selected_range=None):
         with tempfile.TemporaryDirectory(dir=self.store.root / "assets") as temporary:
             temp = Path(temporary)
             final = temp / "joined.wav"
             timings, cursor, word_aligned = [], 0.0, True
             parts = [(None, None, announce, voice)] if announce else []
             plans = sorted([p for p in request.get("narration_plan", []) if p["segment_id"] == segment["id"]], key=lambda p: p["start_offset"])
-            ranges, position = [], 0
+            source_start = selected_range["start_offset"] if selected_range else 0
+            source_end = selected_range["end_offset"] if selected_range else len(segment["text"])
+            ranges, position = [], source_start
             for plan in plans:
                 if plan["start_offset"] > position: ranges.append((position, plan["start_offset"], voice))
                 ranges.append((plan["start_offset"], plan["end_offset"], self.voice(engine, plan["voice_id"])))
                 position = plan["end_offset"]
-            if position < len(segment["text"]): ranges.append((position, len(segment["text"]), voice))
+            if position < source_end: ranges.append((position, source_end, voice))
             for begin, finish, selected_voice in ranges:
                 for start, end, text in sentences(segment["text"][begin:finish]):
                     parts.append((begin + start, begin + end, text, selected_voice))
@@ -207,7 +217,7 @@ class Worker:
             destination = self.store.root / "assets" / (asset_id + ".wav")
             asset = {"id": asset_id, "segment_id": segment["id"], "media_type": "audio/wav", "duration": cursor,
                      "sha256": content_hash, "bytes": final.stat().st_size, "url": "/v1/assets/" + asset_id,
-                     "timings": timings, "alignment": "word" if word_aligned else "sentence", "source_start": 0, "source_end": len(segment["text"]), "cast_spans": plans}
+                     "timings": timings, "alignment": "word" if word_aligned else "sentence", "source_start": source_start, "source_end": source_end, "cast_spans": plans}
             if not self.active(job_id): return None
             final.replace(destination)
             with self.store.db() as db:

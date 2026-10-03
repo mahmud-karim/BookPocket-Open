@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .engines import engines_for, ManagedEngine
-from .models import Config, ExportRequest, GenerationRequest, PairRequest
+from .models import Config, ExportRequest, GenerationRequest, PairRequest, validate_source_ranges
 from .publication import parse_book, extract_cover
 from .store import Store, canonical, digest, now
 from .worker import Worker
@@ -135,7 +135,7 @@ def create_app(config=None, engines=None, start_worker=True):
                 if key != "global" and (not attempts[key] or attempts[key][-1] < current - 60): del attempts[key]
 
     @app.get("/v1/health")
-    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__}
+    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges"]}
 
     @app.get("/v1/admin/connection", dependencies=[Depends(admin)])
     def connection(): return {"url": config.public_url, "certificate_sha256": config.certificate_sha256}
@@ -318,13 +318,20 @@ def create_app(config=None, engines=None, start_worker=True):
         with store.db() as db:
             existing = db.execute("SELECT request,data FROM jobs WHERE request_id=?", (body.request_id,)).fetchone()
         if existing:
-            if existing["request"] != serialized: raise HTTPException(409, "request_id was already used with different settings")
+            # New optional fields must not invalidate retries of jobs saved by an older version.
+            try: previous_payload = GenerationRequest.model_validate_json(existing["request"]).model_dump()
+            except ValueError: raise HTTPException(409, "request_id belongs to an imported or incompatible production")
+            if canonical(previous_payload) != serialized: raise HTTPException(409, "request_id was already used with different settings")
             return json.loads(existing["data"])
         book = get_book(body.book_id)
         valid = {s["id"] for c in book["chapters"] for s in c["segments"]}
         lengths = {s["id"]: len(s["text"]) for c in book["chapters"] for s in c["segments"]}
         if len(set(body.segment_ids)) != len(body.segment_ids) or not set(body.segment_ids) <= valid:
             raise HTTPException(400, "Select unique segments belonging to this book")
+        if body.source_ranges and (body.cast or body.narration_plan or body.announce_chapters):
+            raise HTTPException(422, "Source ranges require one narrator and no chapter announcements; clear cast, narration_plan, and announce_chapters")
+        try: validate_source_ranges(payload["source_ranges"], body.segment_ids, lengths)
+        except ValueError as exc: raise HTTPException(400, str(exc))
         if not set(body.cast) <= set(body.segment_ids): raise HTTPException(400, "Cast overrides must reference selected segments")
         previous = {}
         for span in sorted(body.narration_plan, key=lambda p: (p.segment_id, p.start_offset)):
@@ -338,6 +345,7 @@ def create_app(config=None, engines=None, start_worker=True):
         job = {"id": str(uuid.uuid4()), "book_id": body.book_id, "status": "queued", "engine": body.engine, "voice_id": body.voice_id,
                "segment_ids": body.segment_ids, "completed_segments": 0, "total_segments": len(body.segment_ids), "created_at": now(),
                "started_at": None, "finished_at": None, "generation_seconds": 0.0, "error": None, "assets": []}
+        if body.source_ranges: job["source_ranges"] = payload["source_ranges"]
         try:
             with store.db() as db: db.execute("INSERT INTO jobs VALUES(?,?,?,?)", (job["id"], body.request_id, serialized, canonical(job)))
         except sqlite3.IntegrityError:

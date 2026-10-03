@@ -83,5 +83,50 @@
         ]
       }
     ]
-  }
+  },
+  "health": {
+    "api_version": "1",
+    "name": "Book Pocket Open",
+    "version": "0.1.1",
+    "capabilities": [
+      "source_ranges"
+    ]
+  },
+  "partial_request": {
+    "request_id": "contract-partial-request",
+    "book_id": "contract-book",
+    "segment_ids": [
+      "1402ca9b139452075d430c31f4966d2c9747c36e82d20fed5e5daa7158bac3e8"
+    ],
+    "engine": "contract-only",
+    "voice_id": "contract-voice",
+    "source_ranges": [
+      {
+        "segment_id": "1402ca9b139452075d430c31f4966d2c9747c36e82d20fed5e5daa7158bac3e8",
+        "start_offset": 10,
+        "end_offset": 30
+      }
+    ]
+  },
+  "partial_asset": {
+    "id": "contract-partial-asset",
+    "segment_id": "1402ca9b139452075d430c31f4966d2c9747c36e82d20fed5e5daa7158bac3e8",
+    "media_type": "audio/wav",
+    "duration": 0.25,
+    "sha256": "ec78298f766e6cf2a694ff8ba6904b79b0b4208731e9ee5ca7ba77e9c165e8a0",
+    "bytes": 12044,
+    "url": "/v1/assets/contract-partial-asset",
+    "timings": [
+      {
+        "start": 0.0,
+        "end": 0.25,
+        "start_offset": 10,
+        "end_offset": 30
+      }
+    ],
+    "source_start": 10,
+    "source_end": 30,
+    "alignment": "sentence"
+  },
+  "partial_expected_text": "🧭 pointed north; caf"
 }

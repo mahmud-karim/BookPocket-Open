@@ -8,6 +8,7 @@ from .store import canonical, digest, now
 from .worker import validate_wav
 from .casting import Cast, validate_cast
 from .archiveio import stream_for, file_digest, copy_member, require_disk, MAX_EXPANDED, MAX_ASSET
+from .models import validate_source_ranges
 
 
 def import_project(store, content):
@@ -46,9 +47,22 @@ def import_project(store, content):
             selected = original_job["segment_ids"]
             if not selected or len(set(selected)) != len(selected) or not set(selected) <= segments.keys():
                 raise ValueError("Project contains unknown or duplicate source spans")
+            generation = manifest.get("generation", {})
+            source_ranges = generation.get("source_ranges", [])
+            validate_source_ranges(source_ranges, selected, {sid: len(s["text"]) for sid, s in segments.items()})
+            if original_job.get("source_ranges", source_ranges) != source_ranges:
+                raise ValueError("Project job and generation source ranges disagree")
+            if source_ranges and (generation.get("cast") or generation.get("narration_plan") or generation.get("announce_chapters")):
+                raise ValueError("Partial source projects require one narrator and no chapter announcements")
+            source_by_segment = {value["segment_id"]: value for value in source_ranges}
             assets = []
             for asset in original_job["assets"]:
                 if asset["segment_id"] not in selected: raise ValueError("Audio points outside the selected source spans")
+                scope = source_by_segment.get(asset["segment_id"])
+                source_start = scope["start_offset"] if scope else 0
+                source_end = scope["end_offset"] if scope else len(segments[asset["segment_id"]]["text"])
+                if asset.get("source_start", source_start) != source_start or asset.get("source_end", source_end) != source_end:
+                    raise ValueError("Project audio scope does not match the requested source range")
                 asset_id = str(uuid.uuid4())
                 path = store.root / "assets" / (asset_id + ".wav")
                 staged.append(path)
@@ -58,10 +72,11 @@ def import_project(store, content):
                 previous = 0.0
                 for timing in asset.get("timings", []):
                     if not (0 <= timing["start"] <= timing["end"] <= duration + .05 and timing["start"] >= previous - .05
-                            and 0 <= timing["start_offset"] < timing["end_offset"] <= len(segments[asset["segment_id"]]["text"])):
+                            and source_start <= timing["start_offset"] < timing["end_offset"] <= source_end):
                         raise ValueError("Project timings fall outside the original text or audio")
                     previous = timing["end"]
-                metadata = {**asset, "id": asset_id, "duration": duration, "bytes": size, "url": "/v1/assets/" + asset_id}
+                metadata = {**asset, "id": asset_id, "duration": duration, "bytes": size, "url": "/v1/assets/" + asset_id,
+                            "source_start": source_start, "source_end": source_end}
                 assets.append((metadata, path))
             if len(assets) != len(selected) or {a[0]["segment_id"] for a in assets} != set(selected):
                 raise ValueError("Project is missing required recordings")
@@ -74,7 +89,7 @@ def import_project(store, content):
                 source_temp.replace(book_path)
             job = {**original_job, "id": str(uuid.uuid4()), "book_id": book["id"], "status": "completed", "assets": [a[0] for a in assets],
                    "completed_segments": len(selected), "total_segments": len(selected), "error": None, "imported_at": now()}
-            generation = manifest.get("generation", {})
+            if source_ranges: job["source_ranges"] = source_ranges
             generation["request_id"] = import_key
             voices, voice_map, unresolved = [], {}, []
             for voice in manifest.get("voices", []):

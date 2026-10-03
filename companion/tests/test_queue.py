@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from bookpocket_companion.app import create_app
 from bookpocket_companion.models import Config
+from bookpocket_companion.models import validate_source_ranges
 from bookpocket_companion.store import canonical, now
 from bookpocket_companion.worker import sentences, spoken, spoken_mapping, word_timings
 
@@ -107,6 +108,63 @@ def test_project_audio_import_and_export_never_use_whole_file_reads(setup, monke
     imported = client.post("/v1/projects/import", files={"file": ("book.zip", content)})
     assert imported.status_code == 200, imported.text
     assert imported.json()["job"]["completed_segments"] == 2
+
+
+def test_upgrade_preserves_idempotency_of_requests_without_new_optional_fields(setup):
+    app, client, _, _, request = setup
+    job = client.post("/v1/jobs", json=request).json()
+    saved = json.loads(app.state.store.item("jobs", job["id"])["request"])
+    saved.pop("source_ranges")
+    saved.pop("take_id")
+    with app.state.store.db() as db:
+        db.execute("UPDATE jobs SET request=? WHERE id=?", (canonical(saved), job["id"]))
+    response = client.post("/v1/jobs", json=request)
+    assert response.status_code == 202, response.text
+    assert response.json()["id"] == job["id"]
+
+
+@pytest.mark.parametrize("ranges", [None, {}, "scope", [None], [[]], [{}], [{"segment_id": "s"}],
+    [{"segment_id": [], "start_offset": 0, "end_offset": 1}],
+    [{"segment_id": "s", "start_offset": False, "end_offset": 1}],
+    [{"segment_id": "s", "start_offset": 0, "end_offset": "1"}],
+    [{"segment_id": "s", "start_offset": 0, "end_offset": 1}] * 100001])
+def test_malformed_persisted_source_ranges_fail_as_value_errors(ranges):
+    with pytest.raises(ValueError): validate_source_ranges(ranges, ["s"], {"s": 10})
+
+
+def test_partial_pronunciation_word_mapping_and_portable_scope_integrity(setup, monkeypatch):
+    app, client, engine, _, request = setup
+    request["segment_ids"] = request["segment_ids"][:1]
+    sid = request["segment_ids"][0]
+    request["source_ranges"] = [{"segment_id": sid, "start_offset": 2, "end_offset": 12}]
+    original = engine.synthesize
+    def synthesize(text, voice, output, language):
+        original(text, voice, output, language)
+        return {"words": [{"text": "navigation", "start": 0, "end": .02}, {"text": "compass", "start": .02, "end": .04}, {"text": "🧭.", "start": .04, "end": .1}]}
+    monkeypatch.setattr(engine, "synthesize", synthesize)
+    job = client.post("/v1/jobs", json=request).json()
+    app.state.worker.run(job["id"])
+    rendered = client.get('/v1/jobs/'+job['id']).json()
+    assert rendered["status"] == "completed", rendered
+    asset = rendered["assets"][0]
+    assert engine.calls == ["navigation compass 🧭."]
+    assert asset["alignment"] == "word"
+    assert [(t["start_offset"], t["end_offset"]) for t in asset["timings"]] == [(2, 9), (2, 9), (10, 12)]
+    exported = client.post(f"/v1/jobs/{job['id']}/export", json={"format": "project"}).json()
+    content = client.get(exported["url"]).content
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    for corruption in ("scope", "timing"):
+        manifest = json.loads(entries["project.json"])
+        if corruption == "scope": manifest["job"]["assets"][0]["source_start"] = 0
+        else: manifest["job"]["assets"][0]["timings"][0]["start_offset"] = 0
+        invalid = io.BytesIO()
+        with zipfile.ZipFile(invalid, "w") as archive:
+            for name, value in entries.items():
+                archive.writestr(name, canonical(manifest) if name == "project.json" else value)
+        response = client.post('/v1/projects/import', files={"file": ("invalid.zip", invalid.getvalue())})
+        assert response.status_code == 400, response.text
+        assert "scope" in response.text or "timings" in response.text
 
 
 def test_corrupt_cache_is_regenerated(setup):
