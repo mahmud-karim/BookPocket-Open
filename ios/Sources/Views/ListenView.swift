@@ -19,7 +19,7 @@ struct ListenView: View {
                         }
                         HStack(spacing: 42) {
                             Button("Back 15 seconds or previous sentence", systemImage: "gobackward.15") { player.skip(-15) }.font(.title)
-                            Button(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill") { player.toggle() }.font(.largeTitle).frame(width: 78, height: 78).background(Obsidian.accent.opacity(0.16), in: .circle)
+                            Button(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill") { player.toggle() }.font(.largeTitle).frame(width: 78, height: 78).background(Obsidian.accent.opacity(0.16), in: .circle).accessibilityIdentifier("player.full.toggle").accessibilityValue(player.isPlaying ? "Playing" : "Paused")
                             Button("Forward 15 seconds or next sentence", systemImage: "goforward.15") { player.skip(15) }.font(.title)
                         }.labelStyle(.iconOnly)
                         HStack {

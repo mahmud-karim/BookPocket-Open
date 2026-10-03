@@ -2,6 +2,68 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testNarrationMiniPlayerLeavesNativeTabsVisibleAndUsable() {
+        executionTimeAllowance = 180
+        let app = XCUIApplication()
+        // Use a real installed Apple voice at the slowest speed exposed in the app.
+        app.launchArguments = ["--uitesting", "--import-fixture", "-playbackRate", "0.75"]
+        app.launch()
+        let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 30))
+        book.tap()
+        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 30))
+        app.buttons["reader.contents"].tap()
+        XCTAssertTrue(app.navigationBars["Contents"].waitForExistence(timeout: 10))
+        app.buttons["The Lantern"].tap()
+        let paragraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
+        XCTAssertTrue(paragraph.waitForExistence(timeout: 30))
+        assertVisibleInk(in: paragraph)
+        let speak = app.buttons["reader.speak"]
+        speak.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Pause"), object: speak)], timeout: 20), .completed, "Actual on-device speech must start")
+        app.buttons["reader.close"].tap()
+
+        assertMiniPlayerAboveTabs(in: app)
+        XCTAssertEqual(app.buttons["player.mini.toggle"].value as? String, "Playing")
+        let active = XCTAttachment(screenshot: app.screenshot())
+        active.name = "Obsidian playing narration above native tabs"; active.lifetime = .keepAlways; add(active)
+
+        app.tabBars.buttons["Studio"].tap()
+        XCTAssertTrue(app.navigationBars["Studio"].waitForExistence(timeout: 10))
+        assertMiniPlayerAboveTabs(in: app)
+        XCTAssertEqual(app.buttons["player.mini.toggle"].value as? String, "Playing", "Changing tabs must preserve speech")
+        app.tabBars.buttons["Listen"].tap()
+        let fullPlayer = app.buttons["player.full.toggle"]
+        XCTAssertTrue(fullPlayer.waitForExistence(timeout: 10))
+        XCTAssertEqual(fullPlayer.value as? String, "Playing")
+        fullPlayer.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Paused"), object: fullPlayer)], timeout: 10), .completed)
+
+        app.tabBars.buttons["Library"].tap()
+        XCTAssertTrue(app.navigationBars["Library"].waitForExistence(timeout: 10))
+        assertMiniPlayerAboveTabs(in: app)
+        XCTAssertEqual(app.buttons["player.mini.toggle"].value as? String, "Paused")
+        let paused = XCTAttachment(screenshot: app.screenshot())
+        paused.name = "Obsidian paused narration above native tabs"; paused.lifetime = .keepAlways; add(paused)
+        app.buttons["player.mini.open"].tap()
+        XCTAssertTrue(app.navigationBars["Listen"].waitForExistence(timeout: 10))
+        XCTAssertEqual(fullPlayer.value as? String, "Paused")
+    }
+
+    private func assertMiniPlayerAboveTabs(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let mini = app.otherElements["player.mini"].firstMatch
+        XCTAssertTrue(mini.waitForExistence(timeout: 10), file: file, line: line)
+        XCTAssertTrue(app.buttons["player.mini.open"].isHittable, file: file, line: line)
+        XCTAssertTrue(app.buttons["player.mini.toggle"].isHittable, file: file, line: line)
+        XCTAssertGreaterThan(mini.frame.height, 0, file: file, line: line)
+        for name in ["Library", "Listen", "Studio"] {
+            let tab = app.tabBars.buttons[name]
+            XCTAssertTrue(tab.exists && tab.isHittable, "\(name) must remain visible and tappable", file: file, line: line)
+            XCTAssertTrue(app.frame.contains(tab.frame), "\(name) must remain on screen", file: file, line: line)
+            XCTAssertLessThanOrEqual(mini.frame.maxY, tab.frame.minY, "Mini player must sit above \(name), without overlap", file: file, line: line)
+        }
+    }
+
     func testImportedEPUBOpensAndContentsWorkOffline() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--import-fixture"]
