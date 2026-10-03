@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import socket
 import threading
+import tempfile
 import webbrowser
 import atexit
 import os
@@ -17,6 +18,39 @@ from cryptography.x509.oid import NameOID
 import uvicorn
 from .models import Config
 from .app import create_app
+from .phone_gateway import PhoneGateway
+
+
+_SAVED_KEYS = ("public_url", "voicestudio_url", "ffmpeg", "public_tls_mode", "phone_gateway_port")
+
+
+def connection_config(config, saved, *, public_url=None, public_tls_mode=None, phone_gateway_port=None):
+    """Validate persisted settings, retaining opt-in tunnel setup across launches."""
+    if not isinstance(saved, dict): raise ValueError("config.json must contain a settings object")
+    values = {key: saved[key] for key in _SAVED_KEYS if key in saved}
+    if public_url is not None: values["public_url"] = public_url
+    if public_tls_mode is not None: values["public_tls_mode"] = public_tls_mode
+    if phone_gateway_port is not None: values["phone_gateway_port"] = phone_gateway_port or None
+    result = Config.model_validate({**config.model_dump(), **values})
+    if result.phone_gateway_port in {result.port, result.studio_port}:
+        raise ValueError("The phone gateway needs a separate port from HTTPS and the studio")
+    return result
+
+
+def save_connection_config(path, saved, config):
+    """Atomically update only nonsecret connection settings, preserving other keys."""
+    values = {**saved, **{key: getattr(config, key) for key in ("public_url", "public_tls_mode", "phone_gateway_port")}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=".config-", suffix=".tmp", delete=False) as output:
+            temporary = Path(output.name)
+            json.dump(values, output, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None: temporary.unlink(missing_ok=True)
 
 
 class InstanceGuard:
@@ -81,6 +115,8 @@ def main():
     parser.add_argument("--port", type=int, default=8783)
     parser.add_argument("--studio-port", type=int, default=8782)
     parser.add_argument("--public-url", help="HTTPS LAN or Tailscale URL phones use to reach this PC")
+    parser.add_argument("--public-tls-mode", choices=["pinned", "system"], help="Persist phone TLS verification: pinned LAN certificate or normal system trust for public HTTPS")
+    parser.add_argument("--phone-gateway-port", type=int, help="Persist a loopback-only phone API target for a trusted HTTPS tunnel; 0 disables it")
     parser.add_argument("--studio-dir", type=Path)
     parser.add_argument("--voicestudio-url", help="Optional local VoiceStudio base URL, such as http://127.0.0.1:3900")
     parser.add_argument("--dev", action="store_true", help="Loopback HTTP only and explicit Vite dev origins")
@@ -90,13 +126,13 @@ def main():
     config = Config(port=args.port, studio_port=args.studio_port, dev=args.dev)
     if args.data_dir: config.data_dir = args.data_dir
     saved_path = config.data_dir / "config.json"
+    saved = {}
     if saved_path.exists():
         saved = json.loads(saved_path.read_text(encoding="utf-8"))
-        for key in ("public_url", "voicestudio_url", "ffmpeg"):
-            if key in saved: setattr(config, key, saved[key])
-    if args.public_url:
-        config.public_url = args.public_url
-    elif not saved_path.exists():
+    try:
+        config = connection_config(config, saved, public_url=args.public_url, public_tls_mode=args.public_tls_mode, phone_gateway_port=args.phone_gateway_port)
+    except (ValueError, TypeError) as exc: parser.error(str(exc))
+    if not args.public_url and "public_url" not in saved:
         try:
             addresses = [ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ipaddress.ip_address(ip).is_loopback]
             address = next((ip for ip in addresses if ip.startswith(("192.168.", "10."))), addresses[0] if addresses else "localhost")
@@ -114,6 +150,8 @@ def main():
     except RuntimeError as exc:
         parser.exit(1, str(exc) + "\n")
     atexit.register(instance.close)
+    if any(value is not None for value in (args.public_url, args.public_tls_mode, args.phone_gateway_port)):
+        save_connection_config(saved_path, saved, config)
     tls = {}
     if not args.dev:
         cert, key = certificate(config)
@@ -122,21 +160,39 @@ def main():
     if not args.no_browser: threading.Timer(1.5, lambda: webbrowser.open(launch_url)).start()
     app = create_app(config)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1" if args.dev else "0.0.0.0", port=args.port, proxy_headers=False, **tls))
+    secondary_servers = []
     if not args.dev:
         # Same app/state, exactly one worker lifespan; HTTP listener is loopback-only.
         local_server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=config.studio_port, proxy_headers=False, lifespan="off"))
-        threading.Thread(target=local_server.run, daemon=True, name="local-studio").start()
+        secondary_servers.append((local_server, "local-studio"))
+    if config.phone_gateway_port:
+        gateway_server = uvicorn.Server(uvicorn.Config(PhoneGateway(app), host="127.0.0.1", port=config.phone_gateway_port,
+                                                      proxy_headers=False, lifespan="off", workers=1))
+        secondary_servers.append((gateway_server, "phone-gateway"))
+    secondary_threads = []
+    for secondary, name in secondary_servers:
+        thread = threading.Thread(target=secondary.run, daemon=True, name=name)
+        thread.start()
+        secondary_threads.append(thread)
     if args.tray:
         import pystray
         from PIL import Image, ImageDraw
         icon_image = Image.new("RGB", (64, 64), "#111416")
         ImageDraw.Draw(icon_image).rounded_rectangle((14, 9, 49, 55), radius=5, fill="#DCC59D")
         def stop(icon, item):
+            for secondary, _ in secondary_servers: secondary.should_exit = True
             server.should_exit = True
             icon.stop()
         icon = pystray.Icon("BookPocketOpen", icon_image, "Book Pocket Open", pystray.Menu(pystray.MenuItem("Open studio", lambda: webbrowser.open(launch_url)), pystray.MenuItem("Quit", stop)))
         threading.Thread(target=server.run, daemon=True).start()
-        icon.run()
-    else: server.run()
+        try: icon.run()
+        finally:
+            for secondary, _ in secondary_servers: secondary.should_exit = True
+            server.should_exit = True
+    else:
+        try: server.run()
+        finally:
+            for secondary, _ in secondary_servers: secondary.should_exit = True
+    for thread in secondary_threads: thread.join(timeout=2)
 
 if __name__ == "__main__": main()

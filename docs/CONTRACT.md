@@ -31,6 +31,8 @@ JSON keys use snake_case. IDs are opaque strings. Times are ISO8601 UTC unless a
 - Phone GET /v1/pairings/{id} with Authorization: Bearer poll_token -> pending/rejected/expired or `{status:"approved",device_token,device_id}`. Make successful exchange retryable for bounded expiry to survive dropped response.
 - Local studio GET /v1/admin/devices; DELETE /v1/admin/devices/{id} revokes. Phone DELETE /v1/devices/current revokes self. Store only hashes of long-lived tokens; Keychain on iOS.
 - Local HTTPS identity is verified from QR certificate SHA256 before token exchange; never global trust bypass. User-configured remote HTTPS must pass normal OS validation. HTTP restricted to loopback development only.
+- A public HTTPS reverse proxy may use an API path prefix. Clients append API-relative `/v1/...` routes beneath that prefix and constrain redirects to the same HTTPS origin and prefix. When explicitly configured for system certificate validation, the pairing response and QR omit `certificate_sha256`; clients use normal operating-system trust. LAN pairing continues to supply the local certificate pin.
+- The optional phone gateway binds only to loopback for a local TLS-terminating proxy. It shares the existing companion state and worker, admits canonical device API routes only, and treats downstream requests as non-local so desktop admin credentials cannot grant device API access. Studio, administrative routes, schema/docs and browser-origin requests are excluded.
 
 ## Compatibility
 

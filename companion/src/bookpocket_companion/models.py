@@ -10,6 +10,8 @@ class Config(BaseModel):
     port: int = 8783
     studio_port: int = 8782
     public_url: str = "https://localhost:8783"
+    public_tls_mode: Literal["pinned", "system"] = "pinned"
+    phone_gateway_port: int | None = Field(default=None, ge=1, le=65535, strict=True)
     dev: bool = False
     studio_dir: Path | None = None
     voicestudio_url: str | None = None

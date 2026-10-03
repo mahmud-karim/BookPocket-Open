@@ -1646,11 +1646,11 @@ function Devices({
         post<{ id: string; code: string; expires_at: string }>(
           "/v1/admin/pairing-tickets",
         ),
-        api<{ url: string; certificate_sha256: string }>(
+        api<{ url: string; certificate_sha256?: string | null }>(
           "/v1/admin/connection",
         ),
       ]);
-      if (!c.certificate_sha256 || !c.url.startsWith("https://")) {
+      if (!c.url.startsWith("https://")) {
         throw new Error(
           "Device pairing needs the secure companion launcher. Exit development mode and reopen Book Pocket from its desktop shortcut.",
         );

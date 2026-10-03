@@ -149,7 +149,10 @@ def create_app(config=None, engines=None, start_worker=True):
     def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id", "source_ranges_cast"]}
 
     @app.get("/v1/admin/connection", dependencies=[Depends(admin)])
-    def connection(): return {"url": config.public_url, "certificate_sha256": config.certificate_sha256}
+    def connection():
+        result = {"url": config.public_url}
+        if config.public_tls_mode == "pinned": result["certificate_sha256"] = config.certificate_sha256
+        return result
 
     @app.post("/v1/admin/pairing-tickets", dependencies=[Depends(admin)])
     def ticket():
