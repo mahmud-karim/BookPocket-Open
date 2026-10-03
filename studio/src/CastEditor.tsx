@@ -229,9 +229,9 @@ export function CastEditor({
                       x.id === c.id
                         ? {
                             ...x,
-                            aliases: e.target.value
-                              .split(",")
-                              .map((a) => a.trim()),
+                            aliases: e.target.value.trim()
+                              ? e.target.value.split(",").map((a) => a.trim())
+                              : [],
                           }
                         : x,
                     ),
