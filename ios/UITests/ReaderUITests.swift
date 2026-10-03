@@ -19,6 +19,10 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Pause"), object: speak)], timeout: 20), .completed)
         app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
         XCTAssertTrue(app.buttons["listen.chapters"].waitForExistence(timeout: 10))
+        let play = app.buttons["player.full.toggle"]
+        XCTAssertEqual(play.value as? String, "Playing")
+        play.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Paused"), object: play)], timeout: 10), .completed)
         assertListenFits(app, name: "Obsidian Listen portrait before chapter selection")
         let position = app.buttons["player.full.toggle"].frame
         app.swipeUp()
@@ -29,7 +33,6 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(chapter.exists && chapter.isHittable); chapter.tap()
         let selected = app.buttons["listen.chapters"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Across the Bridge"), object: selected)], timeout: 20), .completed)
-        let play = app.buttons["player.full.toggle"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: play)], timeout: 15), .completed)
         assertListenFits(app, name: "Obsidian Listen selected chapter")
         play.tap()
