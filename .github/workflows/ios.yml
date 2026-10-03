@@ -72,12 +72,14 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testListenFitsOneScreenAndSelectsChapters \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 180 -resultBundlePath artifacts/CompactListen.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
           # A typo in a filtered test name must never pass without exercising the UI.
           grep -E 'Test Case.*testListenFitsOneScreenAndSelectsChapters.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testLargestDynamicTypeKeepsListenAndReaderControlsUsable.*passed' artifacts/compact-tests.log
       - name: Capture compact Listen evidence
         if: always()
         run: |

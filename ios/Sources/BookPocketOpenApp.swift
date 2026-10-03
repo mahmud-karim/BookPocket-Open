@@ -37,6 +37,13 @@ import SwiftUI
             .tint(Obsidian.accent)
             .preferredColorScheme(theme == "system" ? nil : theme == "light" ? .light : .dark)
             .environment(library).environment(player).environment(companion)
+            .overlay(alignment: .topLeading) {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--content-size-probe") {
+                    UITestContentSizeProbe().frame(width: 1, height: 1).allowsHitTesting(false)
+                }
+                #endif
+            }
             .task {
                 #if DEBUG
                 if UITestTransportFixture.enabled && !installedTransportFixture {
@@ -68,8 +75,10 @@ import SwiftUI
                 }
                 .buttonStyle(.plain).accessibilityLabel("Open player for \(player.title)")
                 .accessibilityIdentifier("player.mini.open")
-                Button(player.isPlaying ? "Pause narration" : "Resume narration", systemImage: player.isPlaying ? "pause.fill" : "play.fill") { player.toggle() }
-                    .labelStyle(.iconOnly).frame(width: 44, height: 44)
+                Button { player.toggle() } label: {
+                    Label(player.isPlaying ? "Pause narration" : "Resume narration", systemImage: player.isPlaying ? "pause.fill" : "play.fill")
+                        .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                }
                     .accessibilityIdentifier("player.mini.toggle")
                     .accessibilityValue(player.isPlaying ? "Playing" : "Paused")
             }

@@ -29,6 +29,7 @@ struct ReaderView: View {
     @Environment(PlaybackController.self) private var player
     @Environment(CompanionStore.self) private var companion
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var panel: ReaderPanel?
     @State private var query = ""
     @State private var contentsError: String?
@@ -71,15 +72,27 @@ struct ReaderView: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack {
-                    Button("Previous page", systemImage: "chevron.left") { Task { await model.navigator?.goBackward() } }.labelStyle(.iconOnly).frame(width: 44, height: 44)
+                    Button { Task { await model.navigator?.goBackward() } } label: {
+                        Label("Previous page", systemImage: "chevron.left").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                    }.accessibilityIdentifier("reader.previous")
                     Spacer()
                     Button {
                         if player.bookID == model.bookID { player.toggle(); model.connectPlayback(player) }
                         else { speakOnDevice() }
-                    } label: { Label(player.isPlaying && player.bookID == model.bookID ? "Pause" : player.bookID == model.bookID ? "Resume" : "Read aloud", systemImage: player.isPlaying && player.bookID == model.bookID ? "pause.fill" : "headphones") }
+                    } label: {
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                Label(player.isPlaying && player.bookID == model.bookID ? "Pause" : player.bookID == model.bookID ? "Resume" : "Read aloud", systemImage: player.isPlaying && player.bookID == model.bookID ? "pause.fill" : "headphones").labelStyle(.iconOnly)
+                            } else {
+                                Label(player.isPlaying && player.bookID == model.bookID ? "Pause" : player.bookID == model.bookID ? "Resume" : "Read aloud", systemImage: player.isPlaying && player.bookID == model.bookID ? "pause.fill" : "headphones")
+                            }
+                        }.frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                    }
                     .accessibilityIdentifier("reader.speak")
                     Spacer()
-                    Button("Next page", systemImage: "chevron.right") { Task { await model.navigator?.goForward() } }.labelStyle(.iconOnly).frame(width: 44, height: 44)
+                    Button { Task { await model.navigator?.goForward() } } label: {
+                        Label("Next page", systemImage: "chevron.right").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                    }.accessibilityIdentifier("reader.next")
                 }.padding(.horizontal).background(Obsidian.surface)
             }
             .task { await model.load(); if player.bookID == model.bookID { model.connectPlayback(player); if let locator = player.speechLocator { model.follow(locator) } } }

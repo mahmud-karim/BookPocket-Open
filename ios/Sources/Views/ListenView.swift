@@ -92,9 +92,11 @@ struct ListenView: View {
                     .accessibilityLabel("Audio position").accessibilityIdentifier("listen.position")
                 HStack {
                     Text(Duration.seconds(player.elapsed).formatted(.time(pattern: .minuteSecond)))
+                        .accessibilityLabel("Elapsed time").accessibilityValue(Duration.seconds(player.elapsed).formatted(.time(pattern: .minuteSecond)))
                         .accessibilityIdentifier("listen.elapsed")
                     Spacer()
                     Text(Duration.seconds(player.duration).formatted(.time(pattern: .minuteSecond)))
+                        .accessibilityLabel("Total duration").accessibilityValue(Duration.seconds(player.duration).formatted(.time(pattern: .minuteSecond)))
                         .accessibilityIdentifier("listen.duration")
                 }.font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
             }

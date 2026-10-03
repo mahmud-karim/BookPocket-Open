@@ -2,6 +2,69 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testLargestDynamicTypeKeepsListenAndReaderControlsUsable() {
+        executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--offline-transport-fixture", "--content-size-probe", "-playbackRate", "1",
+            "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let probe = app.descendants(matching: .any).matching(identifier: "test.content-size").firstMatch
+        let expected = "UIKit=\(UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue); SwiftUI=accessibility5"
+        let actualTrait = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: probe)
+        guard XCTWaiter.wait(for: [actualTrait], timeout: 30) == .completed else {
+            XCTFail("Largest Dynamic Type must actually reach UIKit and SwiftUI; observed \(String(describing: probe.value))")
+            return
+        }
+        let traitEvidence = XCTAttachment(string: (probe.value as? String) ?? "Missing actual trait")
+        traitEvidence.name = "Verified native and SwiftUI accessibility text size"; traitEvidence.lifetime = .keepAlways; add(traitEvidence)
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.buttons["listen.downloads"].tap()
+        let recording = app.buttons["listen.download.transport-job"]
+        XCTAssertTrue(recording.waitForExistence(timeout: 10)); recording.tap()
+        let play = app.buttons["player.full.toggle"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertEqual(play.value as? String, "Playing"); play.tap()
+        XCTAssertEqual(play.value as? String, "Paused")
+        XCTAssertEqual(app.staticTexts["listen.elapsed"].label, "Elapsed time")
+        XCTAssertEqual(app.staticTexts["listen.duration"].label, "Total duration")
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 90)
+        XCTAssertEqual(app.sliders["listen.position"].label, "Audio position")
+        XCTAssertEqual(app.buttons["listen.chapters"].label, "Chapters")
+        assertDownloadedListenFits(app, name: "Obsidian largest Dynamic Type portrait")
+        XCTAssertLessThanOrEqual(app.buttons["listen.chapters"].frame.maxY, app.sliders["listen.position"].frame.minY)
+        XCTAssertLessThanOrEqual(play.frame.maxY, app.buttons["listen.speed"].frame.minY)
+        XCTAssertLessThanOrEqual(play.frame.maxY, app.buttons["listen.sleep"].frame.minY)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
+        assertDownloadedListenFits(app, name: "Obsidian largest Dynamic Type landscape")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
+        app.tabBars.buttons["Library"].tap()
+        assertMiniPlayerAboveTabs(in: app)
+        assertMinimumHitArea(app.buttons["player.mini.toggle"])
+        let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 10)); book.tap()
+        XCTAssertTrue(waitForReaderContents(app))
+        for (id, label) in [("reader.previous", "Previous page"), ("reader.next", "Next page"), ("reader.speak", "Resume")] {
+            let button = app.buttons[id]
+            XCTAssertEqual(button.label, label)
+            assertMinimumHitArea(button)
+        }
+        XCTAssertLessThanOrEqual(app.buttons["reader.previous"].frame.maxX, app.buttons["reader.speak"].frame.minX)
+        XCTAssertLessThanOrEqual(app.buttons["reader.speak"].frame.maxX, app.buttons["reader.next"].frame.minX)
+        let paragraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
+        assertVisibleInk(in: paragraph)
+        let reader = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        reader.name = "Obsidian reader controls at verified accessibility size"; reader.lifetime = .keepAlways; add(reader)
+    }
+
+    private func assertMinimumHitArea(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(element.exists && element.isHittable, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(element.frame.width + 0.001, 44, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(element.frame.height + 0.001, 44, file: file, line: line)
+        XCTAssertTrue(XCUIApplication().frame.contains(element.frame), file: file, line: line)
+    }
+
     func testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters() {
         executionTimeAllowance = 240
         let app = XCUIApplication()
@@ -96,9 +159,10 @@ final class ReaderUITests: XCTestCase {
         app.buttons["Done"].tap()
     }
 
-    private func audioSeconds(_ label: XCUIElement) -> Double {
-        let components = label.label.split(separator: ":").compactMap { Double($0) }
-        guard components.count == 2 else { XCTFail("Expected an actual minute:second playback value, received \(label.label)"); return -.infinity }
+    private func audioSeconds(_ element: XCUIElement) -> Double {
+        let value = (element.value as? String) ?? element.label
+        let components = value.split(separator: ":").compactMap { Double($0) }
+        guard components.count == 2 else { XCTFail("Expected an actual minute:second playback value, received \(value)"); return -.infinity }
         return components[0] * 60 + components[1]
     }
 
