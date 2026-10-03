@@ -25,11 +25,18 @@ final class ReaderUITests: XCTestCase {
         let position = app.sliders["listen.position"]
         XCTAssertTrue(position.exists && position.isHittable)
         position.adjust(toNormalizedSliderPosition: 0.5)
-        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), 45, accuracy: 3)
+        // XCTest's slider gesture is best effort. Verify its actual result and
+        // the player binding, then measure exact skips from that real position.
+        let soughtSeconds = audioSeconds(app.staticTexts["listen.elapsed"])
+        XCTAssertGreaterThanOrEqual(soughtSeconds, 30)
+        XCTAssertLessThanOrEqual(soughtSeconds, 60)
+        XCTAssertEqual(Double(position.normalizedSliderPosition) * 90, soughtSeconds, accuracy: 1, "Slider accessibility position must agree with the actual elapsed time")
+        let seekEvidence = XCTAttachment(string: "Elapsed: \(soughtSeconds)s; slider value: \(String(describing: position.value)); normalized: \(position.normalizedSliderPosition)")
+        seekEvidence.name = "Actual offline audio seek position"; seekEvidence.lifetime = .keepAlways; add(seekEvidence)
         app.buttons["listen.backward"].tap()
-        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), 30, accuracy: 3)
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), soughtSeconds - 15, accuracy: 1)
         app.buttons["listen.forward"].tap()
-        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), 45, accuracy: 3)
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), soughtSeconds, accuracy: 1)
         app.buttons["listen.speed"].tap()
         XCTAssertTrue(app.buttons["1.5×"].waitForExistence(timeout: 5)); app.buttons["1.5×"].tap()
         XCTAssertEqual(app.buttons["listen.speed"].value as? String, "1.5×")
@@ -48,7 +55,7 @@ final class ReaderUITests: XCTestCase {
         play.tap()
         XCTAssertEqual(play.value as? String, "Paused")
         XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 120)
-        XCTAssertLessThan(audioSeconds(app.staticTexts["listen.elapsed"]), 15, "Chapter selection must start at its beginning, not the preceding 45-second position")
+        XCTAssertLessThan(audioSeconds(app.staticTexts["listen.elapsed"]), 15, "Chapter selection must start at its beginning, not the preceding seek position")
         XCTAssertEqual(app.buttons["listen.speed"].value as? String, "1.5×")
         assertDownloadedListenFits(app, name: "Obsidian offline transport selected chapter")
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -56,6 +63,9 @@ final class ReaderUITests: XCTestCase {
         assertDownloadedListenFits(app, name: "Obsidian offline transport tone landscape")
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
+        let pausedSeconds = audioSeconds(app.staticTexts["listen.elapsed"])
+        let pausedSliderPosition = position.normalizedSliderPosition
+        XCTAssertEqual(play.value as? String, "Paused")
         app.tabBars.buttons["Studio"].tap()
         XCTAssertTrue(app.buttons["studio.primary"].waitForExistence(timeout: 10))
         XCTAssertEqual(playbackMiniState(app), "Paused")
@@ -64,6 +74,8 @@ final class ReaderUITests: XCTestCase {
         app.tabBars.buttons["Listen"].tap()
         XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 120)
         XCTAssertEqual(play.value as? String, "Paused")
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), pausedSeconds, "Switching tabs must preserve the paused audio position")
+        XCTAssertEqual(position.normalizedSliderPosition, pausedSliderPosition, accuracy: 0.0001)
     }
 
     private func audioSeconds(_ label: XCUIElement) -> Double {
