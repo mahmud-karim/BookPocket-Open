@@ -102,7 +102,7 @@ import UIKit
     func navigator(_ navigator: Navigator, locationDidChange locator: Locator) { location = locator; library.saveLocation(bookID, locator: locator) }
     func navigator(_ navigator: any ViewportObservingNavigator, viewportDidChange viewport: NavigatorViewport?) {
         // Opening readiness is sticky; transient page turns must not rebuild an open toolbar menu.
-        if viewport != nil { pageReady = true }
+        if viewport != nil && !pageReady { pageReady = true }
     }
     func navigator(_ navigator: Navigator, presentError error: NavigatorError) { self.error = String(describing: error) }
 }
