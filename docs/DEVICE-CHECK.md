@@ -14,6 +14,8 @@ Launch the installed Windows companion with the phone and PC on the same network
 
 Generate the short original fixture on the PC. Download the book and completed narration to the phone. Interrupt a download once, relaunch, and retry it; completed verified files should be reused. Disconnect the PC and enable airplane mode. Confirm downloaded narration still plays and highlights the original source. Legacy recordings must retain their no-synchronized-text label.
 
+With iOS 0.1.7 or later, export a short completed production as a project on the PC and import it on the phone. Repeat the import; the original book and take should not duplicate. Confirm existing downloaded recordings still play. If an import fails or is interrupted, retry the same archive and check that no incomplete take becomes playable. A validated original book may remain available to read after the audio import fails. This phone check is separate from the automated corrupt-file and database-failure tests.
+
 ## Reader page and chapter narration
 
 With iOS 0.1.4 or later and PC Companion 0.1.1 or later, keep the paired PC and its external OmniVoice service running. Open a text page and choose the reader's waveform-plus menu → **Generate current page**. Compare the preview with the visible words, including a paragraph that continues onto the next screen. Generate with the uniquely named Kyon profile and confirm the downloaded result uses that voice and highlights the same source.

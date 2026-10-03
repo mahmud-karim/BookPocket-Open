@@ -1,0 +1,30 @@
+name: Fresh Windows Kokoro setup
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fresh-windows-kokoro-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  published-installer:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install published 0.1.3 and validate cold Kokoro setup under owned watchdog
+        shell: pwsh
+        run: |
+          python -I scripts/smoke_windows_model_setup.py --hosted --report artifacts/fresh-windows-kokoro.json
+          if ($LASTEXITCODE) { throw 'Fresh hosted model setup gate failed; see sanitized report' }
+      - name: Preserve only sanitized measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-windows-kokoro-sanitized
+          path: artifacts/fresh-windows-kokoro.json
+          if-no-files-found: error
+          retention-days: 7
