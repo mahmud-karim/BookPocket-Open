@@ -27,6 +27,8 @@ Kokoro supplies real model token timing. Pronunciation replacement maps that tim
 
 Queue changes are transactional. Recovery returns interrupted running jobs to the queue. Completed segments are reused only after checksum validation. Cancellation prevents publishing newly completed audio to the cancelled job. Model package versions and downloaded snapshot commits are recorded in the readiness marker and incorporated into cache identities.
 
+Render scratch folders use a UUID prefix, a matching SQLite ownership record, and an operating-system lease on their marker. Before restarting the queue, the companion removes abandoned scratch files only when all ownership checks pass. Cleanup never recurses: unknown entries, indexed audio paths, symbolic links, junctions, and active leases preserve the whole folder. Old unmarked `tmp*` folders are left intact because this version cannot prove their ownership. Books, pairing records, durable audio, and job history are not cleanup targets.
+
 Optional VoiceStudio integration uses its public `/v1/audio/voices` and `/v1/audio/speech` endpoints with the explicit `omnivoice` engine. It exposes real profiles, not OpenAI aliases. VoiceStudio is separately installed; its implementation is not bundled. OmniVoice weights are noncommercial.
 
 | Component | License / distribution |

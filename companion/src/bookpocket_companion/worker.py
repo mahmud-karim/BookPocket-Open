@@ -2,7 +2,6 @@ import json
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -10,6 +9,7 @@ import wave
 from pathlib import Path
 from .store import canonical, digest, now
 from .models import validate_source_ranges
+from .render_workspace import render_workspace, cleanup_abandoned_renders
 
 def sentences(text):
     # Python string offsets count Unicode scalars, matching the wire contract.
@@ -62,6 +62,7 @@ class Worker:
         self.thread = None
 
     def start(self):
+        cleanup_abandoned_renders(self.store)
         with self.store.db() as db:
             for row in db.execute("SELECT id,data FROM jobs").fetchall():
                 job = json.loads(row["data"])
@@ -173,8 +174,7 @@ class Worker:
             self.update(job_id, lambda j: j.update(status="failed", finished_at=now(), error=str(exc)[:2000]), {"running"})
 
     def render(self, engine, voice, segment, request, announce, key, job_id, selected_range=None):
-        with tempfile.TemporaryDirectory(dir=self.store.root / "assets") as temporary:
-            temp = Path(temporary)
+        with render_workspace(self.store, job_id, segment["id"]) as temp:
             final = temp / "joined.wav"
             timings, cursor, word_aligned = [], 0.0, True
             parts = [(None, None, announce, voice)] if announce else []
