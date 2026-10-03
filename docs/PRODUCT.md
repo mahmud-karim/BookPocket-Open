@@ -17,7 +17,10 @@ A professional open-source offline iPhone/iPad reader and optional Windows audio
 ## Design
 Obsidian: deep charcoal with champagne accent, book-forward hierarchy, clean sans-serif controls, comfortable serif reading, restrained waveforms and dividers. Dark default and coordinated light theme; reading surface can be dark, cream, or white independently. No mock analytics, decorative AI sparkle buttons, unnecessary captions, or implementation jargon. Library / Listen / Studio navigation; immersive reader hides tabs. Desktop follows same palette with a persistent sidebar and compact player.
 
+The reader combines the book and player. **Read aloud** opens narrator selection without starting playback: **On-device**, **Kyon**, or **Full cast**. On-device speech is immediately available. PC narration controls stay disabled until a verified take for the selected narrator and current source location is ready. **Generate** first asks for **Current page** or **Current chapter**; full cast uses the saved reviewed cast. Generation continues independently of dismissing the player panel, and downloaded matching takes remain playable offline.
+
 ## Delivery gates
+
 Linux/Windows tests, real installed Windows workflow, macOS simulator unit/UI tests and inspected screenshots, unsigned device ARM64 IPA with verified published checksum. Real iPhone installation, Keychain, import, Bluetooth/interruption handling, and one-hour screen-locked playback remain explicit device gates, never silently claimed. Full-book interrupted render must produce complete nonduplicated output. Public CI cannot execute untrusted PR code on the user's PC or access private credentials.
 
 ## Milestones
@@ -26,4 +29,3 @@ Linux/Windows tests, real installed Windows workflow, macOS simulator unit/UI te
 3. Paired PC, real voice generation, downloaded aligned playback.
 4. Complete v1 durable book rendering, desktop installation, exports, migration, real tests.
 5. Full cast with analysis, review, per-span casting and repair.
-

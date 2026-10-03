@@ -103,7 +103,8 @@ struct GenerationView: View {
                         plan.append(NarrationSpan(segmentId: assignment.segmentId, startOffset: assignment.startOffset, endOffset: assignment.endOffset, voiceId: assignedVoice))
                     }
                 }
-                try await companion.generate(book: book, segments: ids, voice: narrator, rules: rules, announce: announce, cast: cast.isEmpty ? nil : cast.filter { ids.contains($0.key) }, narrationPlan: plan.isEmpty ? nil : plan, takeID: takeID)
+                let selectedCast = cast.filter { ids.contains($0.key) }
+                try await companion.generate(book: book, segments: ids, voice: narrator, rules: rules, announce: announce, cast: selectedCast.isEmpty ? nil : selectedCast, narrationPlan: plan.isEmpty ? nil : plan, takeID: takeID, narrationMode: useCast || !selectedCast.isEmpty ? "full_cast" : "single")
                 dismiss()
             } catch { self.error = error.localizedDescription }
             busy = false

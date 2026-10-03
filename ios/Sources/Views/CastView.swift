@@ -42,6 +42,9 @@ private struct CastDraftView: View {
                     }
                 }
                 Section("Characters") {
+                    if !draft.value.characters.contains(where: { $0.id == "narrator" }) {
+                        Button("Add narrator", systemImage: "person.wave.2") { draft.value.characters.append(.init(id: "narrator", name: "Narrator", aliases: [], voiceId: nil)) }
+                    }
                     ForEach($draft.value.characters) { $character in
                         VStack(alignment: .leading, spacing: 8) {
                             TextField("Character name", text: $character.name)

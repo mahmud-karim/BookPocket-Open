@@ -27,6 +27,15 @@ enum ProjectImportValidation {
             let selection = job.sourceRanges?.first { $0.segmentId == asset.segmentId }
             let start = selection?.startOffset ?? 0
             let end = selection?.endOffset ?? segment.text.unicodeScalars.count
+            if let mode = asset.narrationMode, !["single", "full_cast"].contains(mode) { throw invalid }
+            if let mode = asset.narrationMode, let expected = job.narrationMode, mode != expected { throw invalid }
+            if asset.narrationMode == "single", asset.castSpans?.isEmpty == false { throw invalid }
+            var castEnd = start
+            for span in (asset.castSpans ?? []).sorted(by: { $0.startOffset < $1.startOffset }) {
+                guard span.segmentId == segment.id, !span.voiceId.isEmpty, span.startOffset >= castEnd,
+                      span.endOffset > span.startOffset, span.endOffset <= end else { throw invalid }
+                castEnd = span.endOffset
+            }
             for timing in asset.timings {
                 guard timing.start.isFinite, timing.end.isFinite, timing.start >= 0,
                       timing.end > timing.start, timing.end <= asset.duration + 0.05,
@@ -38,10 +47,15 @@ enum ProjectImportValidation {
 
     static func sameAudioIdentity(_ left: AudioAsset, _ right: AudioAsset) throws -> Bool {
         // A URL is a transport address, not part of the immutable recording.
-        var normalized = right
+        var original = left, normalized = right
         normalized.url = left.url
         normalized.sha256 = left.sha256
         guard left.sha256.lowercased() == right.sha256.lowercased() else { return false }
-        return try CompanionClient.encoder.encode(left) == CompanionClient.encoder.encode(normalized)
+        // Older clients did not retain these optional provenance fields. Missing
+        // metadata means unknown, not a contradictory empty cast or single mode.
+        // Known values on both sides remain immutable, as do all source/audio data.
+        if original.narrationMode == nil || normalized.narrationMode == nil { original.narrationMode = nil; normalized.narrationMode = nil }
+        if original.castSpans == nil || normalized.castSpans == nil { original.castSpans = nil; normalized.castSpans = nil }
+        return try CompanionClient.encoder.encode(original) == CompanionClient.encoder.encode(normalized)
     }
 }

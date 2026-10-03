@@ -24,6 +24,15 @@ enum RangedAudioValidation {
             guard let range = ranges.first(where: { $0.segmentId == asset.segmentId }),
                   asset.sourceStart == range.startOffset, asset.sourceEnd == range.endOffset,
                   asset.duration.isFinite, asset.duration > 0, asset.bytes > 0 else { throw invalid }
+            if let mode = asset.narrationMode, let expected = job.narrationMode, mode != expected { throw invalid }
+            let declared = job.narrationPlan?.filter { $0.segmentId == asset.segmentId }
+            if let declared, (asset.castSpans ?? []) != declared { throw invalid }
+            var end = range.startOffset
+            for span in (asset.castSpans ?? []).sorted(by: { $0.startOffset < $1.startOffset }) {
+                guard span.segmentId == asset.segmentId, span.startOffset >= end,
+                      span.endOffset > span.startOffset, span.endOffset <= range.endOffset else { throw invalid }
+                end = span.endOffset
+            }
             for timing in asset.timings {
                 guard timing.start.isFinite, timing.end.isFinite, timing.start >= 0, timing.end > timing.start,
                       timing.end <= asset.duration + 0.05,

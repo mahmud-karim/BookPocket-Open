@@ -76,6 +76,8 @@ struct AudioAsset: Codable, Identifiable {
     var timings: [AudioTiming]
     var sourceStart: Int?
     var sourceEnd: Int?
+    var narrationMode: String? = nil
+    var castSpans: [NarrationSpan]? = nil
 }
 struct RemoteJob: Codable, Identifiable {
     var id: String
@@ -91,6 +93,10 @@ struct RemoteJob: Codable, Identifiable {
     var assets: [AudioAsset]
     var createdAt: String?
     var sourceRanges: [SourceRange]?
+    var narrationMode: String? = nil
+    var narrationPlan: [NarrationSpan]? = nil
+    var cast: [String: String]? = nil
+    var voiceName: String? = nil
 }
 struct PronunciationRule: Codable, Identifiable {
     var term: String
@@ -111,6 +117,7 @@ struct GenerationRequest: Codable {
     var narrationPlan: [NarrationSpan]?
     var takeId: String?
     var sourceRanges: [SourceRange]?
+    var narrationMode: String? = nil
 }
 struct SourceRange: Codable, Equatable {
     var segmentId: String
@@ -136,7 +143,7 @@ struct BookCast: Codable, Equatable {
     var characters: [CastCharacter] = []
     var assignments: [CastAssignment] = []
 }
-struct NarrationSpan: Codable {
+struct NarrationSpan: Codable, Equatable {
     var segmentId: String
     var startOffset: Int
     var endOffset: Int

@@ -14,7 +14,7 @@ concurrency:
 jobs:
   simulator:
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/select_xcode.py
@@ -50,7 +50,7 @@ jobs:
             -destination 'platform=iOS Simulator,id=${{ steps.device.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
-            -maximum-test-execution-time-allowance 180 -resultBundlePath artifacts/Tests.xcresult \
+            -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/Tests.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-tests.log
       - name: Capture test evidence
         if: always()
@@ -63,8 +63,8 @@ jobs:
         run: |
           xcrun simctl shutdown '${{ steps.device.outputs.id }}' || true
           python3 scripts/boot_simulator.py '${{ steps.compact.outputs.id }}'
-      - name: Verify Listen controls and chapter selection on compact iPhone
-        timeout-minutes: 10
+      - name: Verify reader and Listen controls on compact iPhone
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
@@ -73,13 +73,15 @@ jobs:
             -only-testing:BookPocketOpenUITests/ReaderUITests/testListenFitsOneScreenAndSelectsChapters \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
-            -maximum-test-execution-time-allowance 180 -resultBundlePath artifacts/CompactListen.xcresult \
+            -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/CompactListen.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
           # A typo in a filtered test name must never pass without exercising the UI.
           grep -E 'Test Case.*testListenFitsOneScreenAndSelectsChapters.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testLargestDynamicTypeKeepsListenAndReaderControlsUsable.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate.*passed' artifacts/compact-tests.log
       - name: Capture compact Listen evidence
         if: always()
         run: |

@@ -32,6 +32,11 @@ import ReadiumZIPFoundation
     }
     @ObservationIgnored private var verifiedFiles: [String: VerifiedFile] = [:]
     @ObservationIgnored private var castDrafts: [String: CastDraft] = [:]
+    @ObservationIgnored private var readerPlayers: [String: ReaderPlayerState] = [:]
+    func readerPlayer(for bookID: String) -> ReaderPlayerState {
+        if let existing = readerPlayers[bookID] { return existing }
+        let value = ReaderPlayerState(); readerPlayers[bookID] = value; return value
+    }
     func castDraft(for bookID: String) -> CastDraft {
         if let draft = castDrafts[bookID] { return draft }
         let draft = CastDraft(); castDrafts[bookID] = draft; return draft
@@ -118,7 +123,11 @@ import ReadiumZIPFoundation
             engines = result.0.engines; voices = result.1.voices
             let downloadedJobIDs = Set(downloads.map(\.jobID))
             let remoteJobIDs = Set(result.2.jobs.map(\.id))
-            jobs = result.2.jobs + jobs.filter { downloadedJobIDs.contains($0.id) && !remoteJobIDs.contains($0.id) }
+            jobs = (result.2.jobs + jobs.filter { downloadedJobIDs.contains($0.id) && !remoteJobIDs.contains($0.id) }).map { job in
+                var updated = job
+                if updated.voiceName == nil { updated.voiceName = voices.first { $0.id == job.voiceId && $0.engine == job.engine }?.name }
+                return updated
+            }
             let neededBookIDs = Set(jobs.map(\.bookId))
             let remoteBookIDs = Set(result.3.books.map(\.id))
             books = result.3.books + books.filter { neededBookIDs.contains($0.id) && !remoteBookIDs.contains($0.id) }
@@ -160,8 +169,8 @@ import ReadiumZIPFoundation
         var updated = library.book(local.id) ?? local; updated.companionBookID = remote.id; library.update(updated)
         try persist(); return remote
     }
-    @discardableResult func generate(book: RemoteBook, segments: [String], voice: RemoteVoice, rules: [PronunciationRule], announce: Bool, cast: [String: String]? = nil, narrationPlan: [NarrationSpan]? = nil, takeID: String? = nil, sourceRanges: [SourceRange]? = nil) async throws -> RemoteJob {
-        let request = GenerationRequest(requestId: UUID().uuidString.lowercased(), bookId: book.id, segmentIds: segments, engine: voice.engine, voiceId: voice.id, language: book.language, pronunciationRules: rules, announceChapters: announce, cast: cast, narrationPlan: narrationPlan, takeId: takeID, sourceRanges: sourceRanges)
+    @discardableResult func generate(book: RemoteBook, segments: [String], voice: RemoteVoice, rules: [PronunciationRule], announce: Bool, cast: [String: String]? = nil, narrationPlan: [NarrationSpan]? = nil, takeID: String? = nil, sourceRanges: [SourceRange]? = nil, narrationMode: String? = nil) async throws -> RemoteJob {
+        let request = GenerationRequest(requestId: UUID().uuidString.lowercased(), bookId: book.id, segmentIds: segments, engine: voice.engine, voiceId: voice.id, language: book.language, pronunciationRules: rules, announceChapters: announce, cast: cast, narrationPlan: narrationPlan, takeId: takeID, sourceRanges: sourceRanges, narrationMode: narrationMode)
         for existing in pendingRequests {
             var comparison = request
             comparison.requestId = existing.requestId
@@ -177,6 +186,14 @@ import ReadiumZIPFoundation
         struct Health: Decodable { var capabilities: [String]? }
         let health: Health = try await client.send("/v1/health")
         guard health.capabilities?.contains("source_ranges") == true else { throw BookError.message("Update PC Companion to a version supporting exact source ranges, then reconnect. This PC cannot safely generate only the selected page.") }
+    }
+    func requireSourceRangeCast() async throws {
+        guard let client else { throw BookError.message("Pair your PC companion in Studio first.") }
+        struct Health: Decodable { var capabilities: [String]? }
+        let health: Health = try await client.send("/v1/health")
+        guard health.capabilities?.contains("source_ranges_cast") == true else {
+            throw BookError.message("Update PC Companion to support the reader's narrator choices and exact Full cast selections, then refresh.")
+        }
     }
     func refreshJob(_ id: String) async throws -> RemoteJob {
         guard let client else { throw BookError.message("Reconnect your paired PC to refresh this narration.") }
@@ -211,8 +228,16 @@ import ReadiumZIPFoundation
     @discardableResult func submit(_ request: GenerationRequest) async throws -> RemoteJob {
         guard let client else { throw BookError.message("Pair your PC companion first.") }
         if request.sourceRanges?.isEmpty == false { try await requireSourceRanges() }
+        if request.narrationMode != nil || (request.sourceRanges?.isEmpty == false && request.narrationPlan?.isEmpty == false) { try await requireSourceRangeCast() }
         let job: RemoteJob = try await client.send("/v1/jobs", method: "POST", body: CompanionClient.encoder.encode(request))
         if let ranges = request.sourceRanges, !ranges.isEmpty, job.sourceRanges != ranges { throw BookError.message("The PC did not confirm the exact source ranges. Update PC Companion before retrying this request.") }
+        if let mode = request.narrationMode, job.narrationMode != mode { throw BookError.message("The PC did not confirm your narrator choice. Update PC Companion before retrying this request.") }
+        if request.narrationMode != nil {
+            guard job.bookId == request.bookId, job.engine == request.engine, job.voiceId == request.voiceId,
+                  job.segmentIds == request.segmentIds, (job.narrationPlan ?? []) == (request.narrationPlan ?? []) else {
+                throw BookError.message("The PC did not confirm the selected voices and passages. Refresh the companion before retrying this request.")
+            }
+        }
         jobs.removeAll { $0.id == job.id }; jobs.insert(job, at: 0)
         pendingRequests.removeAll { $0.requestId == request.requestId }
         try persist()
@@ -222,6 +247,7 @@ import ReadiumZIPFoundation
         do {
             guard let client, ["pause", "resume", "retry", "cancel"].contains(action) else { return false }
             if job.sourceRanges?.isEmpty == false && ["resume", "retry"].contains(action) { try await requireSourceRanges() }
+            if ["resume", "retry"].contains(action) && (job.narrationMode != nil || (job.sourceRanges?.isEmpty == false && job.narrationPlan?.isEmpty == false)) { try await requireSourceRangeCast() }
             let updated: RemoteJob = try await client.send("/v1/jobs/\(job.id)/\(action)", method: "POST")
             jobs.removeAll { $0.id == job.id }; jobs.insert(updated, at: 0); try persist()
             return true
@@ -423,7 +449,7 @@ import ReadiumZIPFoundation
     }
     func takeDescription(jobID: String) -> String {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return "Available offline" }
-        let voice = voices.first { $0.id == job.voiceId }?.name ?? "Narration"
+        let voice = job.voiceName ?? voices.first { $0.id == job.voiceId }?.name ?? "Narration"
         let fractional = ISO8601DateFormatter(); fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let date = job.createdAt.flatMap { fractional.date(from: $0) ?? ISO8601DateFormatter().date(from: $0) }
         return voice + (date.map { " · " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "")

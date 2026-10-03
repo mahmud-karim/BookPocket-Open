@@ -16,6 +16,10 @@ import Foundation
         var local = try await library.importBook(source)
         local.title = "Transport tone fixture — not speech"
         library.update(local)
+        if ProcessInfo.processInfo.arguments.contains("--reader-player-fixture") {
+            try installReaderTakes(local: local, companion: companion)
+            return
+        }
         let titles = ["Tone one — 90 seconds", "Tone two — 120 seconds", "Unavailable tone"]
         let segments = titles.enumerated().map { index, title in
             RemoteSegment(id: "transport-segment-\(index)", text: title, kind: "test-only-tone", locator: .object([:]))
@@ -51,6 +55,36 @@ import Foundation
         companion.books = [remote, other]
         companion.jobs = [first, second, excerpt, otherJob]
         companion.downloads = records
+    }
+
+    /// Exact original EPUB text, with test-only transport recordings. Voice/mode
+    /// snapshots exercise offline classification, never an installed engine or TTS.
+    private static func installReaderTakes(local: LocalBook, companion: CompanionStore) throws {
+        let text = [
+            ["The Lantern", "Mira opened the brass lantern. A small blue light filled the room.", "“Can you hear me?” she asked. The answer arrived with a chime: “Yes, Mira.”", "A compass 🧭 pointed north; café bells sounded beyond the window."],
+            ["Across the Bridge", "At dawn, Mira crossed the bridge. Below her, the river carried leaves toward the sea.", "“We have time,” said Rowan. “Then let us walk,” Mira replied.", "The lantern dimmed, but its light never disappeared."]
+        ]
+        let chapters = text.enumerated().map { index, passages in
+            RemoteChapter(id: "reader-chapter-\(index)", title: passages[0], href: "EPUB/chapter\(index + 1).xhtml", segments: passages.enumerated().map { offset, text in
+                RemoteSegment(id: "reader-source-\(index)-\(offset)", text: text, kind: offset == 0 ? "heading" : "paragraph", locator: .object(["href": .string("EPUB/chapter\(index + 1).xhtml"), "type": .string("application/xhtml+xml"), "text": .object(["highlight": .string(text)])]))
+            })
+        }
+        let book = RemoteBook(id: "reader-tone-book", title: local.title, author: "Original transport fixture", language: "en", sourceSha256: local.sourceSHA256, chapters: chapters)
+        var jobs: [RemoteJob] = [], records: [DownloadRecord] = []
+        for (index, chapter) in chapters.enumerated() {
+            let mode = index == 0 ? "single" : "full_cast"
+            let data = tone(seconds: index == 0 ? 90 : 120, frequency: index == 0 ? 220 : 330)
+            let file = "reader-tone-\(index).wav"; try data.write(to: companion.root.appendingPathComponent(file), options: .atomic)
+            let assets = chapter.segments.map { segment in
+                AudioAsset(id: "reader-tone-" + segment.id, segmentId: segment.id, mediaType: "audio/wav", duration: index == 0 ? 90 : 120, sha256: SourceIdentity.hash(data), bytes: data.count, url: "/explicit-test-tone-not-speech", timings: [], narrationMode: mode, castSpans: [])
+            }
+            let job = RemoteJob(id: "reader-tone-job-\(index)", bookId: book.id, status: "completed", engine: "voicestudio", voiceId: "test-only-voice-snapshot-not-an-installed-voice", segmentIds: chapter.segments.map(\.id), completedSegments: assets.count, totalSegments: assets.count, assets: assets, createdAt: "2026-01-01T00:00:00Z", narrationMode: mode, narrationPlan: [], voiceName: "Kyon")
+            jobs.append(job)
+            for (asset, segment) in zip(assets, chapter.segments) { records.append(.init(localBookID: local.id, jobID: job.id, asset: asset, file: file, segment: segment)) }
+        }
+        var otherBook = book; otherBook.id = "reader-other-book"; otherBook.sourceSha256 = String(repeating: "f", count: 64)
+        var other = jobs[0]; other.id = "reader-other-job"; other.bookId = otherBook.id
+        companion.books = [book, otherBook]; companion.jobs = jobs + [other]; companion.downloads = records
     }
 
     private static func tone(seconds: Int, frequency: Double) -> Data {

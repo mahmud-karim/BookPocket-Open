@@ -242,6 +242,39 @@ final class ProjectImportRecoveryTests: XCTestCase {
         XCTAssertEqual(store.orderedDownloads(jobID: alternate.project.job.id).map(\.asset.id), alternate.project.job.assets.map(\.id))
     }
 
+    @MainActor func testLegacySharedAudioAcceptsAdditiveProvenanceButRejectsKnownConflicts() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let library = LibraryStore(root: folder.appendingPathComponent("Library"))
+        let store = CompanionStore(root: folder.appendingPathComponent("Companion"))
+        let original = try fixture("provenance")
+        try await store.importProject(archive(original, in: folder), library: library)
+        let oldPaths = store.downloads.map(\.file)
+        var enriched = original
+        enriched.project.job.narrationMode = "full_cast"
+        for index in enriched.project.job.assets.indices {
+            let segment = enriched.project.job.assets[index].segmentId!
+            enriched.project.job.assets[index].narrationMode = "full_cast"
+            enriched.project.job.assets[index].castSpans = [.init(segmentId: segment, startOffset: 0, endOffset: 3, voiceId: "original-test-voice")]
+        }
+        try await store.importProject(archive(enriched, in: folder), library: library)
+        XCTAssertEqual(store.downloads.map(\.file), oldPaths)
+        XCTAssertTrue(store.downloads.allSatisfy { $0.asset.narrationMode == "full_cast" && $0.asset.castSpans?.count == 1 })
+        for mutate in [0, 1] {
+            var conflict = enriched; conflict.project.job.id = "conflicting-take"
+            if mutate == 0 {
+                conflict.project.job.narrationMode = "single"
+                for index in conflict.project.job.assets.indices { conflict.project.job.assets[index].narrationMode = "single"; conflict.project.job.assets[index].castSpans = [] }
+            }
+            else { conflict.project.job.assets[0].castSpans?[0].voiceId = "different-test-voice" }
+            do { try await store.importProject(archive(conflict, in: folder), library: library); XCTFail("Known narration provenance cannot change") }
+            catch { XCTAssertTrue(error.localizedDescription.contains("existing identity")) }
+        }
+        let reopened = CompanionStore(root: store.root)
+        XCTAssertEqual(reopened.downloads.map(\.file), oldPaths)
+        XCTAssertTrue(reopened.downloads.allSatisfy { $0.asset.castSpans?.first?.voiceId == "original-test-voice" })
+    }
+
     @MainActor func testSuccessfulImportRemovesOnlySupersededUnsharedOldAudioPaths() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
