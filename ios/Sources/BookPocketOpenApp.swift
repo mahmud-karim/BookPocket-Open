@@ -1,23 +1,28 @@
 import SwiftUI
 
 @main struct BookPocketOpenApp: App {
-    @State private var library = LibraryStore()
+    @State private var library: LibraryStore
     @State private var player = PlaybackController()
-    @State private var companion = CompanionStore()
+    @State private var companion: CompanionStore
     @State private var selectedTab = "library"
     @AppStorage("appTheme") private var theme = "dark"
     #if DEBUG
     @State private var installedTransportFixture = false
+    #endif
     init() {
+        #if DEBUG
         if UITestTransportFixture.enabled {
             // A fresh isolated store prevents existing pairing credentials or
             // personal downloads from entering the offline transport test.
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("TransportUITest-" + UUID().uuidString)
             _library = State(initialValue: LibraryStore(root: root.appendingPathComponent("Library")))
             _companion = State(initialValue: CompanionStore(root: root.appendingPathComponent("Companion")))
+            return
         }
+        #endif
+        _library = State(initialValue: LibraryStore())
+        _companion = State(initialValue: CompanionStore())
     }
-    #endif
     var body: some Scene {
         WindowGroup {
             TabView(selection: $selectedTab) {
