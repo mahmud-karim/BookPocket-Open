@@ -149,9 +149,11 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)], timeout: 10), .completed)
         XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
         app.tabBars.buttons["Library"].tap(); book.tap()
-        XCTAssertTrue(app.buttons["reader.contents"].waitForExistence(timeout: 20))
+        // Reopening creates a new WebKit spread. Toolbar existence alone can
+        // precede its first rendered viewport, especially on a loaded CI host.
+        XCTAssertTrue(waitForReaderContents(app, timeout: 60))
         let target = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Across the Bridge")).firstMatch
-        XCTAssertTrue(target.waitForExistence(timeout: 20)); assertVisibleInk(in: target)
+        XCTAssertTrue(target.waitForExistence(timeout: 60)); assertVisibleInk(in: target)
     }
 
     private func assertListenFits(_ app: XCUIApplication, name: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -346,10 +348,10 @@ final class ReaderUITests: XCTestCase {
         return result == .completed
     }
 
-    private func waitForReaderContents(_ app: XCUIApplication) -> Bool {
+    private func waitForReaderContents(_ app: XCUIApplication, timeout: TimeInterval = 30) -> Bool {
         let button = app.buttons["reader.contents"]
         let ready = NSPredicate { _, _ in button.exists && button.isEnabled && button.isHittable }
-        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 30) == .completed
+        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: timeout) == .completed
     }
 
     private func waitForScreenshotOrientation(landscape: Bool) -> Bool {
