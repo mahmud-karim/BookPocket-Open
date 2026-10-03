@@ -4,7 +4,7 @@ Tailscale Funnel publishes an HTTPS address for the phone API. The iPhone uses
 its ordinary internet connection. The PC must remain awake with Tailscale,
 Book Pocket Open and the selected narration engine running.
 
-Use companion 0.1.7 or later and iOS 0.1.11 or later. Public HTTPS uses the
+Use companion 0.1.8 or later and iOS 0.1.11 or later. Public HTTPS uses the
 system certificate authority store; the private LAN listener keeps its saved
 certificate. Device pairing and bearer authentication still apply.
 
