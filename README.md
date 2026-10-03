@@ -2,7 +2,7 @@
 
 A local-first EPUB reader and audiobook studio. Read on iPhone, generate narration on your Windows PC, and keep your original books and audio.
 
-**Development preview available:** [download the latest unsigned iOS IPA (0.1.1)](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.1-preview.1) and [the compatible Windows installer (0.1.0)](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.0-preview.1). Published downloads were retrieved and checksum-verified. The iOS update explains incomplete EPUB downloads and preserves the original file and library after failed imports. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
+**Development preview available:** [download the latest unsigned iOS IPA (0.1.2)](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.2-preview.1) and [the compatible Windows installer (0.1.0)](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.0-preview.1). Published downloads were retrieved and checksum-verified. The iOS update keeps bottom navigation accessible during narration and includes the incomplete-EPUB import fix. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
 
 ## Obsidian in the actual app
 
@@ -12,6 +12,7 @@ Simulator screenshots show the original public test book. These are rendered app
 <img src="docs/screenshots/ios-library.png" alt="Native Obsidian library" width="220">
 <img src="docs/screenshots/ios-reader.png" alt="Native cream EPUB reader" width="220">
 <img src="docs/screenshots/ios-studio.png" alt="Native Obsidian audiobook studio" width="220">
+<img src="docs/screenshots/ios-playing-tabs.png" alt="Narration controls above accessible native tabs" width="220">
 </p>
 
 ![Windows Obsidian library](docs/screenshots/windows-library.png)
@@ -25,6 +26,8 @@ Simulator screenshots show the original public test book. These are rendered app
 - No reading account. Original files, model runtimes, credentials, and audio stay outside the source checkout.
 
 The interface uses charcoal, graphite, warm white, and restrained champagne accents, with coordinated light mode and independent reader backgrounds.
+
+For profiles already created in a separate VoiceStudio installation, see [the connection and narration guide](docs/VOICE-STUDIO.md).
 
 ## Develop on Windows
 
