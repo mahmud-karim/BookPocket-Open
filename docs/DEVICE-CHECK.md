@@ -16,7 +16,7 @@ Generate the short original fixture on the PC. Download the book and completed n
 
 ## Reader page and chapter narration
 
-With iOS 0.1.4 and PC Companion 0.1.1 or later, keep the paired PC and its external OmniVoice service running. Open a text page and choose the reader's waveform-plus menu → **Generate current page**. Compare the preview with the visible words, including a paragraph that continues onto the next screen. Generate with the uniquely named Kyon profile and confirm the downloaded result uses that voice and highlights the same source.
+With iOS 0.1.4 or later and PC Companion 0.1.1 or later, keep the paired PC and its external OmniVoice service running. Open a text page and choose the reader's waveform-plus menu → **Generate current page**. Compare the preview with the visible words, including a paragraph that continues onto the next screen. Generate with the uniquely named Kyon profile and confirm the downloaded result uses that voice and highlights the same source.
 
 Choose **Generate current chapter**, check the preview's start/end against Contents, and try a chapter containing an intervening illustration resource. Change text size, capture another page, and verify the new selection follows the reflowed page. Close the generation panel and reopen **Recent narration**; pause/resume and retry a failed job. Finished audio should download and play without duplicating completed passages. In airplane mode, reopen recent downloaded narration and confirm playback still works.
 
