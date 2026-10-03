@@ -4,6 +4,7 @@ import ReadiumShared
 struct ReaderPlayerView: View {
     let reader: ReaderModel
     @Bindable var state: ReaderPlayerState
+    var onClose: (() -> Void)? = nil
     @Environment(CompanionStore.self) private var companion
     @Environment(LibraryStore.self) private var library
     @Environment(PlaybackController.self) private var player
@@ -38,7 +39,7 @@ struct ReaderPlayerView: View {
             }.background(Obsidian.background)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("reader.player.surface")
                 .navigationTitle("Read aloud").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { state.invalidatePlaybackIntent(); dismiss() } } }
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { state.invalidatePlaybackIntent(); if let onClose { onClose() } else { dismiss() } } } }
                 .sheet(item: $detail) { item in
                     NavigationStack {
                         Group {
@@ -74,7 +75,7 @@ struct ReaderPlayerView: View {
                 .onChange(of: reader.location) { if !active && !state.working && !reader.capturingScope && !state.showingSelection && state.mode != .device { refreshLocal() } }
         }.tint(Obsidian.accent)
             .onDisappear { state.invalidatePlaybackIntent() }
-            .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(370), .large])
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .presentationBackgroundInteraction(.disabled)
     }

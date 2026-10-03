@@ -49,7 +49,7 @@ struct ReaderView: View {
             .navigationTitle(model.book?.title ?? "Reader")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Library", systemImage: "chevron.down") { dismiss() }.labelStyle(.iconOnly).accessibilityIdentifier("reader.close") }
+                ToolbarItem(placement: .topBarLeading) { Button("Library", systemImage: "chevron.down") { companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent(); dismiss() }.labelStyle(.iconOnly).accessibilityIdentifier("reader.close") }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Contents", systemImage: "list.bullet") { contentsError = nil; panel = .contents }.labelStyle(.iconOnly).disabled(!model.pageReady).accessibilityIdentifier("reader.contents")
                     Menu {
@@ -88,9 +88,30 @@ struct ReaderView: View {
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { panel = nil } } }
                 }.presentationDetents([.medium, .large])
             }
-            .sheet(isPresented: $showPlayer, onDismiss: { companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent() }) { ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID)) }
+            .sheet(isPresented: Binding(get: { showPlayer && dynamicTypeSize.isAccessibilitySize }, set: { if !$0 { closePlayer() } }), onDismiss: { companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent() }) {
+                ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID))
+            }
             .alert("Reader", isPresented: Binding(get: { model.error != nil && !model.loading && model.navigator != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
         }.tint(Obsidian.accent)
+            .overlay(alignment: .bottom) {
+                if showPlayer && !dynamicTypeSize.isAccessibilitySize {
+                    // An overlay preserves the Readium viewport and exact page
+                    // capture. It has no floating UISheet transform or hit path.
+                    GeometryReader { geometry in
+                        VStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer)
+                                .frame(height: min(370, geometry.size.height))
+                                .clipShape(.rect(topLeadingRadius: 24, topTrailingRadius: 24))
+                                .shadow(color: .black.opacity(0.25), radius: 14, y: -4)
+                        }
+                    }
+                }
+            }
+    }
+    private func closePlayer() {
+        companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent()
+        showPlayer = false
     }
     private func openPlayer() {
         let state = companion.readerPlayer(for: model.bookID)

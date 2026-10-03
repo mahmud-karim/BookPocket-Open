@@ -17,11 +17,13 @@ Keep VoiceStudio and the PC companion running while generating narration. A shor
 
 ## Generate from the iPhone
 
-In iOS 0.1.3 or later with PC Companion 0.1.1 or later, open a book and tap the **waveform plus** button in the reader's top bar. Choose **Generate current page** or **Generate current chapter**. The narration panel previews the captured original words and uses the uniquely named **Kyon** profile from the external OmniVoice service. Tap **Generate with Kyon**. With **Play when ready** enabled, the app downloads the finished audio and starts it in the reader; you can also use **Download & play in reader**.
+In the unified iOS 0.1.10 reader with PC Companion 0.1.6 or later, open a book and tap **Read aloud**. Choose **Kyon** in the player. Selecting a narrator does not start playback. With no matching downloaded audio, Play and skip controls remain disabled. Tap **Generate** and choose **Current page** or **Current chapter**. The narration details preview the captured original words and resolve the uniquely named **Kyon** profile from the external OmniVoice service. Tap **Generate with Kyon**. When generation finishes, use **Download & play**; the app verifies the files before starting the selected take.
 
-The page is captured before the panel opens, including partial paragraphs. A chapter follows table-of-contents boundaries across intervening EPUB resources. If a book's visible text or chapter boundaries cannot be matched exactly, the app explains the problem before requesting audio. It never expands a page request into whole paragraphs. Reopen the panel after changing pages or reading appearance to capture a new selection.
+The page is captured when you select its generation scope, including partial paragraphs. A chapter follows table-of-contents boundaries across intervening EPUB resources. If a book's visible text or chapter boundaries cannot be matched exactly, the app explains the problem before requesting audio. It never expands a page request into whole paragraphs. After changing pages or reading appearance, choose Generate again to capture a new selection.
 
-**Recent narration** reopens the latest page/chapter job for this book. Generation continues on the PC if you close the panel; pause, resume, cancel and retry controls remain available. Keep both the companion and VoiceStudio running during generation. Finished downloads remain playable offline. An older companion requires an update before it can generate exact page ranges.
+The player's details reopen matching jobs and explicit alternate takes for this book. Generation continues on the PC if you close the panel; pause, resume, cancel and retry controls remain available. Keep both the companion and VoiceStudio running during generation. Finished downloads remain playable offline. A downloaded chapter can cover the page you're reading; an excerpt cannot enable an unrelated page. An older companion requires an update before accepting the explicit narration mode.
+
+Choose **Full cast** to use the book's saved narrator, character voices and reviewed dialogue ranges. Open **Set up cast** in details if these are missing. Generate offers the same page/chapter choices and uses only the captured original source. Full-cast takes remain distinct from single-narrator Kyon takes, including pages containing only narrator prose. Changing the narrator or take never silently substitutes another recording.
 
 For other existing voice profiles or broader selections, the Studio flow remains available:
 
@@ -32,11 +34,11 @@ For other existing voice profiles or broader selections, the Studio flow remains
 5. Tap **Generate narration**. The production queue shows actual progress.
 6. When the recording is ready, tap **Download** in the production queue. Play it from **On this device** in Studio, or from Listen.
 
-The reader's **Use on-device voice** menu action starts Apple's speech. Its bottom playback button pauses or resumes the active narration, including downloaded PC audio. Downloaded recordings can play without the PC once their checksums have been verified and they are stored on the phone.
+Choose **On-device** in the reader player and press Play to start Apple's speech without the PC. The player keeps transport, speed, sleep timer and chapter selection together on one screen. Exact previews, generation progress and cast details open separately. Downloaded recordings can play without the PC once their checksums have been verified and they are stored on the phone.
 
 In iOS 0.1.5, **Listen** keeps the player controls on one screen. Tap the chapter row to select a chapter for on-device reading, or browse downloaded narration across this book. Separately generated chapters and alternate takes remain separate choices with narrator and take details. Only complete local chapter coverage is labelled **Full chapter**; page selections and partial downloads are labelled **Excerpt**. Selecting a recording starts it from the beginning. Automatic passage playback stays within that take. The tray button in the upper-right corner opens your downloaded recordings.
 
-If preparation says the PC is offline or unreachable, open Book Pocket Open on the PC and confirm the devices can reach the paired address over the same Wi-Fi or your configured Tailscale connection. Start VoiceStudio as well, then tap **Refresh connection** in the narration panel. Reading and downloaded audio remain available while the PC is offline. A certificate error requires checking the saved companion identity; do not bypass certificate validation.
+If preparation says the PC is offline or unreachable, open Book Pocket Open on the PC and confirm the devices can reach the paired address over the same Wi-Fi or your configured Tailscale connection. Start VoiceStudio as well, then tap **Refresh connection & takes** in the player details. Reading and downloaded audio remain available while the PC is offline. A certificate error requires checking the saved companion identity; do not bypass certificate validation.
 
 ## Generate from the PC
 
