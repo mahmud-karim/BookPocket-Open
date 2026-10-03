@@ -7,6 +7,7 @@ struct StudioView: View {
     @Environment(PlaybackController.self) private var player
     @Environment(\.scenePhase) private var scenePhase
     @State private var showPairing = false
+    @State private var showConnection = false
     @State private var showVoice = false
     @State private var showGenerate = false
     @State private var revoke = false
@@ -95,12 +96,16 @@ struct StudioView: View {
                 if companion.paired {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button("Refresh", systemImage: "arrow.clockwise") { Task { await companion.refresh() } }.disabled(companion.refreshing)
-                        Menu { Button("Revoke this device", role: .destructive) { revoke = true } } label: { Label("Companion settings", systemImage: "ellipsis.circle") }
+                        Menu {
+                            Button("Companion connection", systemImage: "network") { showConnection = true }.accessibilityIdentifier("studio.connection")
+                            Button("Revoke this device", role: .destructive) { revoke = true }
+                        } label: { Label("Companion settings", systemImage: "ellipsis.circle") }.accessibilityIdentifier("studio.settings")
                     }
                 }
             }
             .refreshable { await companion.refresh() }
             .sheet(isPresented: $showPairing) { PairingView() }
+            .sheet(isPresented: $showConnection) { CompanionConnectionView() }
             .sheet(isPresented: $showVoice) { VoiceCreationView() }
             .sheet(isPresented: $showGenerate) { GenerationView() }
             .fileImporter(isPresented: $importProject, allowedContentTypes: [.zip]) { result in

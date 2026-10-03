@@ -92,7 +92,7 @@ struct ReaderView: View {
                 ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID))
             }
             .alert("Reader", isPresented: Binding(get: { model.error != nil && !model.loading && model.navigator != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
-        }.tint(Obsidian.accent)
+        }.tint(Obsidian.accent).preferredColorScheme(.dark)
             .overlay(alignment: .bottom) {
                 if showPlayer && !dynamicTypeSize.isAccessibilitySize {
                     // An overlay preserves the Readium viewport and exact page
@@ -101,7 +101,7 @@ struct ReaderView: View {
                         VStack(spacing: 0) {
                             Spacer(minLength: 0)
                             ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer)
-                                .frame(height: min(370, geometry.size.height))
+                                .frame(height: min(450, geometry.size.height))
                                 .clipShape(.rect(topLeadingRadius: 24, topTrailingRadius: 24))
                                 .shadow(color: .black.opacity(0.25), radius: 14, y: -4)
                         }

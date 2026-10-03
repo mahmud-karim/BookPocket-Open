@@ -2,6 +2,40 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testCompanionAddressChangeVerifiesBeforeReplacingPairing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--connection-fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["studio.primary"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["studio.primary"].label.contains("Create narration"))
+        func openConnection() {
+            app.buttons["studio.settings"].tap()
+            app.buttons["studio.connection"].tap()
+            XCTAssertTrue(app.textFields["connection.address"].waitForExistence(timeout: 10))
+        }
+        func enter(_ address: String) {
+            app.buttons["connection.clear"].tap()
+            let field = app.textFields["connection.address"]
+            field.tap(); field.typeText(address + "\n")
+            app.buttons["connection.save"].tap()
+        }
+        openConnection()
+        XCTAssertEqual(app.textFields["connection.address"].value as? String, "https://old-connection.invalid")
+        enter("https://rejected-connection.invalid/bookpocket")
+        XCTAssertTrue(app.staticTexts["connection.error"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["connection.error"].label.contains("rejected"))
+        app.navigationBars["Companion connection"].buttons["Cancel"].tap()
+        openConnection()
+        XCTAssertEqual(app.textFields["connection.address"].value as? String, "https://old-connection.invalid", "A rejected public connection must retain the paired address")
+        enter("https://new-connection.invalid:10000/bookpocket/")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.navigationBars["Companion connection"])], timeout: 15), .completed)
+        XCTAssertTrue(app.buttons["studio.primary"].label.contains("Create narration"), "Changing the address must keep the existing pairing")
+        openConnection()
+        XCTAssertEqual(app.textFields["connection.address"].value as? String, "https://new-connection.invalid:10000/bookpocket")
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Verified companion address change — isolated transport fixture"; screenshot.lifetime = .keepAlways; add(screenshot)
+    }
+
     func testLargestDynamicTypeKeepsListenAndReaderControlsUsable() {
         executionTimeAllowance = 240
         let app = XCUIApplication()
@@ -80,7 +114,7 @@ final class ReaderUITests: XCTestCase {
         let reader = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         reader.name = "Obsidian reader controls at verified accessibility size"; reader.lifetime = .keepAlways; add(reader)
         app.buttons["reader.speak"].tap()
-        XCTAssertTrue(app.buttons["reader.player.narrator"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "reader.player.narrator").firstMatch.waitForExistence(timeout: 10))
         chooseReaderNarrator(app, "kyon")
         XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled, "Unrelated transport audio must not become Kyon")
         assertReaderPlayerFits(app, name: "Obsidian reader player largest text portrait")
@@ -92,10 +126,13 @@ final class ReaderUITests: XCTestCase {
     }
 
     private func chooseReaderNarrator(_ app: XCUIApplication, _ mode: String) {
-        let menu = app.buttons["reader.player.narrator"]
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: menu)], timeout: 20), .completed)
-        menu.tap()
         let choice = app.buttons["reader.voice." + mode]
+        if !choice.exists {
+            let menu = app.buttons["reader.player.narrator"]
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: menu)], timeout: 20), .completed)
+            menu.tap()
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: choice)], timeout: 20), .completed)
         XCTAssertTrue(choice.waitForExistence(timeout: 5)); assertMinimumHitArea(choice); choice.tap()
         if mode != "device" {
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["reader.player.generate"])], timeout: 20), .completed)
@@ -107,7 +144,10 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(surface.exists)
         XCTAssertEqual(surface.scrollViews.count, 0, "The compact reader player must not scroll")
         var frames: [String] = []
-        for id in ["narrator", "backward", "toggle", "forward", "speed", "chapters", "sleep", "generate", "details"] {
+        if app.buttons["reader.voice.device"].exists {
+            for mode in ["device", "kyon", "cast"] { assertMinimumHitArea(app.buttons["reader.voice." + mode]) }
+        } else { assertMinimumHitArea(app.buttons["reader.player.narrator"]) }
+        for id in ["backward", "toggle", "forward", "speed", "chapters", "sleep", "generate", "details"] {
             let control = app.buttons["reader.player." + id]
             if control.isEnabled { assertMinimumHitArea(control) }
             else {
@@ -170,7 +210,15 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 90, "The actual local fixture recording must be loaded")
         XCTAssertEqual(app.buttons["listen.speed"].value as? String, "1.5×")
         app.tabBars.buttons["Library"].tap(); book.tap(); XCTAssertTrue(waitForReaderContents(app))
-        app.buttons["reader.contents"].tap(); app.buttons["Across the Bridge"].tap()
+        app.buttons["reader.speak"].tap()
+        XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertTrue(play.isEnabled)
+        app.buttons["reader.player.chapters"].tap()
+        let sourceChapter = app.buttons["reader.player.chapter.1"]
+        XCTAssertTrue(sourceChapter.waitForExistence(timeout: 10)); sourceChapter.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == false"), object: play)], timeout: 20), .completed, "Paused chapter-one audio must become unavailable after source navigation while the panel stays open")
+        XCTAssertEqual(app.buttons["reader.player.chapters"].value as? String, "Across the Bridge")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "No matching audio"), object: app.staticTexts["reader.player.readiness"])], timeout: 20), .completed)
+        app.navigationBars["Read aloud"].buttons["Done"].tap()
         let second = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "At dawn, Mira crossed the bridge")).firstMatch
         guard assertVisibleInk(in: second) else { return }
         app.buttons["reader.speak"].tap()
@@ -196,7 +244,7 @@ final class ReaderUITests: XCTestCase {
         let play = app.buttons["reader.player.toggle"]
         XCTAssertTrue(play.waitForExistence(timeout: 10))
         XCTAssertEqual(play.value as? String, "Paused", "Opening Read aloud must not start speech")
-        XCTAssertTrue(app.buttons["reader.player.narrator"].label.contains("On-device"))
+        XCTAssertTrue(app.buttons["reader.voice.device"].exists || app.buttons["reader.player.narrator"].label.contains("On-device"))
         XCTAssertTrue(play.isEnabled); play.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: play)], timeout: 20), .completed, "Actual on-device speech must start")
         XCTAssertEqual(app.buttons["reader.player.backward"].label, "Previous passage")
@@ -437,15 +485,22 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(paragraph.waitForExistence(timeout: 30))
         guard assertVisibleInk(in: paragraph) else { return }
         app.buttons["reader.speak"].tap()
-        XCTAssertTrue(app.buttons["reader.player.narrator"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "reader.player.narrator").firstMatch.waitForExistence(timeout: 10))
         chooseReaderNarrator(app, "kyon")
         XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
+        assertReaderPlayerFits(app, name: "Obsidian segmented narrator without generated audio")
         app.buttons["reader.player.generate"].tap()
         let page = app.buttons["reader.generate.page"]
         XCTAssertTrue(app.buttons["reader.generate.chapter"].waitForExistence(timeout: 10))
         XCTAssertTrue(page.waitForExistence(timeout: 10))
         assertMinimumHitArea(page); assertMinimumHitArea(app.buttons["reader.generate.chapter"])
+        let choices = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        choices.name = "Obsidian page and chapter generation choices"; choices.lifetime = .keepAlways; add(choices)
         page.tap()
+        XCTAssertFalse(app.navigationBars["Narration"].exists, "Choosing scope must return to the compact player, not force a full-screen preview")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Pair your PC"), object: app.staticTexts["reader.player.readiness"])], timeout: 20), .completed)
+        XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
+        app.buttons["reader.player.details"].tap()
         let preview = app.staticTexts["reader.generation.preview"]
         XCTAssertTrue(preview.waitForExistence(timeout: 20), app.debugDescription)
         XCTAssertTrue(preview.label.contains("Mira opened the brass lantern"))

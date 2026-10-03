@@ -37,10 +37,19 @@ Studio listener or the narration engine itself.
 In PC Studio, open Devices and create a new connection code. In the iPhone's
 Studio tab, scan its QR code and approve that request on the PC. The QR carries
 the public HTTPS address without the private LAN certificate fingerprint.
-Previously paired devices retain their old address until paired again.
-For an existing LAN pairing, while still on home Wi-Fi, open Studio's companion
-settings menu and choose **Revoke this device**, then **Pair a companion**.
-Downloaded books and audio remain available.
+For an existing pairing with the same PC, iOS 0.1.12 or later can switch addresses
+while away from home. Open **Studio → … → Companion connection**, enter the
+public HTTPS address including its mount path, and leave the certificate
+fingerprint empty for a public certificate. Choose **Verify & save**. The app
+checks the existing device credential at the new address before saving it;
+books, downloads and pairing remain intact. A failed check retains the old
+connection. Changing the address does not require a new pairing code or PC
+approval. This requires an existing valid pairing with that PC.
+
+For a first pairing, create a fresh code in the PC Studio, enter its public
+address and code on the phone, and approve the pending request on the PC.
+The code expires after ten minutes. Older iOS versions need to pair again;
+update the app before attempting to switch an unreachable LAN address.
 
 Test with phone Wi-Fi and Tailscale disabled, using cellular: refresh the
 connection, generate one short page with Kyon, download it and play it. Once

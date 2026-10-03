@@ -11,6 +11,14 @@ import SwiftUI
     #endif
     init() {
         #if DEBUG
+        if UITestConnectionFixture.enabled {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("ConnectionUITest-" + UUID().uuidString)
+            _library = State(initialValue: LibraryStore(root: root.appendingPathComponent("Library")))
+            do { _companion = State(initialValue: try UITestConnectionFixture.store(root: root.appendingPathComponent("Companion"))) }
+            catch { fatalError("Isolated connection UI fixture failed: \(error)") }
+            _selectedTab = State(initialValue: "studio")
+            return
+        }
         if UITestTransportFixture.enabled {
             // A fresh isolated store prevents existing pairing credentials or
             // personal downloads from entering the offline transport test.

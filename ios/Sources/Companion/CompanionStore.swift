@@ -19,6 +19,7 @@ import ReadiumZIPFoundation
     var refreshing = false
     var downloading: String?
     var pairing = false
+    var updatingConnection = false
     var exporting = false
     var receivingBook = false
     var paired: Bool { identity != nil && client != nil }
@@ -95,6 +96,27 @@ import ReadiumZIPFoundation
             throw BookError.message("Pairing timed out. Create a new code in the PC Studio.")
         } catch is CancellationError { status = nil }
         catch { self.error = CompanionClient.narrationMessage(for: error); status = nil }
+    }
+    func updateConnection(url: URL, fingerprint: String?, configuration: URLSessionConfiguration? = nil) async throws {
+        guard !updatingConnection, !pairing, let previous = identity, let oldClient = client,
+              let token = oldClient.token else { throw BookError.message("Pair this device before changing its companion address.") }
+        updatingConnection = true
+        defer { updatingConnection = false }
+        let candidate = try CompanionClient(url: url, fingerprint: fingerprint, token: token, configuration: configuration)
+        struct Health: Decodable { var apiVersion: String }
+        let health: Health = try await candidate.send("/v1/health")
+        guard health.apiVersion == "1" else { throw BookError.message("This companion uses an unsupported API version. Update PC Companion, then try again.") }
+        struct Engines: Decodable { var engines: [RemoteEngine] }
+        // This route requires the existing device token. A public health response
+        // alone cannot establish that the new address reaches our paired PC.
+        let _: Engines = try await candidate.send("/v1/engines")
+        try Task.checkCancellation()
+        guard client === oldClient, identity?.deviceID == previous.deviceID,
+              identity?.url == previous.url, identity?.fingerprint == previous.fingerprint else { throw CancellationError() }
+        identity = CompanionIdentity(url: candidate.baseURL, fingerprint: candidate.fingerprint, deviceID: previous.deviceID)
+        do { try persist() } catch { identity = previous; throw error }
+        client = candidate
+        error = nil; status = "Connected to your companion"
     }
     func disconnect() async {
         do {

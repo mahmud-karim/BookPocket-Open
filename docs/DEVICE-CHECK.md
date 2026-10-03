@@ -12,6 +12,14 @@ then enable airplane mode and play the downloaded take again. Keep the PC and
 voice engine running during generation. An external VPS smoke proves public
 reachability and API behavior; it does not pass this physical-device check.
 
+With an existing LAN pairing and iOS 0.1.12 or later, use cellular to open
+**Studio → … → Companion connection**. Enter the PC's public HTTPS address
+with its path prefix and leave the optional fingerprint empty. Verify and save;
+no new pairing code should be needed. Relaunch and refresh to confirm the
+new address persisted and existing books/audio remain. Try an unreachable
+address and an address belonging to another companion: verification must fail
+without replacing the working connection.
+
 ## Install and read offline
 
 Download the release IPA to Files. In an existing working LiveContainer installation, use its plus button to import the IPA and launch Book Pocket Open. The app requires iOS 18 or newer. Follow the project's [official installation guide](https://livecontainer.github.io/docs/installation) if LiveContainer itself needs setup; the unsigned guest IPA is not an App Store installation.
@@ -28,7 +36,7 @@ With iOS 0.1.7 or later, export a short completed production as a project on the
 
 ## Reader page and chapter narration
 
-For the unified reader/player update, keep the paired PC and its external OmniVoice service running. Open a text page and tap **Read aloud**. Opening the panel and changing narrator must not start speech. Choose **On-device** and press Play; it should work without the PC. Pause it, then choose **Kyon**. With no matching downloaded take, playback must be disabled. Tap **Generate** → **Current page**. Compare the preview with the visible words, including a paragraph that continues onto the next screen. Generate with the uniquely named Kyon profile and confirm the downloaded result uses that voice and highlights the same source.
+For the unified reader/player update, keep the paired PC and its external OmniVoice service running. Open a text page and tap **Read aloud**. Opening the panel and changing narrator must not start speech. Choose **On-device** and press Play; it should work without the PC. Pause it, then choose **Kyon**. With no matching downloaded take, playback must be disabled. Tap **Generate** → **Current page**; iOS 0.1.12 starts preparation and generation in the compact player. Open narration details to compare the preview with the visible words, including a paragraph that continues onto the next screen. Confirm the downloaded result uses the uniquely named Kyon voice and highlights the same source.
 
 Choose **Generate** → **Current chapter**, check the preview's start/end against Contents, and try a chapter containing an intervening illustration resource. Change text size, capture another page, and verify the new selection follows the reflowed page. Close and reopen the player while the PC generates; pause/resume and retry a failed job. Finished audio should download and play without duplicating completed passages. Pause a downloaded take, manually open another chapter, and confirm the reader stays there, including after a repeated pause or audio interruption. A downloaded chapter should be available from the pages it covers, while a page excerpt must not enable an unrelated page. In airplane mode, reopen the player and confirm matching downloaded narration still works.
 

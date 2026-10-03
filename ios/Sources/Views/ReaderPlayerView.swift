@@ -12,6 +12,8 @@ struct ReaderPlayerView: View {
     @State private var showPairing = false
     @State private var showCast = false
     @State private var chooser: Chooser?
+    @State private var discovering = false
+    @State private var pendingDiscovery = false
     private enum Chooser { case narrator, scope }
     private var job: RemoteJob? { companion.jobs.first { $0.id == state.selectedJobID } }
     private var active: Bool {
@@ -29,7 +31,7 @@ struct ReaderPlayerView: View {
             switch self { case .production: return "production"; case .scope: return "scope"; case .chapters: return "chapters" }
         }
     }
-    private var canPlay: Bool { state.mode == .device || active || (job.map { state.readyIDs.contains($0.id) } ?? false) }
+    private var canPlay: Bool { !discovering && (state.mode == .device || active || (job.map { state.readyIDs.contains($0.id) } ?? false)) }
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
@@ -37,9 +39,12 @@ struct ReaderPlayerView: View {
                     if let chooser {
                         choices(chooser, wide: geometry.size.width > geometry.size.height * 1.5)
                     } else if geometry.size.width > geometry.size.height * 1.5 {
-                        HStack(alignment: .center, spacing: 24) { transport; actions.frame(maxWidth: 220) }
+                        HStack(alignment: .center, spacing: 20) {
+                            VStack(spacing: 10) { narrator; chapterRow; HStack { speedControl; Spacer(); sleepControl } }.frame(maxWidth: .infinity)
+                            VStack(spacing: 10) { transport(wide: true); actions }.frame(maxWidth: .infinity)
+                        }
                     } else {
-                        VStack(spacing: 12) { transport; actions }
+                        VStack(spacing: 10) { narrator; chapterRow; transport(); actions }
                     }
                 }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
             }.background(Obsidian.background)
@@ -67,7 +72,7 @@ struct ReaderPlayerView: View {
                                         generatedControls
                                         if let error = state.error { Text(error).foregroundStyle(.red) }
                                         if state.mode == .cast { Button("Set up cast", systemImage: "person.2") { Task { await openCast() } }.frame(minHeight: 48).disabled(state.working).accessibilityIdentifier("reader.player.cast") }
-                                        if state.showingSelection {
+                                        if state.snapshot != nil {
                                             Text(state.selection?.title ?? state.snapshot?.scope.title ?? "Selected words").font(.headline)
                                             Text(state.preview).font(.system(.body, design: .serif)).textSelection(.enabled).accessibilityIdentifier("reader.generation.preview")
                                             Text("Captured from the open book. Turn the page, then choose Generate again to select different words.").font(.caption).foregroundStyle(.secondary)
@@ -94,74 +99,121 @@ struct ReaderPlayerView: View {
                         do { try await Task.sleep(for: .seconds(3)) } catch { return }
                     }
                 }
-                .onChange(of: reader.location) { if !active && !state.working && !reader.capturingScope && !state.showingSelection && state.mode != .device { refreshLocal() } }
+                .onChange(of: reader.location) { if !(active && player.isPlaying) && !state.working && !reader.capturingScope && !state.showingSelection && state.mode != .device { refreshLocal() } }
         }.tint(Obsidian.accent)
             .onDisappear { state.invalidatePlaybackIntent() }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
             .presentationBackgroundInteraction(.disabled)
     }
-    private var transport: some View {
-        VStack(spacing: 12) {
-            HStack {
+    @ViewBuilder private var narrator: some View {
+        if dynamicTypeSize.isAccessibilitySize {
                 Button { chooser = .narrator } label: { HStack { Text(state.mode.title).font(.headline); Image(systemName: "chevron.down").font(.system(size: 14)) }.frame(minHeight: 48).contentShape(.rect) }
-                    .disabled(state.working || reader.capturingScope).accessibilityIdentifier("reader.player.narrator")
-                Spacer(minLength: 4)
-                Menu {
-                    ForEach([0.75, 1, 1.25, 1.5, 2], id: \.self) { rate in Button("\(rate.formatted())×") { player.rate = rate } }
-                } label: { Text("\(player.rate.formatted())×").font(.system(size: 17, weight: .medium)).monospacedDigit().frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
-                    .accessibilityLabel("Playback speed").accessibilityIdentifier("reader.player.speed")
+                    .disabled(state.working || reader.capturingScope || discovering).accessibilityIdentifier("reader.player.narrator")
+        } else {
+            HStack(spacing: 0) {
+                ForEach(ReaderVoiceMode.allCases) { mode in
+                    Button { if state.mode != mode { select(mode) } } label: {
+                        Text(mode.title).font(.subheadline.weight(.medium)).lineLimit(2)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .background(state.mode == mode ? Obsidian.accent : .clear, in: .rect(cornerRadius: 10))
+                            .foregroundStyle(state.mode == mode ? Obsidian.onAccent : .primary).contentShape(.rect)
+                    }.buttonStyle(.plain).accessibilityIdentifier("reader.voice." + mode.rawValue)
+                        .accessibilityAddTraits(state.mode == mode ? .isSelected : [])
+                        .disabled(state.working || reader.capturingScope || discovering)
+                }
+            }.padding(3).background(Obsidian.surface, in: .rect(cornerRadius: 13))
+                .accessibilityElement(children: .contain).accessibilityIdentifier("reader.player.narrator")
+        }
+    }
+    private var currentChapter: String {
+        guard let location = reader.location else { return "Choose a chapter" }
+        let matches = flatten(reader.chapters).filter { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(location.href.string) }
+        if matches.count == 1, let title = matches.first?.title { return title }
+        return location.title ?? "Choose a chapter"
+    }
+    private var chapterRow: some View {
+        HStack(spacing: 8) {
+            Button { openChapters() } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "book").font(.system(size: 22))
+                    Text(currentChapter).font(.subheadline).lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down").font(.system(size: 14))
+                }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 48).contentShape(.rect)
+            }.buttonStyle(.plain).background(Obsidian.surface, in: .rect(cornerRadius: 12))
+                .accessibilityLabel("Chapters").accessibilityValue(currentChapter).accessibilityIdentifier("reader.player.chapters")
+            if state.mode != .device {
+                control("Narration details and takes", icon: state.error == nil ? "ellipsis.circle" : "exclamationmark.circle", id: "details") { detail = .production }
             }
+        }
+    }
+    private var speedControl: some View {
+        Menu {
+            ForEach([0.75, 1, 1.25, 1.5, 2], id: \.self) { rate in Button("\(rate.formatted())×") { player.rate = rate } }
+        } label: { Text("\(player.rate.formatted())×").font(.system(size: 16, weight: .medium)).monospacedDigit().frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
+            .accessibilityLabel("Playback speed").accessibilityIdentifier("reader.player.speed")
+    }
+    private var sleepControl: some View {
+        Menu {
+            Button("Off") { player.sleep(minutes: nil) }
+            ForEach([5, 15, 30, 60], id: \.self) { minutes in Button("\(minutes) minutes") { player.sleep(minutes: minutes) } }
+        } label: { Image(systemName: "moon").font(.system(size: 22)).frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
+            .accessibilityLabel("Sleep timer").accessibilityIdentifier("reader.player.sleep")
+    }
+    private func transport(wide: Bool = false) -> some View {
+        VStack(spacing: 8) {
+            Text(readiness).font(.caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.center)
+                .accessibilityIdentifier("reader.player.readiness")
             if active && player.duration > 0 {
                 Slider(value: Binding(get: { player.elapsed }, set: { state.invalidatePlaybackIntent(); player.seek($0) }), in: 0...max(1, player.duration)) { Text("Audio position") }
                     .accessibilityIdentifier("reader.player.seek")
             }
-            HStack {
+            HStack(spacing: 0) {
+                if !wide { speedControl; Spacer(minLength: 0) }
                 control(state.mode == .device ? "Previous passage" : "Back 15 seconds", icon: state.mode == .device ? "backward.end" : "gobackward.15", id: "backward") { state.invalidatePlaybackIntent(); player.skip(-15) }.disabled(!active)
                 Spacer(minLength: 0)
                 control(active && player.isPlaying ? "Pause" : "Play", icon: active && player.isPlaying ? "pause.fill" : "play.fill", id: "toggle") { play() }
+                    .background(canPlay ? Obsidian.accent : .gray.opacity(0.25), in: .circle)
+                    .foregroundStyle(canPlay ? Obsidian.onAccent : .secondary)
                     .disabled(!canPlay).accessibilityValue(active && player.isPlaying ? "Playing" : "Paused")
                 Spacer(minLength: 0)
                 control(state.mode == .device ? "Next passage" : "Forward 15 seconds", icon: state.mode == .device ? "forward.end" : "goforward.15", id: "forward") { state.invalidatePlaybackIntent(); player.skip(15) }.disabled(!active)
+                if !wide { Spacer(minLength: 0); sleepControl }
             }
-            Text(active ? (player.isPlaying ? "Playing" : "Paused") : state.mode == .device ? "Ready on this iPhone" : canPlay ? "Ready offline" : "No matching audio")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("reader.player.readiness")
         }.frame(maxWidth: .infinity)
+    }
+    private var readiness: String {
+        if state.working { return "Preparing narration…" }
+        if discovering { return "Checking this page…" }
+        if let job, ["queued", "running", "paused"].contains(job.status) { return "\(job.status.capitalized) · \(job.completedSegments)/\(job.totalSegments) passages" }
+        if state.showingSelection && !companion.paired { return "Pair your PC to generate · open details" }
+        if state.error != nil { return "Needs attention · open details" }
+        return active ? (player.isPlaying ? "Playing" : "Paused") : state.mode == .device ? "Ready on this iPhone" : canPlay ? "Ready offline" : "No matching audio"
     }
     private var actions: some View {
         VStack(spacing: 8) {
-            HStack {
-                if state.mode != .device { generateMenu }
-                control("Chapters", icon: "list.bullet", id: "chapters") { openChapters() }
-                Spacer(minLength: 0)
-                Menu {
-                    Button("Off") { player.sleep(minutes: nil) }
-                    ForEach([5, 15, 30, 60], id: \.self) { minutes in Button("\(minutes) minutes") { player.sleep(minutes: minutes) } }
-                } label: { Image(systemName: "moon").font(.system(size: 22)).frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
-                    .accessibilityLabel("Sleep timer").accessibilityIdentifier("reader.player.sleep")
-                if state.mode != .device { control("Narration details and takes", icon: "ellipsis.circle", id: "details") { detail = .production } }
-            }
-            if state.working { ProgressView("Preparing…").font(.caption).accessibilityIdentifier("reader.player.working") }
-            else if let job, ["queued", "running", "paused"].contains(job.status) {
-                ProgressView(value: Double(job.completedSegments), total: Double(max(1, job.totalSegments))) { Text("\(job.status.capitalized) · \(job.completedSegments)/\(job.totalSegments)").font(.caption) }
-            } else if let job, job.status == "completed", !state.readyIDs.contains(job.id) {
+            if let job, job.status == "completed", !state.readyIDs.contains(job.id) {
                 Button("Download & play") { Task { await downloadAndPlay(job) } }.frame(minHeight: 48).accessibilityIdentifier("reader.player.download")
-            } else if state.error != nil { Button("Needs attention — details") { detail = .production }.font(.caption).frame(minHeight: 48) }
+                    .disabled(state.working)
+            } else if state.mode != .device { generateMenu }
         }.frame(maxWidth: .infinity)
     }
     private var generateMenu: some View {
         Button { chooser = .scope } label: {
-            Group {
-                if dynamicTypeSize.isAccessibilitySize { Label("Generate", systemImage: "waveform.badge.plus").labelStyle(.iconOnly) }
-                else { Label("Generate", systemImage: "waveform.badge.plus") }
-            }.font(dynamicTypeSize.isAccessibilitySize ? .system(size: 22) : .body).frame(minWidth: 48, minHeight: 48).contentShape(.rect)
-        }.disabled(state.working || reader.capturingScope || !reader.pageReady).accessibilityIdentifier("reader.player.generate")
+            Text("Generate").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 48).contentShape(.rect)
+        }.buttonStyle(.plain).foregroundStyle(Obsidian.onAccent).background(Obsidian.accent, in: .rect(cornerRadius: 12))
+            .disabled(state.working || reader.capturingScope || discovering || !reader.pageReady).accessibilityIdentifier("reader.player.generate")
     }
     private func choices(_ choice: Chooser, wide: Bool) -> some View {
         // Keep the choices in this panel's real coordinate space. A nested
         // system menu can report displaced accessibility frames in the reader.
         let layout = wide ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 12))
-        return layout {
+        return VStack(spacing: 12) {
+            if choice == .scope && !dynamicTypeSize.isAccessibilitySize && !wide {
+                Text("What would you like to generate?").font(.headline).multilineTextAlignment(.center)
+            }
+            layout {
             if choice == .narrator {
                 ForEach(ReaderVoiceMode.allCases) { mode in
                     choiceButton(mode.title, icon: state.mode == mode ? "checkmark" : "waveform", id: "reader.voice." + mode.rawValue) {
@@ -171,10 +223,25 @@ struct ReaderPlayerView: View {
                 }
             } else {
                 ForEach(NarrationScope.allCases) { scope in
-                    choiceButton(scope.title, icon: scope == .page ? "doc.text" : "book", id: "reader.generate." + scope.rawValue) {
-                        chooser = nil; capture(scope)
-                    }
+                    Button { chooser = nil; capture(scope) } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: scope == .page ? "doc.text" : "book").font(.system(size: 24))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(scope.title).font(.headline)
+                                if !dynamicTypeSize.isAccessibilitySize { Text(scope == .page ? "The words on screen" : "The complete chapter").font(.caption).foregroundStyle(.secondary) }
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.system(size: 14))
+                        }.frame(maxWidth: .infinity, minHeight: 48, alignment: .leading).padding(12)
+                            .background(Obsidian.surface, in: .rect(cornerRadius: 14)).contentShape(.rect)
+                    }.buttonStyle(.plain).accessibilityIdentifier("reader.generate." + scope.rawValue)
+                        .accessibilityHint(scope == .page ? "Generate exactly the words on the current page" : "Generate the complete current chapter")
                 }
+            }
+            }
+            if choice == .scope {
+                Button("Cancel") { if detail != nil { detail = .production } else { chooser = nil } }
+                    .frame(minWidth: 48, minHeight: 48).accessibilityIdentifier("reader.generate.cancel")
             }
         }
     }
@@ -187,14 +254,23 @@ struct ReaderPlayerView: View {
     }
     private func chapters(_ chapterGroups: [DownloadedChapterGroup]) -> some View {
         List {
-            if state.mode == .device {
+            Section("Book chapters") {
                 ForEach(Array(flatten(reader.chapters).enumerated()), id: \.offset) { index, link in
                     Button(link.title ?? "Chapter \(index + 1)") { Task {
-                        if active { if await player.selectSpeechChapter(link) { reader.connectPlayback(player); detail = nil } }
-                        else if await reader.navigator?.go(to: link) == true { detail = nil }
+                        state.invalidatePlaybackIntent()
+                        if player.bookID == reader.bookID {
+                            player.onLocator = nil
+                            if player.subtitle == "On-device voice" { player.stop() } else { player.pause() }
+                        }
+                        if await reader.navigator?.go(to: link) == true {
+                            detail = nil
+                            if player.bookID == reader.bookID { reader.connectPlayback(player) }
+                            if state.mode != .device { refreshLocal() }
+                        } else { state.error = "This chapter could not be opened. Try again from Contents." }
                     } }.accessibilityIdentifier("reader.player.chapter.\(index)")
                 }
-            } else {
+            }
+            if state.mode != .device {
                 ForEach(chapterGroups) { group in
                     Section(group.title) {
                         ForEach(group.takes) { take in
@@ -282,16 +358,27 @@ struct ReaderPlayerView: View {
     }
 
     private func refreshLocal() {
+        guard !discovering else { pendingDiscovery = true; return }
+        discovering = true
         state.readyIDs = []
         Task {
+            defer {
+                discovering = false
+                if pendingDiscovery { pendingDiscovery = false; refreshLocal() }
+            }
             do { let snapshot = try await reader.captureScope(.page); if let local = reader.book { state.discover(snapshot: snapshot, local: local, companion: companion) } }
-            catch { state.error = error.localizedDescription; state.readyIDs = [] }
+            catch { state.error = error.localizedDescription; state.readyIDs = []; state.selectedJobID = nil }
         }
     }
     private func capture(_ scope: NarrationScope) {
         state.invalidatePlaybackIntent()
         Task {
-            do { let snapshot = try await reader.captureScope(scope); detail = .production; await state.prepare(snapshot: snapshot, reader: reader, library: library, companion: companion) }
+            do {
+                let snapshot = try await reader.captureScope(scope)
+                detail = nil
+                await state.prepare(snapshot: snapshot, reader: reader, library: library, companion: companion)
+                if state.voice != nil && state.selection != nil { await state.generate(companion: companion) }
+            }
             catch { state.error = error.localizedDescription }
         }
     }
