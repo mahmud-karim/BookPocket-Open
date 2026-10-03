@@ -20,8 +20,21 @@ final class ReaderUITests: XCTestCase {
         let traitEvidence = XCTAttachment(string: (probe.value as? String) ?? "Missing actual trait")
         traitEvidence.name = "Verified native and SwiftUI accessibility text size"; traitEvidence.lifetime = .keepAlways; add(traitEvidence)
         XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.buttons["listen.downloads"].tap()
+        XCTAssertTrue(app.navigationBars["Downloads"].waitForExistence(timeout: 10))
+        let downloadsList = app.collectionViews.firstMatch
+        XCTAssertTrue(downloadsList.waitForExistence(timeout: 10))
         let recording = app.buttons["listen.download.transport-job"]
-        XCTAssertTrue(recording.waitForExistence(timeout: 10)); recording.tap()
+        // Auxiliary lists may scroll: at the largest text size the preceding
+        // take is taller than the compact screen, so this row is virtualized.
+        for _ in 0..<4 {
+            if recording.exists && recording.isHittable { break }
+            downloadsList.swipeUp()
+        }
+        guard recording.exists && recording.isHittable else {
+            XCTFail("The exact downloaded transport job must be reachable in the Downloads list")
+            return
+        }
+        recording.tap()
         let play = app.buttons["player.full.toggle"]
         XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertEqual(play.value as? String, "Playing"); play.tap()
         XCTAssertEqual(play.value as? String, "Paused")
