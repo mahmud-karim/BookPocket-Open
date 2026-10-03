@@ -38,7 +38,7 @@ struct ReaderPlayerView: View {
             }.background(Obsidian.background)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("reader.player.surface")
                 .navigationTitle("Read aloud").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { state.invalidatePlaybackIntent(); dismiss() } } }
                 .sheet(item: $detail) { item in
                     NavigationStack {
                         Group {
