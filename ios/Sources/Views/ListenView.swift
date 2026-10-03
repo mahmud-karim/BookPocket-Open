@@ -42,7 +42,6 @@ struct ListenView: View {
                         }
                     }.padding(.horizontal, landscape ? 28 : 24).padding(.vertical, 12)
                         .frame(width: geometry.size.width, height: geometry.size.height)
-                        .accessibilityIdentifier("listen.surface")
                 } else {
                     ContentUnavailableView("Your next listening chapter", systemImage: "headphones", description: Text("Open a book and choose Read aloud, or choose a downloaded narration from the tray above."))
                         .frame(width: geometry.size.width, height: geometry.size.height)
@@ -94,14 +93,16 @@ struct ListenView: View {
     }
     private func transport(compact: Bool) -> some View {
         HStack(spacing: compact ? 30 : 42) {
-            Button("Back 15 seconds or previous sentence", systemImage: "gobackward.15") { player.skip(-15) }
-                .font(.title2).frame(width: 44, height: 44).accessibilityIdentifier("listen.backward")
+            Button { player.skip(-15) } label: {
+                Image(systemName: "gobackward.15").font(.title2).frame(width: 44, height: 44).contentShape(.rect)
+            }.accessibilityLabel("Back 15 seconds or previous sentence").accessibilityIdentifier("listen.backward")
             Button(player.isPlaying ? "Pause" : "Play", systemImage: player.isPlaying ? "pause.fill" : "play.fill") { player.toggle() }
                 .font(.system(size: compact ? 26 : 30)).frame(width: compact ? 64 : 76, height: compact ? 64 : 76)
                 .background(Obsidian.accent.opacity(0.16), in: .circle)
                 .accessibilityIdentifier("player.full.toggle").accessibilityValue(player.isPlaying ? "Playing" : "Paused")
-            Button("Forward 15 seconds or next sentence", systemImage: "goforward.15") { player.skip(15) }
-                .font(.title2).frame(width: 44, height: 44).accessibilityIdentifier("listen.forward")
+            Button { player.skip(15) } label: {
+                Image(systemName: "goforward.15").font(.title2).frame(width: 44, height: 44).contentShape(.rect)
+            }.accessibilityLabel("Forward 15 seconds or next sentence").accessibilityIdentifier("listen.forward")
         }.labelStyle(.iconOnly)
     }
     private var settings: some View {
