@@ -62,8 +62,9 @@ enum CastMerge {
 struct CastService {
     var fetch: () async throws -> BookCast
     var save: (BookCast) async throws -> Void
-    var analyze: (Bool) async throws -> AnalysisJob
+    var analyze: (CastAnalysisRequest) async throws -> AnalysisJob
     var poll: (String) async throws -> AnalysisJob
+    var requireReliableAnalysis: () async throws -> Void
     var wait: () async throws -> Void = { try await Task.sleep(for: .seconds(3)) }
 }
 
@@ -73,6 +74,7 @@ struct CastService {
     private(set) var working = false
     private(set) var awaitingAnalysisConfirmation = false
     private var analysisBase: BookCast?
+    private(set) var pendingAnalysisRequest: CastAnalysisRequest?
     var busy: Bool { working || analysisBase != nil || awaitingAnalysisConfirmation }
     var canResumeAnalysis: Bool { analysisBase != nil && !working && !awaitingAnalysisConfirmation }
     private(set) var loading = false
@@ -105,6 +107,7 @@ struct CastService {
             while awaitingAnalysisConfirmation { try await service.wait(); try check(id) }
             if analysisBase != nil {
                 loading = false
+                if analysis == nil { try await confirmAnalysis(id: id, service: service) }
                 try await resumeAnalysis(id: id, book: book, service: service)
                 return
             }
@@ -131,25 +134,45 @@ struct CastService {
         let base = value
         defer { finish(id) }
         do {
+            try await service.requireReliableAnalysis(); try check(id)
             try await service.save(base); try check(id)
             saved = base
-            analysisRequestID = id; awaitingAnalysisConfirmation = true
-            let started: AnalysisJob
-            do { started = try await service.analyze(hosted) }
-            catch {
-                if analysisRequestID == id { awaitingAnalysisConfirmation = false; analysisRequestID = nil }
-                throw error
-            }
-            // Dismissal does not cancel the short POST confirmation request.
-            // Retain its ID/base even if this view's operation became obsolete;
-            // only an active operation may merge its eventual result.
-            guard analysisRequestID == id else { throw CancellationError() }
-            analysisRequestID = nil; awaitingAnalysisConfirmation = false
-            analysis = started
             analysisBase = base
-            try check(id)
+            pendingAnalysisRequest = CastAnalysisRequest(requestId: UUID().uuidString.lowercased(), allowHosted: hosted)
+            analysis = nil
+            try await confirmAnalysis(id: id, service: service, recovering: false)
             try await resumeAnalysis(id: id, book: book, service: service)
         } catch is CancellationError {} catch { if operationID == id { self.error = error.localizedDescription } }
+    }
+    private func confirmAnalysis(id: UUID, service: CastService, recovering: Bool = true) async throws {
+        guard let request = pendingAnalysisRequest else { return }
+        analysisRequestID = id; awaitingAnalysisConfirmation = true
+        let started: AnalysisJob
+        var submitted = false
+        do {
+            try await service.requireReliableAnalysis(); try check(id)
+            submitted = true
+            started = try await service.analyze(request)
+        }
+        catch {
+            if analysisRequestID == id {
+                awaitingAnalysisConfirmation = false; analysisRequestID = nil
+                if !recovering && (!submitted || (error as? CompanionHTTPError)?.definitivelyRejected == true) {
+                    // An explicit first-attempt rejection is not an uncertain
+                    // accepted job. Recovery errors never discard its identity.
+                    pendingAnalysisRequest = nil; analysisBase = nil
+                }
+            }
+            // Keep the UUID, consent and original merge base. A retry must never
+            // save the newer draft or start a second uncertain server job.
+            throw error
+        }
+        // A late confirmation can retain the server ID after dismissal, but only
+        // the current view operation may apply the eventual merged draft.
+        guard analysisRequestID == id else { throw CancellationError() }
+        analysisRequestID = nil; awaitingAnalysisConfirmation = false
+        analysis = started
+        try check(id)
     }
     private func resumeAnalysis(id: UUID, book: RemoteBook, service: CastService) async throws {
         guard let base = analysisBase, analysis != nil else { return }
@@ -163,5 +186,6 @@ struct CastService {
         let merged = try CastMerge.merge(base: base, local: value, remote: remote, book: book)
         value = merged; saved = remote
         analysisBase = nil
+        pendingAnalysisRequest = nil
     }
 }

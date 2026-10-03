@@ -7,6 +7,7 @@ import {
   type CastService,
 } from "./castDraft";
 import { sourceSlice, type Assignment, type Cast } from "./casting";
+import { APIError } from "./api";
 
 const character = {
   id: "mira",
@@ -53,6 +54,7 @@ function service(value: Cast): CastService {
   return {
     fetch: async () => value,
     save: async (next) => next,
+    canRecoverAnalysis: async () => true,
     analyze: async () => analysis,
     poll: async () => ({ ...analysis, status: "completed" }),
   };
@@ -167,6 +169,164 @@ describe("cast draft three-way merge", () => {
 });
 
 describe("production cast controller with delayed services", () => {
+  it("recovers an accepted submission after a lost response with the original ID, consent and merge base", async () => {
+    const draft = new CastDraft();
+    const base = cast(row("deleted", 0, 3));
+    await draft.load(service(base));
+    const requests: { id: string; consent: boolean }[] = [];
+    let saves = 0;
+    const transport: CastService = {
+      ...service(base),
+      save: async (value) => {
+        saves++;
+        return value;
+      },
+      analyze: async (consent, id) => {
+        requests.push({ id, consent });
+        if (requests.length === 1)
+          throw new TypeError("Confirmation lost after acceptance");
+        return { ...analysis, status: "completed" };
+      },
+      fetch: async () => cast(row("replacement", 0, 3), row("new", 10, 13)),
+    };
+    await expect(draft.analyze(transport, true)).rejects.toThrow(
+      "Confirmation lost",
+    );
+    expect(draft.busy).toBe(true);
+    expect(draft.canRetryConfirmation).toBe(true);
+    draft.change({
+      ...base,
+      characters: [{ ...character, name: "My Mira", aliases: [] }],
+      assignments: [],
+    });
+    await draft.save(transport);
+    await draft.load(transport);
+    await draft.analyze(transport, false);
+    expect(saves).toBe(0);
+    expect(requests).toHaveLength(1);
+    await draft.retryConfirmation(transport);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[0].consent).toBe(true);
+    expect(requests[0].id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(draft.value?.characters[0]).toMatchObject({
+      name: "My Mira",
+      aliases: [],
+    });
+    expect(draft.value?.assignments.map((a) => a.id)).toEqual(["new"]);
+    expect(draft.busy).toBe(false);
+    expect(draft.canRetryConfirmation).toBe(false);
+    expect(draft.saved).toBe(false);
+    await draft.save(service(draft.value!));
+    await draft.analyze(transport, false);
+    expect(requests[2].id).not.toBe(requests[0].id);
+    expect(requests[2].consent).toBe(false);
+  });
+  it("blocks older companions before submitting, without trapping the draft", async () => {
+    const draft = new CastDraft();
+    await draft.load(service(cast()));
+    let starts = 0;
+    await expect(
+      draft.analyze(
+        {
+          ...service(cast()),
+          canRecoverAnalysis: async () => false,
+          analyze: async () => {
+            starts++;
+            return analysis;
+          },
+        },
+        false,
+      ),
+    ).rejects.toThrow("Update the PC companion");
+    expect(starts).toBe(0);
+    expect(draft.busy).toBe(false);
+    expect(draft.canRetryConfirmation).toBe(false);
+  });
+  it("preserves edits made during capability checking against the last saved cast", async () => {
+    const draft = new CastDraft();
+    const base = cast(row("a", 0, 3));
+    await draft.load(service(base));
+    const capability = deferred<boolean>();
+    const starting = draft.analyze(
+      { ...service(base), canRecoverAnalysis: () => capability.promise },
+      false,
+    );
+    draft.change({ ...base, assignments: [] });
+    capability.resolve(true);
+    await starting;
+    await draft.poll(service(cast(row("returned", 0, 3), row("new", 4, 7))));
+    expect(draft.value?.assignments.map((a) => a.id)).toEqual(["new"]);
+  });
+  it("releases an explicitly rejected initial request but retains uncertain recovery after errors", async () => {
+    const draft = new CastDraft();
+    await draft.load(service(cast()));
+    const rejected = {
+      ...service(cast()),
+      analyze: async () => {
+        throw new APIError("Another analysis is running", 409);
+      },
+    };
+    await expect(draft.analyze(rejected, false)).rejects.toThrow(
+      "Another analysis",
+    );
+    expect(draft.busy).toBe(false);
+    expect(draft.canRetryConfirmation).toBe(false);
+    const ids: string[] = [];
+    const lost = {
+      ...service(cast()),
+      analyze: async (_consent: boolean, id: string) => {
+        ids.push(id);
+        throw new TypeError("Offline");
+      },
+    };
+    await expect(draft.analyze(lost, false)).rejects.toThrow("Offline");
+    await expect(draft.retryConfirmation(rejected)).rejects.toThrow(
+      "Another analysis",
+    );
+    await expect(
+      draft.retryConfirmation({
+        ...lost,
+        canRecoverAnalysis: async () => false,
+      }),
+    ).rejects.toThrow("Update the PC companion");
+    expect(draft.busy).toBe(true);
+    expect(draft.canRetryConfirmation).toBe(true);
+    await expect(draft.retryConfirmation(lost)).rejects.toThrow("Offline");
+    expect(ids[1]).toBe(ids[0]);
+  });
+  it("allows only one confirmation recovery in flight", async () => {
+    const draft = new CastDraft();
+    await draft.load(service(cast()));
+    await expect(
+      draft.analyze(
+        {
+          ...service(cast()),
+          analyze: async () => {
+            throw new TypeError("Offline");
+          },
+        },
+        false,
+      ),
+    ).rejects.toThrow("Offline");
+    const response = deferred<CastAnalysis>();
+    let requests = 0;
+    const transport = {
+      ...service(cast()),
+      analyze: async () => {
+        requests++;
+        return response.promise;
+      },
+    };
+    const recovering = draft.retryConfirmation(transport);
+    await Promise.resolve();
+    await draft.retryConfirmation(transport);
+    expect(requests).toBe(1);
+    expect(draft.canRetryConfirmation).toBe(false);
+    response.resolve(analysis);
+    await recovering;
+    expect(draft.analysis?.id).toBe(analysis.id);
+    expect(draft.busy).toBe(true);
+  });
   it("does not label edits made during a delayed save as saved", async () => {
     const draft = new CastDraft();
     await draft.load(service(cast()));

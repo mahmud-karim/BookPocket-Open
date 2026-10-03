@@ -135,7 +135,7 @@ def create_app(config=None, engines=None, start_worker=True):
                 if key != "global" and (not attempts[key] or attempts[key][-1] < current - 60): del attempts[key]
 
     @app.get("/v1/health")
-    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges"]}
+    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id"]}
 
     @app.get("/v1/admin/connection", dependencies=[Depends(admin)])
     def connection(): return {"url": config.public_url, "certificate_sha256": config.certificate_sha256}

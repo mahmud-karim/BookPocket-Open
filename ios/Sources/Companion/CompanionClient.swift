@@ -2,6 +2,13 @@ import Foundation
 import Security
 import CryptoKit
 
+struct CompanionHTTPError: LocalizedError {
+    var statusCode: Int
+    var detail: String
+    var errorDescription: String? { detail }
+    var definitivelyRejected: Bool { (400..<500).contains(statusCode) && ![408, 429].contains(statusCode) }
+}
+
 enum DeviceKeychain {
     static func save(_ value: String, account: String) throws {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "org.bookpocket.open.companion", kSecAttrAccount as String: account]
@@ -136,7 +143,8 @@ final class CompanionClient {
     private func validate(_ response: URLResponse, data: Data?) throws {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let detail = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["detail"] as? String
-            throw BookError.message(detail ?? "Companion request failed (\((response as? HTTPURLResponse)?.statusCode ?? 0)). Check that your PC is awake and this device is still paired.")
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw CompanionHTTPError(statusCode: status, detail: detail ?? "Companion request failed (\(status)). Check that your PC is awake and this device is still paired.")
         }
     }
 }

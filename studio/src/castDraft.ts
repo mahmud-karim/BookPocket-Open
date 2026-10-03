@@ -1,4 +1,5 @@
 import type { Assignment, Cast, Character } from "./casting";
+import { APIError } from "./api";
 import type { Segment } from "./types";
 
 const empty = (): Cast => ({ characters: [], assignments: [] });
@@ -154,7 +155,8 @@ export type CastAnalysis = {
 export type CastService = {
   fetch: () => Promise<Cast>;
   save: (cast: Cast) => Promise<Cast>;
-  analyze: (allowHosted: boolean) => Promise<CastAnalysis>;
+  canRecoverAnalysis: () => Promise<boolean>;
+  analyze: (allowHosted: boolean, requestID: string) => Promise<CastAnalysis>;
   poll: (id: string) => Promise<CastAnalysis>;
 };
 
@@ -170,6 +172,11 @@ export class CastDraft {
   private listeners = new Set<() => void>();
   private reading = false;
   private polling = false;
+  private confirming = false;
+  private pendingAnalysis?: { requestID: string; allowHosted: boolean };
+  get canRetryConfirmation() {
+    return !!this.pendingAnalysis && !this.confirming;
+  }
   get loading() {
     return this.reading;
   }
@@ -225,22 +232,62 @@ export class CastDraft {
   async analyze(service: CastService, allowHosted: boolean) {
     if (!this.value || !this.saved || this.busy || this.reading) return;
     this.busy = true;
-    this.analysisBase = clone(this.value);
-    this.analysis = undefined;
     this.emit();
     try {
-      this.analysis = await service.analyze(allowHosted);
+      if (!(await service.canRecoverAnalysis()))
+        throw new Error(
+          "Update the PC companion before starting cast analysis. This version cannot safely recover a lost confirmation.",
+        );
     } catch (error) {
       this.busy = false;
-      this.analysisBase = undefined;
       this.emit();
       throw error;
     }
+    this.analysisBase = clone(this.base);
+    this.analysis = undefined;
+    this.pendingAnalysis = { requestID: crypto.randomUUID(), allowHosted };
+    await this.confirmAnalysis(service, false);
+  }
+  async retryConfirmation(service: CastService) {
+    if (!this.canRetryConfirmation) return;
+    await this.confirmAnalysis(service, true);
+  }
+  private async confirmAnalysis(service: CastService, recovering: boolean) {
+    if (!this.pendingAnalysis || this.confirming) return;
+    const pending = this.pendingAnalysis;
+    this.confirming = true;
+    this.emit();
     try {
+      if (recovering && !(await service.canRecoverAnalysis()))
+        throw new Error(
+          "Update the PC companion to recover this analysis confirmation safely. Your edits have been kept.",
+        );
+      this.analysis = await service.analyze(
+        pending.allowHosted,
+        pending.requestID,
+      );
+      this.pendingAnalysis = undefined;
       // Keep Save disabled through final fetch, even if the start response is terminal.
       if (!["queued", "running"].includes(this.analysis.status))
         await this.finish(service, this.analysis);
+    } catch (error) {
+      // An initial, explicit client rejection did not accept this attempt.
+      // A transport failure (or a failed recovery) retains its original identity.
+      if (
+        !recovering &&
+        this.pendingAnalysis &&
+        error instanceof APIError &&
+        error.status >= 400 &&
+        error.status < 500 &&
+        ![408, 429].includes(error.status)
+      ) {
+        this.pendingAnalysis = undefined;
+        this.analysisBase = undefined;
+        this.busy = false;
+      }
+      throw error;
     } finally {
+      this.confirming = false;
       this.emit();
     }
   }

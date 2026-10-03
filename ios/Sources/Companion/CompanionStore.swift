@@ -191,9 +191,18 @@ import ReadiumZIPFoundation
         guard let client else { throw BookError.message("Connect to your companion first.") }
         let _: BookCast = try await client.send("/v1/books/\(bookID)/cast", method: "PUT", body: CompanionClient.encoder.encode(cast))
     }
-    func analyze(_ bookID: String, allowHosted: Bool) async throws -> AnalysisJob {
+    func requireReliableAnalysis() async throws {
         guard let client else { throw BookError.message("Connect to your companion first.") }
-        return try await client.send("/v1/books/\(bookID)/analyze", method: "POST", body: JSONSerialization.data(withJSONObject: ["allow_hosted": allowHosted]))
+        struct Health: Decodable { var capabilities: [String]? }
+        let health: Health = try await client.send("/v1/health")
+        guard health.capabilities?.contains("analysis_request_id") == true else {
+            throw BookError.message("Update PC Companion to a version supporting reliable analysis requests, then refresh. This version cannot safely recover an analysis after a lost connection.")
+        }
+    }
+    func analyze(_ bookID: String, request: CastAnalysisRequest) async throws -> AnalysisJob {
+        guard let client else { throw BookError.message("Connect to your companion first.") }
+        try await requireReliableAnalysis()
+        return try await client.send("/v1/books/\(bookID)/analyze", method: "POST", body: CompanionClient.encoder.encode(request))
     }
     func analysis(_ id: String) async throws -> AnalysisJob {
         guard let client else { throw BookError.message("Connect to your companion first.") }

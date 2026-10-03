@@ -53,8 +53,12 @@ export function CastEditor({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(value),
         }),
-      analyze: (allow_hosted) =>
-        post(`/v1/books/${book.id}/analyze`, { allow_hosted }),
+      canRecoverAnalysis: async () => {
+        const health = await api<{ capabilities?: string[] }>("/v1/health");
+        return health.capabilities?.includes("analysis_request_id") ?? false;
+      },
+      analyze: (allow_hosted, request_id) =>
+        post(`/v1/books/${book.id}/analyze`, { allow_hosted, request_id }),
       poll: (id) => api(`/v1/analyses/${id}`),
     }),
     [book.id],
@@ -117,6 +121,13 @@ export function CastEditor({
   async function analyze() {
     try {
       await draft.analyze(service, allowHosted);
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  }
+  async function recoverAnalysis() {
+    try {
+      await draft.retryConfirmation(service);
     } catch (e) {
       onError((e as Error).message);
     }
@@ -346,6 +357,20 @@ export function CastEditor({
           )}
           Analyze book
         </button>
+        {draft.canRetryConfirmation && (
+          <div aria-live="polite">
+            <p className="field-help">
+              The analysis confirmation did not arrive. Recover the original
+              request before saving your edits or starting another analysis.
+            </p>
+            <button
+              className="secondary"
+              onClick={() => void recoverAnalysis()}
+            >
+              Recover analysis
+            </button>
+          </div>
+        )}
         {running && (
           <p className="field-help">
             {analysis.completed_segments} of {analysis.total_segments} passages

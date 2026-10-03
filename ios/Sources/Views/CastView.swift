@@ -19,8 +19,9 @@ private struct CastDraftView: View {
     private var service: CastService {
         CastService(fetch: { try await companion.fetchCast(book.id) },
                     save: { try await companion.saveCast($0, bookID: book.id) },
-                    analyze: { try await companion.analyze(book.id, allowHosted: $0) },
-                    poll: { try await companion.analysis($0) })
+                    analyze: { try await companion.analyze(book.id, request: $0) },
+                    poll: { try await companion.analysis($0) },
+                    requireReliableAnalysis: { try await companion.requireReliableAnalysis() })
     }
     var body: some View {
         NavigationStack {
@@ -71,9 +72,13 @@ private struct CastDraftView: View {
                 } header: { Text("Dialogue & narration") } footer: { Text("Delete an incorrect range and select its exact replacement. Unassigned words use the narrator.") }
                 if let error = draft.error { Text(error).foregroundStyle(.red) }
                 if draft.canResumeAnalysis {
-                    Button("Refresh analysis results", systemImage: "arrow.clockwise") {
+                    Button(draft.analysis == nil ? "Recover analysis request" : "Refresh analysis results", systemImage: "arrow.clockwise") {
                         action = Task { await draft.load(book: book, service: service) }
                     }
+                }
+                if let request = draft.pendingAnalysisRequest, draft.analysis == nil {
+                    Text(request.allowHosted ? "This pending request keeps your original hosted-analysis consent. Recovery uses the same request and does not upload your newer cast edits." : "This pending request remains local-only. Recovery uses the same request and does not upload your newer cast edits.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if draft.dirty { Text("Unsaved edits are kept while this app stays open.").font(.caption).foregroundStyle(.secondary) }
                 Button("Save cast") { save() }.disabled(draft.busy)

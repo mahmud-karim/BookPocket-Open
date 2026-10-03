@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
-from .store import canonical, now
+from .store import canonical, digest, now
 
 class Character(BaseModel):
     id: str = Field(min_length=1, max_length=100)
@@ -36,6 +36,7 @@ class AnalyzerSettings(BaseModel):
 
 class AnalysisRequest(BaseModel):
     allow_hosted: bool = False
+    request_id: uuid.UUID | None = None
 
 def validate_cast(cast, book):
     segments = {s["id"]: s for c in book["chapters"] for s in c["segments"]}
@@ -162,7 +163,8 @@ ANALYSIS_SCHEMA = {"type": "object", "additionalProperties": False, "required": 
 def register_casting(app, store, auth, admin, get_book):
     with store.db() as db:
         db.executescript("""CREATE TABLE IF NOT EXISTS casts(book_id TEXT PRIMARY KEY,data TEXT);
-                          CREATE TABLE IF NOT EXISTS analyses(id TEXT PRIMARY KEY,data TEXT);""")
+                          CREATE TABLE IF NOT EXISTS analyses(id TEXT PRIMARY KEY,data TEXT);
+                          CREATE TABLE IF NOT EXISTS analysis_requests(request_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,analysis_id TEXT NOT NULL);""")
         for row in db.execute("SELECT id,data FROM analyses").fetchall():
             data = json.loads(row["data"])
             if data["status"] in {"running", "queued"}:
@@ -170,6 +172,16 @@ def register_casting(app, store, auth, admin, get_book):
                 db.execute("UPDATE analyses SET data=? WHERE id=?", (canonical(data), row["id"]))
     settings_file = store.root / "analyzer.json"
     analysis_lock = threading.Lock()
+    failed_persistence = {}
+
+    def read_analysis(db, identity):
+        # If a write failed while stopping a worker, never report that worker
+        # as still running. Repair its durable state when SQLite is writable.
+        if identity in failed_persistence:
+            db.execute("UPDATE analyses SET data=? WHERE id=?", (canonical(failed_persistence[identity]), identity))
+        row = db.execute("SELECT data FROM analyses WHERE id=?", (identity,)).fetchone()
+        if not row: raise HTTPException(404, "Analysis not found")
+        return json.loads(row[0])
 
     def settings():
         if not settings_file.exists(): raise HTTPException(409, "Configure an analysis model in Settings first")
@@ -215,21 +227,49 @@ def register_casting(app, store, auth, admin, get_book):
 
     @app.get("/v1/analyses/{identity}", dependencies=[Depends(auth)])
     def get_analysis(identity: str):
-        with store.db() as db: row = db.execute("SELECT data FROM analyses WHERE id=?", (identity,)).fetchone()
-        if not row: raise HTTPException(404, "Analysis not found")
-        return json.loads(row[0])
+        with store.db() as db: return read_analysis(db, identity)
 
     @app.post("/v1/books/{identity}/analyze", dependencies=[Depends(auth)], status_code=202)
     def analyze(identity: str, body: AnalysisRequest):
-        book, cfg = get_book(identity), settings()
-        if cfg["hosted"] and not body.allow_hosted: raise HTTPException(409, "Confirm sending this book to the configured hosted analysis API")
-        old = Cast.model_validate(get_cast(identity))
-        if not analysis_lock.acquire(blocking=False): raise HTTPException(409, "Another casting analysis is running")
-        job = {"id": str(uuid.uuid4()), "book_id": identity, "status": "queued", "completed_segments": 0,
-               "total_segments": sum(len(c["segments"]) for c in book["chapters"]), "created_at": now(), "error": None, "warnings": ["Automatic casting identifies paired double-quoted dialogue only. Unquoted speech, script dialogue, and literary quotation conventions need manual review; unassigned prose uses the narrator."]}
+        request_id = str(body.request_id) if body.request_id is not None else None
+        fingerprint = digest(canonical({"book_id": identity, "allow_hosted": body.allow_hosted}))
+        acquired = False
+        try:
+            with store.db() as db:
+                # Registration and lookup share the same SQLite write lock so
+                # simultaneous retries cannot race the first mapping commit.
+                db.execute("BEGIN IMMEDIATE")
+                if request_id:
+                    previous = db.execute("SELECT fingerprint,analysis_id FROM analysis_requests WHERE request_id=?", (request_id,)).fetchone()
+                    if previous:
+                        if previous["fingerprint"] != fingerprint:
+                            raise HTTPException(409, "This analysis request ID was already used with a different book or hosted consent")
+                        return read_analysis(db, previous["analysis_id"])
+                book, cfg = get_book(identity), settings()
+                if cfg["hosted"] and not body.allow_hosted: raise HTTPException(409, "Confirm sending this book to the configured hosted analysis API")
+                old = Cast.model_validate(get_cast(identity))
+                if not analysis_lock.acquire(blocking=False): raise HTTPException(409, "Another casting analysis is running")
+                acquired = True
+                job = {"id": str(uuid.uuid4()), "book_id": identity, "status": "queued", "completed_segments": 0,
+                       "total_segments": sum(len(c["segments"]) for c in book["chapters"]), "created_at": now(), "error": None, "warnings": ["Automatic casting identifies paired double-quoted dialogue only. Unquoted speech, script dialogue, and literary quotation conventions need manual review; unassigned prose uses the narrator."]}
+                db.execute("INSERT INTO analyses VALUES(?,?)", (job["id"], canonical(job)))
+                if request_id:
+                    db.execute("INSERT INTO analysis_requests VALUES(?,?,?)", (request_id, fingerprint, job["id"]))
+        except BaseException:
+            if acquired: analysis_lock.release()
+            raise
         def persist():
-            with store.db() as db: db.execute("INSERT OR REPLACE INTO analyses VALUES(?,?)", (job["id"], canonical(job)))
-        persist()
+            with store.db() as db: db.execute("UPDATE analyses SET data=? WHERE id=?", (canonical(job), job["id"]))
+        def finish():
+            try:
+                persist()
+            except Exception:
+                job.update(status="failed", error="Unable to save analysis status. Check available disk space; start a new analysis after resolving storage errors", finished_at=now())
+                failed_persistence[job["id"]] = dict(job)
+                try: persist()
+                except Exception: pass  # Repaired by read_analysis or startup recovery.
+            finally:
+                analysis_lock.release()
         def run():
             try:
                 job["status"] = "running"
@@ -301,7 +341,10 @@ def register_casting(app, store, auth, admin, get_book):
             except Exception as exc:
                 job.update(status="failed", error=str(exc)[:1500], finished_at=now())
             finally:
-                persist()
-                analysis_lock.release()
-        threading.Thread(target=run, daemon=True, name="casting-analysis").start()
-        return job
+                finish()
+        try:
+            threading.Thread(target=run, daemon=True, name="casting-analysis").start()
+        except Exception:
+            job.update(status="failed", error="Unable to start analysis worker; start a new analysis to retry", finished_at=now())
+            finish()
+        return get_analysis(job["id"])

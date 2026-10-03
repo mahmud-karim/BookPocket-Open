@@ -142,6 +142,10 @@ struct NarrationSpan: Codable {
     var endOffset: Int
     var voiceId: String
 }
+struct CastAnalysisRequest: Codable, Equatable {
+    var requestId: String
+    var allowHosted: Bool
+}
 struct AnalysisJob: Codable, Identifiable {
     var id: String
     var bookId: String

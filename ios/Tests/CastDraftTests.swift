@@ -97,7 +97,7 @@ final class CastDraftTests: XCTestCase {
         let loaded = CastArrival<BookCast>("fetch entered")
         let saved = CastArrival<Bool>("save entered")
         var sent: [BookCast] = []
-        let service = CastService(fetch: { await loaded.wait() }, save: { snapshot in sent.append(snapshot); _ = await saved.wait() }, analyze: { _ in self.job("completed") }, poll: { _ in self.job("completed") })
+        let service = CastService(fetch: { await loaded.wait() }, save: { snapshot in sent.append(snapshot); _ = await saved.wait() }, analyze: { _ in self.job("completed") }, poll: { _ in self.job("completed") }, requireReliableAnalysis: {})
         let loading = Task { await draft.load(book: book, service: service) }
         await fulfillment(of: [loaded.started], timeout: 5)
         draft.value.characters.append(.init(id: "typed-first", name: "Typed while loading", aliases: [], voiceId: nil))
@@ -123,7 +123,7 @@ final class CastDraftTests: XCTestCase {
         let arrival = CastArrival<AnalysisJob>("analysis poll entered")
         let finalArrival = CastArrival<BookCast>("final cast fetch entered")
         var server = base; var writes: [BookCast] = []; var fetches = 0
-        let service = CastService(fetch: { fetches += 1; if fetches == 1 { return base }; return await finalArrival.wait() }, save: { writes.append($0) }, analyze: { _ in self.job("running") }, poll: { _ in await arrival.wait() }, wait: {})
+        let service = CastService(fetch: { fetches += 1; if fetches == 1 { return base }; return await finalArrival.wait() }, save: { writes.append($0) }, analyze: { _ in self.job("running") }, poll: { _ in await arrival.wait() }, requireReliableAnalysis: {}, wait: {})
         await draft.load(book: book, service: service)
         let analyzing = Task { await draft.analyze(book: book, hosted: false, service: service) }
         await fulfillment(of: [arrival.started], timeout: 5)
@@ -151,7 +151,7 @@ final class CastDraftTests: XCTestCase {
         let draft = store.castDraft(for: book.id)
         let arrival = CastArrival<BookCast>("old fetch entered")
         let base = BookCast(characters: characters)
-        let old = CastService(fetch: { await arrival.wait() }, save: { _ in }, analyze: { _ in self.job("completed") }, poll: { _ in self.job("completed") })
+        let old = CastService(fetch: { await arrival.wait() }, save: { _ in }, analyze: { _ in self.job("completed") }, poll: { _ in self.job("completed") }, requireReliableAnalysis: {})
         let loading = Task { await draft.load(book: book, service: old) }
         await fulfillment(of: [arrival.started], timeout: 5)
         draft.value = base; draft.value.characters[0].name = "Kept locally"
@@ -177,7 +177,7 @@ final class CastDraftTests: XCTestCase {
         let base = BookCast(characters: characters, assignments: [row("outer", "“Mira 🧭 said, ‘stay.’”")])
         let oldPoll = CastArrival<AnalysisJob>("old analysis poll")
         var writes = 0; var submissions = 0; var polled: [String] = []
-        var service = CastService(fetch: { base }, save: { _ in writes += 1 }, analyze: { _ in submissions += 1; return self.job("running") }, poll: { id in polled.append(id); return await oldPoll.wait() }, wait: {})
+        var service = CastService(fetch: { base }, save: { _ in writes += 1 }, analyze: { _ in submissions += 1; return self.job("running") }, poll: { id in polled.append(id); return await oldPoll.wait() }, requireReliableAnalysis: {}, wait: {})
         await draft.load(book: book, service: service)
         let first = Task { await draft.analyze(book: book, hosted: false, service: service) }
         await fulfillment(of: [oldPoll.started], timeout: 5)
@@ -225,7 +225,7 @@ final class CastDraftTests: XCTestCase {
         let confirmation = CastArrival<AnalysisJob>("analysis confirmation")
         let reopenedWait = CastArrival<Bool>("reopen awaiting confirmation")
         var submissions = 0; var writes = 0; var waits = 0
-        var service = CastService(fetch: { base }, save: { _ in writes += 1 }, analyze: { _ in submissions += 1; return await confirmation.wait() }, poll: { id in XCTAssertEqual(id, "analysis"); return self.job("completed") }, wait: {})
+        var service = CastService(fetch: { base }, save: { _ in writes += 1 }, analyze: { _ in submissions += 1; return await confirmation.wait() }, poll: { id in XCTAssertEqual(id, "analysis"); return self.job("completed") }, requireReliableAnalysis: {}, wait: {})
         await draft.load(book: book, service: service)
         let starting = Task { await draft.analyze(book: book, hosted: false, service: service) }
         await fulfillment(of: [confirmation.started], timeout: 5)
@@ -244,5 +244,122 @@ final class CastDraftTests: XCTestCase {
         XCTAssertTrue(draft.dirty)
         XCTAssertFalse(draft.busy)
         XCTAssertEqual(submissions, 1); XCTAssertEqual(writes, 1)
+    }
+
+    @MainActor func testAcceptedButLostConfirmationRecoversSameRequestConsentAndMergeBase() async throws {
+        let draft = CastDraft()
+        let base = BookCast(characters: characters, assignments: [row("old-outer", "“Mira 🧭 said, ‘stay.’”")])
+        var server = base
+        var requests: [CastAnalysisRequest] = []
+        var accepted: [String: Bool] = [:]
+        var writes: [BookCast] = []
+        var loseFirstResponse = true
+        var capability = true
+        let service = CastService(fetch: { server }, save: { writes.append($0) }, analyze: { request in
+            requests.append(request)
+            if let consent = accepted[request.requestId] { XCTAssertEqual(consent, request.allowHosted) }
+            else { accepted[request.requestId] = request.allowHosted }
+            server.assignments = [self.row("new-outer-id", "“Mira 🧭 said, ‘stay.’”"), self.row("outside", "“Go.”", character: "ivo")]
+            if loseFirstResponse { loseFirstResponse = false; throw URLError(.networkConnectionLost) }
+            var result = self.job("completed"); result.id = request.requestId
+            return result
+        }, poll: { _ in XCTFail("The recovered job is already terminal"); return self.job("completed") }, requireReliableAnalysis: {
+            if !capability { throw BookError.message("Update PC Companion for reliable analysis requests.") }
+        }, wait: {})
+        await draft.load(book: book, service: service)
+        await draft.analyze(book: book, hosted: true, service: service)
+        let pending = try XCTUnwrap(draft.pendingAnalysisRequest)
+        XCTAssertNotNil(UUID(uuidString: pending.requestId))
+        XCTAssertTrue(pending.allowHosted)
+        XCTAssertTrue(draft.busy)
+        XCTAssertTrue(draft.canResumeAnalysis)
+        XCTAssertEqual(accepted.count, 1)
+        XCTAssertEqual(writes, [base])
+
+        draft.value.characters[0].aliases = []
+        let manual = row("manual-after-loss", "🧭 said, ‘stay.’", reviewed: true)
+        draft.value.assignments = [manual]
+        draft.cancel() // Same in-memory per-book draft is reopened.
+        await draft.analyze(book: book, hosted: false, service: service)
+        let savedWhilePending = await draft.save(service: service)
+        XCTAssertFalse(savedWhilePending)
+        XCTAssertEqual(requests.count, 1)
+        capability = false
+        await draft.load(book: book, service: service)
+        XCTAssertEqual(requests.count, 1, "An older PC must not receive an uncertain retry")
+        XCTAssertTrue(draft.error?.contains("Update PC Companion") == true)
+        XCTAssertEqual(draft.pendingAnalysisRequest, pending)
+
+        capability = true
+        await draft.load(book: book, service: service)
+        XCTAssertEqual(requests, [pending, pending], "Recovery must retain UUID and original hosted consent")
+        XCTAssertEqual(accepted.count, 1, "The accepted logical request must not duplicate")
+        XCTAssertEqual(writes, [base], "Recovery must not PUT the newer human draft over server analysis")
+        XCTAssertEqual(draft.value.assignments.map(\.id), [manual.id, "outside"])
+        XCTAssertEqual(draft.value.characters[0].aliases, [])
+        XCTAssertTrue(draft.dirty)
+        XCTAssertFalse(draft.busy)
+        XCTAssertNil(draft.pendingAnalysisRequest)
+        await draft.analyze(book: book, hosted: false, service: service)
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertNotEqual(requests[2].requestId, pending.requestId, "A deliberate analysis after known completion gets a fresh identity")
+        XCTAssertFalse(requests[2].allowHosted)
+        XCTAssertEqual(accepted.count, 2)
+        XCTAssertEqual(writes.count, 2)
+    }
+
+    @MainActor func testOlderCompanionIsRejectedBeforeSavingAnalysisStartSnapshot() async {
+        let draft = CastDraft(); draft.value = BookCast(characters: characters)
+        var saves = 0; var submissions = 0
+        let service = CastService(fetch: { BookCast() }, save: { _ in saves += 1 }, analyze: { _ in submissions += 1; return self.job("completed") }, poll: { _ in self.job("completed") }, requireReliableAnalysis: { throw BookError.message("Update PC Companion for reliable analysis requests.") })
+        await draft.analyze(book: book, hosted: false, service: service)
+        XCTAssertEqual(saves, 0); XCTAssertEqual(submissions, 0)
+        XCTAssertNil(draft.pendingAnalysisRequest)
+        XCTAssertTrue(draft.error?.contains("Update PC Companion") == true)
+        XCTAssertEqual(draft.value.characters, characters)
+    }
+
+    @MainActor func testInitialExplicitRejectionReleasesAttemptButRecoveryErrorsRetainIt() async throws {
+        for status in [400, 401, 403, 404, 409, 422, 408, 429, 500, 503] {
+            let draft = CastDraft(); draft.value = BookCast(characters: characters)
+            var requests: [CastAnalysisRequest] = []
+            var responseStatus = status
+            let service = CastService(fetch: { BookCast(characters: self.characters) }, save: { _ in }, analyze: { request in
+                requests.append(request)
+                throw CompanionHTTPError(statusCode: responseStatus, detail: "Explicit test response \(responseStatus)")
+            }, poll: { _ in self.job("completed") }, requireReliableAnalysis: {})
+            await draft.analyze(book: book, hosted: false, service: service)
+            let rejected = (400..<500).contains(status) && ![408, 429].contains(status)
+            XCTAssertEqual(draft.pendingAnalysisRequest == nil, rejected, "HTTP \(status)")
+            XCTAssertEqual(draft.busy, !rejected, "HTTP \(status)")
+            if !rejected {
+                let pending = try XCTUnwrap(draft.pendingAnalysisRequest)
+                responseStatus = 409
+                await draft.load(book: book, service: service)
+                XCTAssertEqual(draft.pendingAnalysisRequest, pending, "A conflict during uncertain recovery must not release the original identity")
+                XCTAssertEqual(requests, [pending, pending])
+                XCTAssertTrue(draft.busy)
+            }
+        }
+    }
+
+    @MainActor func testEditsDuringCapabilityCheckRemainUnsavedAndMergeAgainstStartSnapshot() async throws {
+        let draft = CastDraft(); let base = BookCast(characters: characters); draft.value = base
+        let capability = CastArrival<Bool>("initial capability check")
+        var checks = 0; var writes: [BookCast] = []
+        let service = CastService(fetch: { base }, save: { writes.append($0) }, analyze: { _ in self.job("completed") }, poll: { _ in self.job("completed") }, requireReliableAnalysis: {
+            checks += 1
+            if checks == 1 { _ = await capability.wait() }
+        })
+        let analysis = Task { await draft.analyze(book: book, hosted: false, service: service) }
+        await fulfillment(of: [capability.started], timeout: 5)
+        draft.value.characters[0].name = "Typed during capability check"
+        draft.value.characters[0].aliases = []
+        capability.deliver(true); await analysis.value
+        XCTAssertEqual(writes, [base])
+        XCTAssertEqual(draft.saved, base)
+        XCTAssertEqual(draft.value.characters[0].name, "Typed during capability check")
+        XCTAssertEqual(draft.value.characters[0].aliases, [])
+        XCTAssertTrue(draft.dirty)
     }
 }
