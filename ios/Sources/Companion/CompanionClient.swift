@@ -110,6 +110,11 @@ final class CompanionClient {
         baseURL = normalized; self.fingerprint = cleaned?.isEmpty == false ? cleaned : nil; self.token = token
         delegate = PinnedSessionDelegate(origin: normalized, fingerprint: self.fingerprint)
         let config = configuration ?? URLSessionConfiguration.default
+        #if DEBUG
+        if configuration == nil, UITestConnectionFixture.enabled {
+            UITestConnectionFixture.configure(config)
+        }
+        #endif
         config.tlsMinimumSupportedProtocolVersion = .TLSv12
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 3600
         config.urlCache = nil; config.httpCookieStorage = nil; config.waitsForConnectivity = false

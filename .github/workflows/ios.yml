@@ -58,6 +58,7 @@ jobs:
           mkdir -p artifacts
           xcrun simctl io '${{ steps.device.outputs.id }}' screenshot artifacts/final-screen.png || true
           xcrun xcresulttool export attachments --path artifacts/Tests.xcresult --output-path artifacts/screenshots || true
+          xcrun xcresulttool export diagnostics --path artifacts/Tests.xcresult --output-path artifacts/diagnostics || true
       - name: Boot compact iPhone
         timeout-minutes: 10
         run: |
@@ -90,6 +91,7 @@ jobs:
           mkdir -p artifacts
           xcrun simctl io '${{ steps.compact.outputs.id }}' screenshot artifacts/compact-final-screen.png || true
           xcrun xcresulttool export attachments --path artifacts/CompactListen.xcresult --output-path artifacts/compact-screenshots || true
+          xcrun xcresulttool export diagnostics --path artifacts/CompactListen.xcresult --output-path artifacts/compact-diagnostics || true
       - if: always()
         uses: actions/upload-artifact@v4
         with:

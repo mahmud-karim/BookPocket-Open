@@ -14,7 +14,7 @@ struct ReaderPlayerView: View {
     @State private var chooser: Chooser?
     @State private var discovering = false
     @State private var pendingDiscovery = false
-    private enum Chooser { case narrator, scope }
+    private enum Chooser { case narrator, scope, speed, sleep }
     private var job: RemoteJob? { companion.jobs.first { $0.id == state.selectedJobID } }
     private var active: Bool {
         guard player.bookID == reader.bookID else { return false }
@@ -149,17 +149,12 @@ struct ReaderPlayerView: View {
         }
     }
     private var speedControl: some View {
-        Menu {
-            ForEach([0.75, 1, 1.25, 1.5, 2], id: \.self) { rate in Button("\(rate.formatted())×") { player.rate = rate } }
-        } label: { Text("\(player.rate.formatted())×").font(.system(size: 16, weight: .medium)).monospacedDigit().frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
-            .accessibilityLabel("Playback speed").accessibilityIdentifier("reader.player.speed")
+        Button { chooser = .speed } label: { Text("\(player.rate.formatted())×").font(.system(size: 16, weight: .medium)).monospacedDigit().frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
+            .accessibilityLabel("Playback speed").accessibilityValue("\(player.rate.formatted())×").accessibilityIdentifier("reader.player.speed")
     }
     private var sleepControl: some View {
-        Menu {
-            Button("Off") { player.sleep(minutes: nil) }
-            ForEach([5, 15, 30, 60], id: \.self) { minutes in Button("\(minutes) minutes") { player.sleep(minutes: minutes) } }
-        } label: { Image(systemName: "moon").font(.system(size: 22)).frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
-            .accessibilityLabel("Sleep timer").accessibilityIdentifier("reader.player.sleep")
+        Button { chooser = .sleep } label: { Image(systemName: "moon").font(.system(size: 22)).frame(minWidth: 48, minHeight: 48).contentShape(.rect) }
+            .accessibilityLabel("Sleep timer").accessibilityValue(player.sleepUntil == nil ? "Off" : "On").accessibilityIdentifier("reader.player.sleep")
     }
     private func transport(wide: Bool = false) -> some View {
         VStack(spacing: 8) {
@@ -210,6 +205,26 @@ struct ReaderPlayerView: View {
         // system menu can report displaced accessibility frames in the reader.
         let layout = wide ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 12))
         return VStack(spacing: 12) {
+            if choice == .speed || choice == .sleep {
+                Text(choice == .speed ? "Playback speed" : "Sleep timer").font(.headline)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: wide ? 5 : 2), spacing: 12) {
+                    if choice == .speed {
+                        ForEach([0.75, 1, 1.25, 1.5, 2], id: \.self) { rate in
+                            Button { player.rate = rate; chooser = nil } label: {
+                                Text("\(rate.formatted())×").font(.system(size: 22, weight: .medium)).monospacedDigit()
+                                    .frame(maxWidth: .infinity, minHeight: 48).background(Obsidian.surface, in: .rect(cornerRadius: 12)).contentShape(.rect)
+                            }.buttonStyle(.plain).accessibilityAddTraits(player.rate == rate ? .isSelected : [])
+                        }
+                    } else {
+                        ForEach([0, 5, 15, 30, 60], id: \.self) { minutes in
+                            Button { player.sleep(minutes: minutes == 0 ? nil : minutes); chooser = nil } label: {
+                                Text(minutes == 0 ? "Off" : "\(minutes) min").font(.system(size: 20, weight: .medium))
+                                    .frame(maxWidth: .infinity, minHeight: 48).background(Obsidian.surface, in: .rect(cornerRadius: 12)).contentShape(.rect)
+                            }.buttonStyle(.plain).accessibilityLabel(minutes == 0 ? "Off" : "\(minutes) minutes")
+                        }
+                    }
+                }
+            } else {
             if choice == .scope && !dynamicTypeSize.isAccessibilitySize && !wide {
                 Text("What would you like to generate?").font(.headline).multilineTextAlignment(.center)
             }
@@ -242,6 +257,7 @@ struct ReaderPlayerView: View {
             if choice == .scope {
                 Button("Cancel") { if detail != nil { detail = .production } else { chooser = nil } }
                     .frame(minWidth: 48, minHeight: 48).accessibilityIdentifier("reader.generate.cancel")
+            }
             }
         }
     }

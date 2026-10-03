@@ -119,10 +119,12 @@ final class ReaderUITests: XCTestCase {
         XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled, "Unrelated transport audio must not become Kyon")
         assertReaderPlayerFits(app, name: "Obsidian reader player largest text portrait")
         assertReaderScopeChoicesFit(app, name: "Obsidian generation choices largest text portrait")
+        assertReaderSettingsFit(app, name: "Obsidian playback choices largest text portrait")
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
         assertReaderPlayerFits(app, name: "Obsidian reader player largest text landscape")
         assertReaderScopeChoicesFit(app, name: "Obsidian generation choices largest text landscape")
+        assertReaderSettingsFit(app, name: "Obsidian playback choices largest text landscape")
     }
 
     private func chooseReaderNarrator(_ app: XCUIApplication, _ mode: String) {
@@ -175,6 +177,25 @@ final class ReaderUITests: XCTestCase {
         app.buttons["reader.player.choice.back"].tap()
         XCTAssertTrue(app.buttons["reader.player.generate"].waitForExistence(timeout: 5))
     }
+    private func assertReaderSettingsFit(_ app: XCUIApplication, name: String) {
+        app.buttons["reader.player.speed"].tap()
+        XCTAssertTrue(app.buttons["1.5×"].waitForExistence(timeout: 5))
+        for title in ["0.75×", "1×", "1.25×", "1.5×", "2×"] { assertMinimumHitArea(app.buttons[title]) }
+        XCTAssertEqual(app.otherElements["reader.player.surface"].scrollViews.count, 0)
+        let rates = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        rates.name = name + " rates"; rates.lifetime = .keepAlways; add(rates)
+        app.buttons["1.5×"].tap()
+        XCTAssertEqual(app.buttons["reader.player.speed"].value as? String, "1.5×")
+        app.buttons["reader.player.sleep"].tap()
+        XCTAssertTrue(app.buttons["5 minutes"].waitForExistence(timeout: 5))
+        for title in ["Off", "5 minutes", "15 minutes", "30 minutes", "60 minutes"] { assertMinimumHitArea(app.buttons[title]) }
+        let timer = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        timer.name = name + " timer"; timer.lifetime = .keepAlways; add(timer)
+        app.buttons["5 minutes"].tap()
+        XCTAssertEqual(app.buttons["reader.player.sleep"].value as? String, "On")
+        app.buttons["reader.player.sleep"].tap(); app.buttons["Off"].tap()
+        XCTAssertEqual(app.buttons["reader.player.sleep"].value as? String, "Off")
+    }
 
     func testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate() {
         executionTimeAllowance = 240
@@ -204,7 +225,8 @@ final class ReaderUITests: XCTestCase {
         let slider = app.sliders["reader.player.seek"]
         XCTAssertTrue(slider.exists && slider.isHittable); slider.adjust(toNormalizedSliderPosition: 0.5)
         XCTAssertGreaterThan(slider.normalizedSliderPosition, 0.3); XCTAssertLessThan(slider.normalizedSliderPosition, 0.7)
-        app.buttons["reader.player.speed"].tap(); app.buttons["1.5×"].tap()
+        assertReaderSettingsFit(app, name: "Obsidian offline playback choices")
+        XCTAssertEqual(play.value as? String, "Paused", "Adjusting speed and timer must not resume paused audio")
         app.navigationBars["Read aloud"].buttons["Done"].tap()
         app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
         XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 90, "The actual local fixture recording must be loaded")

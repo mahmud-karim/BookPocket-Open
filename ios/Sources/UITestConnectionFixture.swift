@@ -6,8 +6,10 @@ enum UITestConnectionFixture {
     static var enabled: Bool {
         ProcessInfo.processInfo.arguments.contains("--uitesting") && ProcessInfo.processInfo.arguments.contains("--connection-fixture")
     }
+    static func configure(_ configuration: URLSessionConfiguration) {
+        configuration.protocolClasses = [ConnectionUITestProtocol.self]
+    }
     @MainActor static func store(root: URL) throws -> CompanionStore {
-        URLProtocol.registerClass(ConnectionUITestProtocol.self)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let identity = CompanionIdentity(url: URL(string: "https://old-connection.invalid")!, fingerprint: nil, deviceID: "test-only-connection-device")
         let client = try CompanionClient(url: identity.url, fingerprint: nil, token: "test-only-connection-token")
