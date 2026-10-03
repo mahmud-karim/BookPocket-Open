@@ -4,6 +4,7 @@ This observes durable SQLite metadata, never modifies the running companion,
 and does not establish physical-device highlighting or speech quality.
 """
 import argparse
+from contextlib import closing
 import json
 import math
 from pathlib import Path
@@ -48,7 +49,7 @@ def audit(root, report, minutes):
     try:
         while True:
             # mode=ro prevents creating a new database if the selected run exits.
-            with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=10) as connection:
+            with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=10)) as connection:
                 rows = connection.execute("SELECT data FROM books").fetchall()
                 assert len(rows) == 1, "Expected one isolated book"
                 book = json.loads(rows[0][0])

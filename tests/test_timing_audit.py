@@ -1,6 +1,10 @@
-"""Independent metadata boundary checks; never start the endurance observer/model."""
+"""Independent metadata and completed-fixture audit checks; never start a model."""
 import copy
+import gc
+import json
+import os
 import re
+import sqlite3
 
 import pytest
 from test_release_tools import module
@@ -88,3 +92,46 @@ def test_rejects_missing_timing_metadata(timing_case):
     asset["timings"] = []
     with pytest.raises(AssertionError, match="Missing timing metadata"):
         module("audit_render_timings").validate_timing(segment, asset)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows rejects deletion with a leaked SQLite handle")
+def test_completed_audit_closes_database_before_return_without_garbage_collection(tmp_path, monkeypatch, timing_case):
+    audit = module("audit_render_timings")
+    # Scope the script's normal artifacts guard to this test-owned repository.
+    # The production assertion and the actual read-only audit are unchanged.
+    monkeypatch.setattr(audit, "__file__", str(tmp_path / "scripts" / "audit_render_timings.py"))
+    root = tmp_path / "artifacts" / "bookpocket-cpu-endurance-handle-test"
+    root.mkdir(parents=True)
+    segment, asset = copy.deepcopy(timing_case)
+    segment["id"] = "original-segment"
+    asset.update(id="original-asset", segment_id=segment["id"])
+    book = {"chapters": [{"segments": [segment]}]}
+    job = {"status": "completed", "segment_ids": [segment["id"]], "assets": [asset]}
+    database = root / "library.sqlite3"
+    setup = sqlite3.connect(database)
+    try:
+        setup.executescript("CREATE TABLE books(data TEXT); CREATE TABLE jobs(data TEXT);")
+        setup.execute("INSERT INTO books VALUES(?)", (json.dumps(book),))
+        setup.execute("INSERT INTO jobs VALUES(?)", (json.dumps(job),))
+        setup.commit()
+    finally:
+        setup.close()
+    before = database.read_bytes()
+    report = tmp_path / "audit-report.json"
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        audit.audit(root, report, minutes=1)
+        result = json.loads(report.read_text(encoding="utf-8"))
+        assert result["status"] == "pass"
+        assert result["validated_assets"] == result["expected_assets"] == 1
+        assert result["alignment_counts"] == {"word": 1, "sentence": 0}
+        assert database.read_bytes() == before, "Read-only audit must preserve its original metadata"
+        database.unlink()  # A sqlite context manager alone leaks the handle here.
+        assert not database.exists()
+    finally:
+        if was_enabled:
+            gc.enable()
+        # Release a regressed connection only after the assertion has failed, so
+        # pytest can safely remove its fixture directory without masking failure.
+        gc.collect()
