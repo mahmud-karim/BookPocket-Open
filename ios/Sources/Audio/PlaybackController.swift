@@ -88,7 +88,9 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     func play(url: URL, book: LocalBook, start: Double = 0) throws {
         stop()
         error = nil
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.allowAirPlay, .allowBluetoothA2DP])
+        // Playback already supports AirPlay and Bluetooth A2DP. Explicit
+        // allowAirPlay is only valid for playAndRecord and can throw OSStatus -50.
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
         try AVAudioSession.sharedInstance().setActive(true)
         let audio = try AVAudioPlayer(contentsOf: url)
         audio.delegate = self; audio.enableRate = true; audio.rate = Float(rate)
