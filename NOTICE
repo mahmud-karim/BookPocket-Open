@@ -14,8 +14,15 @@ Font License. Their license text accompanies their installed npm packages.
 Kokoro and Qwen3-TTS model weights and runtime packages are optional separate
 downloads. Their upstream licenses apply. They are not relicensed by this project.
 Optional external VoiceStudio integration communicates through its API; no
-VoiceStudio AGPL source is included. OmniVoice weights have separate noncommercial
-terms and are not the default redistributable model for this project.
+VoiceStudio AGPL source is included. The optional managed OmniVoice adapter downloads
+the official Apache-2.0 runtime and pinned pretrained weights separately. OmniVoice
+weights are CC-BY-NC; the Higgs audio tokenizer has its own community license.
+Neither model weights nor user voice references are bundled with this application.
+
+Built with Higgs Materials licensed from Boson AI USA, Inc., Copyright Boson AI
+USA, Inc., All Rights Reserved and Meta Llama 3 licensed under the Meta Llama 3
+Community License, Copyright Meta Platforms, Inc., All Right Reserved.
+The upstream model and tokenizer licenses accompany the downloaded model snapshot.
 
 The test EPUB and text contain original fixture prose. The waveform fixture is
 deterministically generated test audio, not synthesized speech or a voice sample.

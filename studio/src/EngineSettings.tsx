@@ -92,7 +92,8 @@ export function EngineList({ engines }: { engines: Engine[] }) {
                 <span className="license">{e.license}</span>
                 {task?.error && <p className="job-error">{task.error}</p>}
               </div>
-              {!e.available && ["kokoro", "qwen3"].includes(e.id) ? (
+              {!e.available &&
+              ["kokoro", "qwen3", "omnivoice"].includes(e.id) ? (
                 <button
                   className="secondary"
                   disabled={working}

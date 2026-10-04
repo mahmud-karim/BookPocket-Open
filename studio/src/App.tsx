@@ -1078,9 +1078,12 @@ function VoiceDialog({
         <VoiceSampleInput />
         <label>
           What is said in the recording{" "}
-          <span className="muted">(optional)</span>
+          <span className="muted">
+            {engine === "omnivoice" ? "(required)" : "(optional)"}
+          </span>
           <textarea
             name="transcript"
+            required={engine === "omnivoice"}
             rows={3}
             placeholder="An accurate transcript can improve the result."
           />

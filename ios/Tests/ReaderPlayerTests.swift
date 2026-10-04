@@ -101,6 +101,12 @@ final class ReaderPlayerTests: XCTestCase {
     func testTakeMatchingRequiresNarratorProvenanceAndCoversCurrentPage() {
         let original = job()
         XCTAssertEqual(ReaderTakeMatch.mode(original), .kyon)
+        var managed = original; managed.engine = "omnivoice"
+        XCTAssertEqual(ReaderTakeMatch.mode(managed), .kyon)
+        managed.voiceName = nil
+        XCTAssertNil(ReaderTakeMatch.mode(managed), "An engine identity does not establish narrator provenance")
+        managed.voiceName = "Kyon"; managed.narrationMode = "full_cast"
+        XCTAssertEqual(ReaderTakeMatch.mode(managed), .cast, "A Kyon narrator does not turn a full cast take into a single voice take")
         XCTAssertTrue(ReaderTakeMatch.covers(original, book: book, selection: selection), "A chapter take covers a page within it")
         var excerpt = original; excerpt.sourceRanges = [range]
         XCTAssertTrue(ReaderTakeMatch.covers(excerpt, book: book, selection: selection))

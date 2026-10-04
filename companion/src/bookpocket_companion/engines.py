@@ -162,6 +162,8 @@ class VoiceStudioEngine:
 
 
 def engines_for(config):
+    from .omnivoice_engine import OmniVoiceEngine
     return {"kokoro": ManagedEngine(config.data_dir / "engines", "kokoro"),
             "qwen3": ManagedEngine(config.data_dir / "engines", "qwen3"),
+            "omnivoice": OmniVoiceEngine(config.data_dir / "engines"),
             "voicestudio": VoiceStudioEngine(config.voicestudio_url)}

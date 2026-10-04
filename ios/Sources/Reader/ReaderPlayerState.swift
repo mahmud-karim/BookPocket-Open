@@ -57,7 +57,7 @@ enum ReaderTakeMatch {
         if job.narrationMode == nil && castEvidence { return .cast }
         if castEvidence { return nil }
         // Legacy jobs without voice provenance are deliberately not called Kyon.
-        if job.narrationMode == "single", job.engine == "voicestudio",
+        if job.narrationMode == "single", ["omnivoice", "voicestudio"].contains(job.engine),
            job.voiceName?.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare("Kyon") == .orderedSame { return .kyon }
         return nil
     }

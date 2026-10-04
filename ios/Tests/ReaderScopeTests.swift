@@ -66,6 +66,18 @@ final class ReaderScopeTests: XCTestCase {
         XCTAssertThrowsError(try ReaderNarrator.kyon(voices: [other], engines: [engine]))
     }
 
+    func testManagedKyonPreferredWithoutLosingExternalFallback() throws {
+        let managed = RemoteVoice(id: "managed", name: "Kyon", engine: "omnivoice", kind: "clone", language: "en")
+        let legacy = RemoteVoice(id: "legacy", name: "Kyon", engine: "voicestudio", kind: "clone", language: "en")
+        var own = RemoteEngine(id: "omnivoice", name: "OmniVoice", available: true, supportsCloning: true, languages: ["en"], license: "Test", reason: nil)
+        let external = RemoteEngine(id: "voicestudio", name: "VoiceStudio", available: true, supportsCloning: false, languages: ["en"], license: "Test", reason: nil)
+        XCTAssertEqual(try ReaderNarrator.kyon(voices: [legacy, managed], engines: [external, own]).id, managed.id)
+        XCTAssertThrowsError(try ReaderNarrator.kyon(voices: [managed, managed, legacy], engines: [own, external]))
+        own.available = false
+        XCTAssertEqual(try ReaderNarrator.kyon(voices: [managed, legacy], engines: [own, external]).id, legacy.id)
+        XCTAssertThrowsError(try ReaderNarrator.kyon(voices: [managed], engines: [own]))
+    }
+
     @MainActor func testWebKitGlyphCaptureIncludesOnlyVisibleScalarsAfterFontReflow() async throws {
         let controller = UIViewController()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

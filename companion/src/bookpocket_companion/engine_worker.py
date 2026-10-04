@@ -5,12 +5,41 @@ from contextlib import redirect_stdout
 
 pipelines = {}
 qwen_model = None
+omnivoice_model = None
+omnivoice_prompts = {}
 
 def generate(data):
-    global qwen_model
+    global qwen_model, omnivoice_model
     import numpy as np
     import soundfile as sf
-    if data["engine"] == "kokoro":
+    if data["engine"] == "omnivoice":
+        import os
+        import torch
+        from pathlib import Path
+        from omnivoice import OmniVoice
+        root = Path(os.environ["BOOKPOCKET_OMNIVOICE_MODEL"])
+        if not (root / "audio_tokenizer/model.safetensors").is_file():
+            raise ValueError("The pinned OmniVoice tokenizer is missing; reinstall OmniVoice")
+        if omnivoice_model is None:
+            device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            dtype = torch.bfloat16 if device != "cpu" and torch.cuda.is_bf16_supported() else torch.float32
+            omnivoice_model = OmniVoice.from_pretrained(str(root), device_map=device, dtype=dtype,
+                                                       attn_implementation="sdpa", load_asr=False)
+        options = {"text": data["text"], "language": data["language"], "normalize_text": False}
+        if not data.get("probe"):
+            voice = data["voice"]
+            if not voice.get("reference") or not voice.get("transcript", "").strip():
+                raise ValueError("OmniVoice needs reference audio and its transcript")
+            import hashlib
+            key = (hashlib.sha256(Path(voice["reference"]).read_bytes()).hexdigest(), voice["transcript"])
+            if key not in omnivoice_prompts:
+                omnivoice_prompts[key] = omnivoice_model.create_voice_clone_prompt(
+                    ref_audio=voice["reference"], ref_text=voice["transcript"])
+            options["voice_clone_prompt"] = omnivoice_prompts[key]
+        audio = np.asarray(omnivoice_model.generate(**options)[0])
+        if not audio.size or not np.isfinite(audio).all(): raise ValueError("OmniVoice returned invalid audio")
+        sf.write(data["output"], audio, omnivoice_model.sampling_rate, subtype="PCM_16")
+    elif data["engine"] == "kokoro":
         from kokoro import KPipeline
         voice = data["voice"]["id"].split(":", 1)[-1]
         lang_code = "b" if voice.startswith("b") else "a"

@@ -36,7 +36,7 @@ The [downloaded chapter panel](docs/screenshots/ios-chapter-takes.png) and [comp
 - Preview the exact source text, follow durable PC generation, and download finished narration for offline playback. Pausing leaves manually chosen pages alone, and a late download cannot start after changing the selected narrator, take or page.
 - Listen without scrolling; choose chapters for on-device reading or browse downloaded chapter recordings across the book. Alternate takes and excerpts remain explicit choices. Keep playback speed, sleep timer and transport controls together.
 - Windows companion and an Obsidian desktop studio: local library, durable narration jobs, voice collection, device approval, and audio exports.
-- Managed Kokoro preset narration and Qwen3-TTS voice cloning, installed separately. Optional integration with an existing VoiceStudio service.
+- Managed Kokoro preset narration, Qwen3-TTS cloning, and [OmniVoice cloning](docs/OMNIVOICE.md), installed separately. OmniVoice runs inside the companion without VoiceStudio; its pretrained weights have noncommercial terms. An external VoiceStudio adapter remains optional.
 - Full-cast narration from exact source passages, with editable voices and explicit review of model suggestions.
 - No reading account. Original files, model runtimes, credentials, and audio stay outside the source checkout.
 

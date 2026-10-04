@@ -253,6 +253,8 @@ def create_app(config=None, engines=None, start_worker=True):
         if engine not in engines or not engines[engine].info()["supports_cloning"]: raise HTTPException(400, "This engine does not support importing voice references")
         if language not in engines[engine].info()["languages"]: raise HTTPException(400, "Choose a language supported by this voice engine")
         if not name.strip() or len(name) > 120: raise HTTPException(400, "Voice name must contain 1–120 characters")
+        if engines[engine].info().get("requires_transcript") and not transcript.strip():
+            raise HTTPException(400, "OmniVoice needs the exact transcript of the reference audio")
         content = await reference.read(20 * 1024 * 1024 + 1)
         if len(content) > 20 * 1024 * 1024: raise HTTPException(413, "Voice reference exceeds 20 MiB")
         from .media import normalize_reference

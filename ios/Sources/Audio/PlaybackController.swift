@@ -88,9 +88,17 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     func play(url: URL, book: LocalBook, start: Double = 0) throws {
         stop()
         error = nil
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.allowAirPlay, .allowBluetoothA2DP])
-        try AVAudioSession.sharedInstance().setActive(true)
-        let audio = try AVAudioPlayer(contentsOf: url)
+        do {
+            // Playback already permits AirPlay/A2DP. Explicit allowAirPlay is
+            // valid only with playAndRecord, not this playback category.
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            throw BookError.message("Unable to start the iPhone audio session: \(error.localizedDescription)")
+        }
+        let audio: AVAudioPlayer
+        do { audio = try AVAudioPlayer(contentsOf: url) }
+        catch { throw BookError.message("Unable to open the downloaded recording: \(error.localizedDescription)") }
         audio.delegate = self; audio.enableRate = true; audio.rate = Float(rate)
         audio.currentTime = min(max(0, start), audio.duration)
         player = audio; duration = audio.duration; elapsed = audio.currentTime; title = book.title; subtitle = "Downloaded narration"; bookID = book.id

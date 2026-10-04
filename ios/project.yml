@@ -8,8 +8,8 @@ settings:
     SWIFT_VERSION: '5.0'
     TARGETED_DEVICE_FAMILY: '1,2'
     CODE_SIGNING_ALLOWED: NO
-    MARKETING_VERSION: '0.1.12'
-    CURRENT_PROJECT_VERSION: '13'
+    MARKETING_VERSION: '0.1.13'
+    CURRENT_PROJECT_VERSION: '14'
 packages:
   Readium:
     url: https://github.com/readium/swift-toolkit.git

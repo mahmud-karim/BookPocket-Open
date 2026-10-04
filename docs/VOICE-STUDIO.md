@@ -1,5 +1,9 @@
 # Use an existing VoiceStudio voice
 
+For generation without VoiceStudio, use [companion-managed OmniVoice](OMNIVOICE.md).
+The external setup below remains optional. The iPhone prefers a ready managed
+Kyon voice while retaining existing external recordings.
+
 Book Pocket can use profiles from a separately installed VoiceStudio service through its optional external adapter. The existing profile and its reference audio stay in VoiceStudio; Book Pocket does not recreate the clone.
 
 ## Connect the PC companion

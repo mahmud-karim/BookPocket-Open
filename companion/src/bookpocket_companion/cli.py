@@ -110,7 +110,7 @@ def certificate(config):
 def main():
     parser = argparse.ArgumentParser(description="Book Pocket Open local audiobook companion")
     parser.add_argument("command", nargs="?", choices=["serve", "install-engine"], default="serve")
-    parser.add_argument("engine", nargs="?", choices=["kokoro", "qwen3"])
+    parser.add_argument("engine", nargs="?", choices=["kokoro", "qwen3", "omnivoice"])
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--port", type=int, default=8783)
     parser.add_argument("--studio-port", type=int, default=8782)
@@ -141,9 +141,9 @@ def main():
     config.voicestudio_url = args.voicestudio_url or config.voicestudio_url
     config.studio_dir = args.studio_dir or Path(__file__).resolve().parents[3] / "studio" / "dist"
     if args.command == "install-engine":
-        if not args.engine: parser.error("Choose kokoro or qwen3")
-        from .engines import ManagedEngine
-        ManagedEngine(config.data_dir / "engines", args.engine).install()
+        if not args.engine: parser.error("Choose kokoro, qwen3 or omnivoice")
+        from .engines import engines_for
+        engines_for(config)[args.engine].install()
         return
     try:
         instance = InstanceGuard(config.data_dir)
