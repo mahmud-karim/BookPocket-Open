@@ -200,7 +200,7 @@ def test_registration_failure_rolls_back_both_rows_and_releases_lock(analysis, m
 
 
 def test_terminal_write_failure_cannot_leave_a_false_running_job_or_locked_analyzer(analysis, monkeypatch, tmp_path):
-    client, route, _, release, calls = analysis
+    client, route, entered, release, calls = analysis
     failures = []
     def fail_terminal_writes(sql, parameters):
         if sql.startswith("UPDATE analyses SET data=") and json.loads(parameters[0])["status"] in {"completed", "failed"} and len(failures) < 2:
@@ -208,9 +208,17 @@ def test_terminal_write_failure_cannot_leave_a_false_running_job_or_locked_analy
             return True
         return False
     inject_sql_failure(monkeypatch, client.app.state.store, fail_terminal_writes)
-    release.set()
     request = {"request_id": str(uuid.uuid4())}
-    failed = terminal(client, client.post(route, json=request).json())
+    response = client.post(route, json=request)
+    assert response.status_code == 202 and entered.wait(5)
+    worker = next(thread for thread in threading.enumerate() if thread.name == "casting-analysis")
+    release.set()
+    # Both injected failures belong to worker finalization. Polling earlier can
+    # consume the second failure in the recovery write instead, changing the
+    # fault scenario and making this test depend on host thread scheduling.
+    worker.join(timeout=5)
+    assert not worker.is_alive() and len(failures) == 2
+    failed = terminal(client, response.json())
     assert failed["status"] == "failed" and "save analysis status" in failed["error"]
     assert len(failures) == 2 and client.post(route, json=request).json() == failed
     assert terminal(client, client.post(route, json={"request_id": str(uuid.uuid4())}).json())["status"] == "completed"
