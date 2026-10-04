@@ -4,6 +4,8 @@ import subprocess
 import threading
 import wave
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -85,3 +87,68 @@ def test_voice_import_rejects_missing_transcript_before_creating_private_files(t
         assert "transcript" in response.json()["detail"]
         assert client.get("/v1/voices").json() == {"voices": []}
         assert not list((config.data_dir / "voices").glob("*.wav"))
+
+
+@pytest.fixture
+def isolated_worker(tmp_path, monkeypatch):
+    from bookpocket_companion import engine_worker
+    # Explicit model/array fixtures exercise the isolated adapter without ML dependencies.
+    root = tmp_path / "snapshot"
+    (root / "audio_tokenizer").mkdir(parents=True)
+    (root / "audio_tokenizer/model.safetensors").touch()
+    monkeypatch.setenv("BOOKPOCKET_OMNIVOICE_MODEL", str(root))
+    calls = {"load": [], "prompt": [], "generate": [], "write": [], "samples": [.1] * 2400, "finite": True}
+    class Model:
+        sampling_rate = 24000
+        @classmethod
+        def from_pretrained(cls, path, **options):
+            calls["load"].append((path, options))
+            return cls()
+        def create_voice_clone_prompt(self, **options):
+            calls["prompt"].append(options)
+            return object()
+        def generate(self, **options):
+            calls["generate"].append(options)
+            return [calls["samples"]]
+    array = lambda samples: SimpleNamespace(size=len(samples), samples=samples)
+    def write(path, audio, rate, subtype):
+        calls["write"].append((path, rate, subtype))
+        with wave.open(path, "wb") as wav:
+            wav.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+            wav.writeframes(b"\0\0" * len(audio.samples))
+    monkeypatch.setitem(sys.modules, "numpy", SimpleNamespace(asarray=array, isfinite=lambda audio: SimpleNamespace(all=lambda: calls["finite"])))
+    monkeypatch.setitem(sys.modules, "soundfile", SimpleNamespace(write=write))
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False), float32="fixture-float32"))
+    monkeypatch.setitem(sys.modules, "omnivoice", SimpleNamespace(OmniVoice=Model))
+    monkeypatch.setattr(engine_worker, "omnivoice_model", None)
+    monkeypatch.setattr(engine_worker, "omnivoice_prompts", {})
+    reference = tmp_path / "reference.wav"
+    reference.write_bytes(b"explicit test-only reference bytes")
+    payload = {"engine": "omnivoice", "text": "The compass 🧭 points north.", "language": "en",
+               "voice": {"reference": str(reference), "transcript": "Exact fixture words."}, "output": str(tmp_path / "result.wav")}
+    return engine_worker, calls, payload
+
+
+def test_isolated_adapter_keeps_exact_source_disables_asr_and_rebuilds_changed_reference_prompt(isolated_worker):
+    worker, calls, payload = isolated_worker
+    worker.generate(payload)
+    worker.generate(payload)
+    assert len(calls["load"]) == 1 and len(calls["prompt"]) == 1
+    assert calls["load"][0][1]["load_asr"] is False
+    assert calls["load"][0][1]["attn_implementation"] == "sdpa"
+    assert calls["prompt"][0]["ref_text"] == payload["voice"]["transcript"]
+    assert all(c["text"] == payload["text"] and c["language"] == "en" and c["normalize_text"] is False for c in calls["generate"])
+    Path(payload["voice"]["reference"]).write_bytes(b"changed test-only reference")
+    worker.generate(payload)
+    assert len(calls["prompt"]) == 2
+    assert all((rate, subtype) == (24000, "PCM_16") for _, rate, subtype in calls["write"])
+
+
+@pytest.mark.parametrize("damage", ["empty", "nonfinite", "missing_transcript"])
+def test_isolated_adapter_refuses_invalid_output_or_missing_clone_text(isolated_worker, damage):
+    worker, calls, payload = isolated_worker
+    if damage == "empty": calls["samples"] = []
+    if damage == "nonfinite": calls["finite"] = False
+    if damage == "missing_transcript": payload["voice"]["transcript"] = " "
+    with pytest.raises(ValueError): worker.generate(payload)
+    assert not calls["write"] and not Path(payload["output"]).exists()
