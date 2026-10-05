@@ -2,7 +2,7 @@ import XCTest
 import ReadiumShared
 @testable import BookPocketOpen
 
-private final class ReaderToolsProtocol: URLProtocol {
+private final class ReaderToolsProtocol: Foundation.URLProtocol {
     static var handler: ((URLRequest) throws -> (Int, Data))?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
