@@ -34,7 +34,14 @@ enum ReaderAudioCatalog {
             return ReaderAudioRecording(job: job, selection: selection, scope: scope,
                 offline: ReaderTakeMatch.ready(job, book: book, selection: selection,
                     records: downloads(job.id), localBookID: localBookID))
-        }.sorted { ($0.job.createdAt ?? "", $0.id) > ($1.job.createdAt ?? "", $1.id) }
+        }.sorted { first, second in
+            let a = first.selection.ranges[0], b = second.selection.ranges[0]
+            let firstIndex = book.segments.firstIndex(where: { $0.id == a.segmentId }) ?? 0
+            let secondIndex = book.segments.firstIndex(where: { $0.id == b.segmentId }) ?? 0
+            if firstIndex != secondIndex { return firstIndex < secondIndex }
+            if a.startOffset != b.startOffset { return a.startOffset < b.startOffset }
+            return (first.job.createdAt ?? "", first.id) > (second.job.createdAt ?? "", second.id)
+        }
     }
 
     static func selection(job: RemoteJob, book: RemoteBook) -> ReaderSourceSelection? {

@@ -153,7 +153,8 @@ struct ReaderPlayerView: View {
                         Button { selectScope(scope) } label: {
                             Text(scope == .page ? "Page" : "Chapter").font(.subheadline.weight(.medium))
                                 .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(state.playbackScope == scope ? Obsidian.surface : .clear, in: .rect(cornerRadius: 10))
+                                .background(state.playbackScope == scope ? Obsidian.accent : .clear, in: .rect(cornerRadius: 10))
+                                .foregroundStyle(state.playbackScope == scope ? Obsidian.onAccent : .primary)
                         }.buttonStyle(.plain).accessibilityIdentifier("reader.scope." + scope.rawValue)
                             .accessibilityAddTraits(state.playbackScope == scope ? .isSelected : [])
                             .disabled(state.working || discovering || reader.capturingScope)
@@ -186,33 +187,38 @@ struct ReaderPlayerView: View {
         }
     }
     private var savedSummary: String {
-        let pages = recordings.filter { $0.scope == .page }.count
-        let chapter = recordings.contains { $0.scope == .chapter }
+        let all = recordings
+        let pages = all.filter { $0.scope == .page }.count
+        let chapter = all.contains { $0.scope == .chapter }
         return "\(pages) page \(pages == 1 ? "clip" : "clips") · \(chapter ? "Chapter available" : "Chapter not generated")"
     }
     private var savedAudio: some View {
-        List {
+        let all = recordings
+        let pages = all.filter { $0.scope == .page }, chapters = all.filter { $0.scope == .chapter }
+        return List {
             Section { Text(currentChapter).font(.headline); Text(state.mode.title).foregroundStyle(.secondary) }
             if let error = state.error { Section { Text(error).foregroundStyle(.red) } }
             Section("Page clips") {
-                ForEach(recordings.filter { $0.scope == .page }) { recording in recordingRow(recording) }
-                if !recordings.contains(where: { $0.scope == .page }) { Text("No saved page clips in this chapter.").foregroundStyle(.secondary) }
+                ForEach(Array(pages.enumerated()), id: \.element.id) { index, recording in recordingRow(recording, number: index + 1).listRowBackground(Obsidian.surface) }
+                if pages.isEmpty { Text("No saved page clips in this chapter.").foregroundStyle(.secondary) }
             }
             Section("Full chapter") {
-                ForEach(recordings.filter { $0.scope == .chapter }) { recording in recordingRow(recording) }
-                if !recordings.contains(where: { $0.scope == .chapter }) {
+                ForEach(chapters) { recording in recordingRow(recording).listRowBackground(Obsidian.surface) }
+                if chapters.isEmpty {
                     Text("Chapter not generated").foregroundStyle(.secondary)
                     Button("Generate audio…") { detail = nil; chooser = .scope }.accessibilityIdentifier("reader.saved.generate")
                 }
             }
         }.scrollContentBackground(.hidden).accessibilityIdentifier("reader.saved.list")
     }
-    private func recordingRow(_ recording: ReaderAudioRecording) -> some View {
+    private func recordingRow(_ recording: ReaderAudioRecording, number: Int = 1) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Button { selectRecording(recording) } label: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(recording.scope == .chapter ? "Full chapter" : recording.preview).lineLimit(2)
-                    Text("\(recording.offline ? "Ready offline" : "On PC") · \(Int(recording.duration) / 60):\(String(format: "%02d", Int(recording.duration) % 60))").font(.caption).foregroundStyle(.secondary)
+                    Text(recording.scope == .chapter ? "Full chapter" : "Page clip \(number)").font(.headline)
+                    if recording.scope == .page { Text(recording.preview).font(.subheadline).lineLimit(2) }
+                    Label("\(recording.offline ? "Ready offline" : "On PC") · \(Int(recording.duration) / 60):\(String(format: "%02d", Int(recording.duration) % 60))", systemImage: recording.offline ? "checkmark.circle.fill" : "cloud")
+                        .font(.caption).foregroundStyle(recording.offline ? .green : .secondary)
                     if recording.scope == .page, let page = state.pageSelection, let book = state.remote,
                        ReaderTakeMatch.covers(recording.job, book: book, selection: page) {
                         Text("Covers current page").font(.caption).foregroundStyle(Obsidian.accent)
@@ -272,8 +278,21 @@ struct ReaderPlayerView: View {
     }
     private func transport(wide: Bool = false) -> some View {
         VStack(spacing: 8) {
-            Text(readiness).font(dynamicTypeSize.isAccessibilitySize ? .system(size: 16) : .caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.center)
-                .accessibilityIdentifier("reader.player.readiness")
+            if state.mode != .device && !dynamicTypeSize.isAccessibilitySize && !wide {
+                HStack(spacing: 10) {
+                    Image(systemName: state.playbackScope == .page ? "doc.text" : "book").font(.system(size: 22)).foregroundStyle(Obsidian.accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(state.savedJobID == nil ? state.playbackScope.title : state.selection?.excerpts.first ?? "Saved page clip")
+                            .font(.subheadline.weight(.medium)).lineLimit(1)
+                        readinessLabel
+                    }
+                    Spacer(minLength: 0)
+                    if let job, job.assets.count == 1, let asset = job.assets.first, asset.duration.isFinite {
+                        Text("\(Int(asset.duration) / 60):\(String(format: "%02d", Int(asset.duration) % 60))").font(.caption).monospacedDigit()
+                    }
+                }.padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 48)
+                    .background(Obsidian.surface, in: .rect(cornerRadius: 12))
+            } else { readinessLabel }
             if active && player.duration > 0 {
                 Slider(value: Binding(get: { player.elapsed }, set: { state.invalidatePlaybackIntent(); player.seek($0) }), in: 0...max(1, player.duration)) { Text("Audio position") }
                     .accessibilityIdentifier("reader.player.seek")
@@ -291,6 +310,11 @@ struct ReaderPlayerView: View {
                 if !wide { Spacer(minLength: 0); sleepControl }
             }
         }.frame(maxWidth: .infinity)
+    }
+    private var readinessLabel: some View {
+        Text(readiness).font(dynamicTypeSize.isAccessibilitySize ? .system(size: 16) : .caption)
+            .foregroundStyle(canPlay && !active && state.mode != .device ? .green : .secondary).lineLimit(2)
+            .accessibilityIdentifier("reader.player.readiness")
     }
     private var readiness: String {
         if state.working { return "Preparing narration…" }
@@ -343,6 +367,7 @@ struct ReaderPlayerView: View {
             } else {
             if choice == .scope && !dynamicTypeSize.isAccessibilitySize && !wide {
                 Text("What would you like to generate?").font(.headline).multilineTextAlignment(.center)
+                Text("\(state.mode.title) · \(currentChapter)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             layout {
             if choice == .narrator {

@@ -417,6 +417,9 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(remoteClip.label.contains("On PC"))
         XCTAssertTrue(app.buttons["reader.saved.download.reader-page-job-1"].exists)
         let browser = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); browser.name = "Obsidian saved page audio and remote download"; browser.lifetime = .keepAlways; add(browser)
+        app.buttons["reader.saved.download.reader-page-job-1"].tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Reconnect your PC and retry the download")).firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(remoteClip.label.contains("On PC"), "A failed download cannot make PC-only audio ready")
         localClip.tap()
         XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertTrue(play.isEnabled)
         XCTAssertEqual(play.value as? String, "Paused", "Selecting saved audio must not start it")
@@ -435,6 +438,7 @@ final class ReaderUITests: XCTestCase {
         saved.tap(); XCTAssertTrue(remoteClip.waitForExistence(timeout: 10)); remoteClip.tap()
         XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertFalse(play.isEnabled)
         XCTAssertTrue(app.buttons["reader.player.download"].isHittable)
+        assertReaderPlayerFits(app, name: "Obsidian PC-only page clip awaiting download")
         chooseReaderNarrator(app, "cast")
         XCTAssertFalse(play.isEnabled); XCTAssertTrue(saved.label.contains("0 page clips"), "Kyon clips cannot appear as full cast")
     }
