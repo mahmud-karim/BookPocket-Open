@@ -2,6 +2,14 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
+## Upcoming continuous recording in 0.1.17
+
+Update the existing LiveContainer app, keep its library/pairing, and select an existing Kyon page recording containing several passages. The seek bar must show zero elapsed and the complete recording duration before Play. Play past the first passage: elapsed time must keep increasing and the total must stay constant. Pause, drag the slider into a later passage, and use the 15-second controls across a passage boundary. Seeking and speed changes while paused must not resume playback; highlighting must follow the selected original words.
+
+Switch to **Chapter**, select or generate a complete chapter, and repeat. Its total must include all passages and playback must stop at the selected chapter's end. Open Listen and use the lock-screen controls: they should retain the same selected recording and total time. Close/reopen the app and resume from Downloads to check that the saved asset-local position reconstructs the complete timeline. Try Bluetooth, route loss and interruptions separately, and repeat offline after download.
+
+Check portrait, landscape and larger text: elapsed and total labels must fit beneath the slider without overlapping controls, scrolling the main player or restoring the bottom gray strip. Existing wider audio without exact page-boundary timestamps should offer its saved clip/complete chapter or current-page generation rather than guessed trimming. These checks confirm actual speech and device behavior beyond the original PCM-tone native tests.
+
 ## Saved page audio in 0.1.16
 
 Update the existing LiveContainer app with the 0.1.16 IPA and retain its library and pairing. Open a chapter that has generated page excerpts but no full-chapter recording. Tap **Read aloud** → **Kyon** → **Saved audio**. Existing page clips should appear independently of **Chapter not generated**. Select a downloaded clip, confirm the original-text preview and **Saved page clip** label, then press Play; selecting it alone must not start playback.
