@@ -152,6 +152,44 @@ final class ReaderPlayerTests: XCTestCase {
         state.discover(snapshot: snapshot, local: local, companion: store)
         XCTAssertTrue(state.readyIDs.isEmpty, "Persisted metadata does not make damaged audio ready")
     }
+    @MainActor func testSavedPageCatalogSurvivesReflowWithoutRequiringChapterAudio() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CompanionStore(root: root)
+        let data = try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: "test-tone", withExtension: "wav")))
+        try data.write(to: root.appendingPathComponent("clip.wav"))
+        let local = LocalBook(id: "local", title: "Fixture", author: "Test", language: "en", sourceFile: "test.txt", readingFile: "test.epub", sourceSHA256: book.sourceSha256)
+        let asset = AudioAsset(id: "clip-audio", segmentId: "segment", mediaType: "audio/wav", duration: 0.25, sha256: SourceIdentity.hash(data), bytes: data.count, url: "/test-only", timings: [], sourceStart: 10, sourceEnd: 20, narrationMode: "single", castSpans: [])
+        var clip = job("page-clip"); clip.sourceRanges = [range]; clip.assets = [asset]
+        var onPC = clip; onPC.id = "remote-clip"
+        var cast = clip; cast.id = "cast-clip"; cast.narrationMode = "full_cast"; cast.assets[0].narrationMode = "full_cast"
+        var wrongSource = clip; wrongSource.id = "other-book"; wrongSource.bookId = "foreign"
+        var malformed = clip; malformed.id = "unconfirmed-range"; malformed.assets[0].sourceEnd = 19
+        store.books = [book]; store.jobs = [clip, onPC, cast, wrongSource, malformed]
+        store.downloads = [.init(localBookID: local.id, jobID: clip.id, asset: asset, file: "clip.wav", segment: book.segments[0])]
+        func catalog() -> [ReaderAudioRecording] {
+            ReaderAudioCatalog.recordings(book: book, chapter: book.chapters[0], mode: .kyon, jobs: store.jobs,
+                localBookID: local.id, downloads: store.orderedDownloads)
+        }
+        XCTAssertEqual(Set(catalog().map(\.id)), [clip.id, onPC.id])
+        XCTAssertTrue(catalog().allSatisfy { $0.scope == .page }, "Two excerpts do not imply a complete chapter")
+        XCTAssertEqual(catalog().first(where: { $0.id == clip.id })?.offline, true)
+        XCTAssertEqual(catalog().first(where: { $0.id == onPC.id })?.offline, false)
+        let state = store.readerPlayer(for: local.id); state.mode = .kyon
+        var snapshot = ReaderScopeSnapshot(scope: .page, hrefs: ["text.xhtml"], documents: ["text.xhtml": .init(blocks: [.init(text: words, visible: [.init(start: 10, end: 20)])], anchors: [])], current: .init(resource: 0, block: 0, offset: 10), boundaries: [], isText: false)
+        state.discover(snapshot: snapshot, local: local, companion: store)
+        XCTAssertEqual(state.candidates.count, 3, "Discovery can include malformed candidates but never mark them ready")
+        state.savedJobID = clip.id; state.selectedJobID = clip.id
+        snapshot.documents["text.xhtml"]?.blocks[0].visible = [.init(start: 20, end: 30)]
+        snapshot.current.offset = 20
+        state.discover(snapshot: snapshot, local: local, companion: store)
+        XCTAssertEqual(state.selectedJobID, clip.id)
+        XCTAssertEqual(state.selection?.ranges, [range], "Explicit saved playback keeps its original words after reflow")
+        XCTAssertEqual(state.pageSelection?.ranges.first?.startOffset, 20)
+        XCTAssertEqual(catalog().count, 2, "Clips remain browsable when they no longer cover the visible page")
+        try Data([0]).write(to: root.appendingPathComponent("clip.wav"))
+        XCTAssertEqual(catalog().first(where: { $0.id == clip.id })?.offline, false, "A damaged download remains discoverable on PC, but cannot play offline")
+    }
     @MainActor func testFullCastRequestRecoveryRetainsExactRangesPlanAndModeAcrossStoreReconstruction() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { ReaderJobProtocol.handler = nil; try? FileManager.default.removeItem(at: root) }

@@ -85,6 +85,22 @@ import Foundation
         var otherBook = book; otherBook.id = "reader-other-book"; otherBook.sourceSha256 = String(repeating: "f", count: 64)
         var other = jobs[0]; other.id = "reader-other-job"; other.bookId = otherBook.id
         companion.books = [book, otherBook]; companion.jobs = jobs + [other]; companion.downloads = records
+        if ProcessInfo.processInfo.arguments.contains("--reader-page-clips-fixture") {
+            // Deliberately no complete chapter take. Both clips use exact EPUB
+            // spans; the second has PC metadata only and cannot play offline.
+            let segment = chapters[0].segments[1]
+            let data = tone(seconds: 30, frequency: 220)
+            let file = "reader-page-clip.wav"; try data.write(to: companion.root.appendingPathComponent(file), options: .atomic)
+            var clips: [RemoteJob] = []
+            for index in 0..<2 {
+                let start = index == 0 ? 0 : 27, end = index == 0 ? 27 : segment.text.unicodeScalars.count
+                let asset = AudioAsset(id: "reader-page-audio-\(index)", segmentId: segment.id, mediaType: "audio/wav", duration: 30, sha256: SourceIdentity.hash(data), bytes: data.count, url: "/explicit-test-tone-not-speech", timings: [], sourceStart: start, sourceEnd: end, narrationMode: "single", castSpans: [])
+                let clip = RemoteJob(id: "reader-page-job-\(index)", bookId: book.id, status: "completed", engine: "omnivoice", voiceId: "test-only-voice-snapshot-not-an-installed-voice", segmentIds: [segment.id], completedSegments: 1, totalSegments: 1, assets: [asset], createdAt: "2026-01-0\(index + 1)T00:00:00Z", sourceRanges: [.init(segmentId: segment.id, startOffset: start, endOffset: end)], narrationMode: "single", narrationPlan: [], voiceName: "Kyon")
+                clips.append(clip)
+                if index == 0 { companion.downloads = [.init(localBookID: local.id, jobID: clip.id, asset: asset, file: file, segment: segment)] }
+            }
+            companion.jobs = clips
+        }
     }
 
     private static func tone(seconds: Int, frequency: Double) -> Data {

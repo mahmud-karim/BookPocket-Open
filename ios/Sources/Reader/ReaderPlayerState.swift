@@ -88,6 +88,9 @@ enum ReaderTakeMatch {
 /// dismissal; accepted jobs and uncertain requests use the existing SQLite store.
 @MainActor @Observable final class ReaderPlayerState {
     var mode: ReaderVoiceMode = .device
+    var playbackScope: NarrationScope = .page
+    var savedJobID: String?
+    var pageSelection: ReaderSourceSelection?
     var snapshot: ReaderScopeSnapshot?
     var selection: ReaderSourceSelection?
     var remote: RemoteBook?
@@ -138,6 +141,22 @@ enum ReaderTakeMatch {
         guard let book = companion.books.first(where: { $0.sourceSha256 == local.sourceSHA256 }),
               let selection = try? ReaderSourceMapper.resolve(snapshot, book: book) else { selectedJobID = nil; return }
         remote = book; self.selection = selection
+        pageSelection = snapshot.scope == .page ? selection : nil
+        // An explicitly selected saved clip remains identifiable after reflow.
+        // Chapter navigation and narrator changes cannot inherit that selection.
+        if let saved = companion.jobs.first(where: { $0.id == savedJobID }),
+           ReaderTakeMatch.mode(saved) == mode, saved.status == "completed",
+           (try? RangedAudioValidation.validate(job: saved, book: book)) != nil,
+           let savedSelection = ReaderAudioCatalog.selection(job: saved, book: book),
+           book.chapters.contains(where: { chapter in
+               ReaderSourceMapper.href(chapter.href) == ReaderSourceMapper.href(snapshot.hrefs[snapshot.current.resource])
+               && savedSelection.ranges.contains(where: { range in chapter.segments.contains { $0.id == range.segmentId } })
+           }) {
+            self.selection = savedSelection; candidates = [saved]; selectedJobID = saved.id
+            if ReaderTakeMatch.ready(saved, book: book, selection: savedSelection, records: companion.orderedDownloads(jobID: saved.id), localBookID: local.id) { readyIDs.insert(saved.id) }
+            return
+        }
+        savedJobID = nil
         candidates = companion.jobs.filter { ReaderTakeMatch.mode($0) == mode && ReaderTakeMatch.covers($0, book: book, selection: selection) }
             .sorted { ($0.createdAt ?? "", $0.id) > ($1.createdAt ?? "", $1.id) }
         for job in candidates {
@@ -149,6 +168,7 @@ enum ReaderTakeMatch {
     }
     func prepare(snapshot: ReaderScopeSnapshot, reader: ReaderModel, library: LibraryStore, companion: CompanionStore) async {
         guard !working else { return }
+        savedJobID = nil; playbackScope = snapshot.scope
         self.snapshot = snapshot; showingSelection = true; voice = nil; selection = nil; selectedJobID = nil; candidates = []; readyIDs = []; plan = []; error = nil; needsCast = false
         guard companion.paired, let local = reader.book else { return }
         working = true; defer { working = false }

@@ -367,7 +367,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(sourceChapter.waitForExistence(timeout: 10)); sourceChapter.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == false"), object: play)], timeout: 20), .completed, "Paused chapter-one audio must become unavailable after source navigation while the panel stays open")
         XCTAssertEqual(app.buttons["reader.player.chapters"].value as? String, "Across the Bridge")
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "No matching audio"), object: app.staticTexts["reader.player.readiness"])], timeout: 20), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "No audio for this page"), object: app.staticTexts["reader.player.readiness"])], timeout: 20), .completed)
         app.navigationBars["Read aloud"].buttons["Done"].tap()
         let second = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "At dawn, Mira crossed the bridge")).firstMatch
         guard assertVisibleInk(in: second) else { return }
@@ -389,6 +389,55 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 120)
     }
 
+    func testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge() {
+        executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", "--reader-page-clips-fixture", "-playbackRate", "1"]
+        XCUIDevice.shared.orientation = .portrait; app.launch()
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30))
+        app.tabBars.buttons["Library"].tap()
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch.tap()
+        XCTAssertTrue(waitForReaderContents(app)); app.buttons["reader.speak"].tap()
+        chooseReaderNarrator(app, "kyon")
+        let play = app.buttons["reader.player.toggle"]
+        XCTAssertFalse(play.isEnabled, "A partial clip cannot stand in for all visible words")
+        let saved = app.buttons["reader.player.saved"]
+        assertMinimumHitArea(saved)
+        XCTAssertTrue(saved.label.contains("2 page clips")); XCTAssertTrue(saved.label.contains("Chapter not generated"))
+        assertReaderPlayerFits(app, name: "Obsidian page clips without full chapter")
+        // The panel's surface is the content area below its own navigation bar.
+        // Its background must extend through the iPhone home indicator area.
+        XCTAssertGreaterThanOrEqual(app.otherElements["reader.player.surface"].frame.maxY, app.frame.maxY - 1)
+        app.buttons["reader.scope.chapter"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Chapter not generated"), object: app.staticTexts["reader.player.readiness"])], timeout: 20), .completed)
+        XCTAssertFalse(play.isEnabled); saved.tap()
+        let localClip = app.buttons["reader.saved.reader-page-job-0"]
+        let remoteClip = app.buttons["reader.saved.reader-page-job-1"]
+        XCTAssertTrue(localClip.waitForExistence(timeout: 10)); XCTAssertTrue(localClip.label.contains("Ready offline"))
+        XCTAssertTrue(remoteClip.label.contains("On PC"))
+        XCTAssertTrue(app.buttons["reader.saved.download.reader-page-job-1"].exists)
+        let browser = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); browser.name = "Obsidian saved page audio and remote download"; browser.lifetime = .keepAlways; add(browser)
+        localClip.tap()
+        XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertTrue(play.isEnabled)
+        XCTAssertEqual(play.value as? String, "Paused", "Selecting saved audio must not start it")
+        XCTAssertTrue(app.staticTexts["reader.player.readiness"].label.contains("Saved page clip"))
+        play.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: play)], timeout: 10), .completed)
+        play.tap()
+        assertReaderPlayerFits(app, name: "Obsidian selected saved page playback to bottom edge")
+        XCTAssertGreaterThanOrEqual(app.otherElements["reader.player.surface"].frame.maxY, app.frame.maxY - 1)
+        assertReaderScopeChoicesFit(app, name: "Obsidian page or chapter generation chooser")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
+        assertReaderPlayerFits(app, name: "Obsidian saved page player landscape")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
+        saved.tap(); XCTAssertTrue(remoteClip.waitForExistence(timeout: 10)); remoteClip.tap()
+        XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertFalse(play.isEnabled)
+        XCTAssertTrue(app.buttons["reader.player.download"].isHittable)
+        chooseReaderNarrator(app, "cast")
+        XCTAssertFalse(play.isEnabled); XCTAssertTrue(saved.label.contains("0 page clips"), "Kyon clips cannot appear as full cast")
+    }
     private func startReaderSpeech(_ app: XCUIApplication) {
         app.buttons["reader.speak"].tap()
         let play = app.buttons["reader.player.toggle"]

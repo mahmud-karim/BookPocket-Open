@@ -101,11 +101,11 @@ struct ReaderView: View {
                         VStack(spacing: 0) {
                             Spacer(minLength: 0)
                             ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer)
-                                .frame(height: min(400, geometry.size.height))
+                                .frame(height: min(520, geometry.size.height))
                                 .clipShape(.rect(topLeadingRadius: 24, topTrailingRadius: 24))
                                 .shadow(color: .black.opacity(0.25), radius: 14, y: -4)
                         }
-                    }
+                    }.ignoresSafeArea(.container, edges: .bottom)
                 }
             }
     }
@@ -118,7 +118,7 @@ struct ReaderView: View {
         state.invalidatePlaybackIntent()
         Task {
             if !state.working && !state.showingSelection && state.mode != .device {
-                do { let snapshot = try await model.captureScope(.page); if let local = model.book { state.discover(snapshot: snapshot, local: local, companion: companion) } }
+                do { let snapshot = try await model.captureScope(state.playbackScope); if let local = model.book { state.discover(snapshot: snapshot, local: local, companion: companion) } }
                 catch { state.error = error.localizedDescription; state.readyIDs = [] }
             }
             showPlayer = true

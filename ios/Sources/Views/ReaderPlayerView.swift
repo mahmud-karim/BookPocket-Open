@@ -14,7 +14,7 @@ struct ReaderPlayerView: View {
     @State private var chooser: Chooser?
     @State private var discovering = false
     @State private var pendingDiscovery = false
-    private enum Chooser { case narrator, scope, speed, sleep }
+    private enum Chooser { case narrator, scope, playbackScope, speed, sleep }
     private var job: RemoteJob? { companion.jobs.first { $0.id == state.selectedJobID } }
     private var active: Bool {
         guard player.bookID == reader.bookID else { return false }
@@ -26,9 +26,9 @@ struct ReaderPlayerView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var detail: Detail?
     private enum Detail: Identifiable {
-        case production, scope, chapters([DownloadedChapterGroup])
+        case production, scope, saved, chapters([DownloadedChapterGroup])
         var id: String {
-            switch self { case .production: return "production"; case .scope: return "scope"; case .chapters: return "chapters" }
+            switch self { case .production: return "production"; case .scope: return "scope"; case .saved: return "saved"; case .chapters: return "chapters" }
         }
     }
     private var canPlay: Bool { !discovering && (state.mode == .device || active || (job.map { state.readyIDs.contains($0.id) } ?? false)) }
@@ -40,11 +40,11 @@ struct ReaderPlayerView: View {
                         choices(chooser, wide: geometry.size.width > geometry.size.height * 1.5)
                     } else if geometry.size.width > geometry.size.height * 1.5 {
                         HStack(alignment: .center, spacing: 20) {
-                            VStack(spacing: 10) { narrator; chapterRow; HStack { speedControl; Spacer(); sleepControl } }.frame(maxWidth: .infinity)
-                            VStack(spacing: 10) { transport(wide: true); actions }.frame(maxWidth: .infinity)
+                            VStack(spacing: 8) { narrator; chapterRow; playbackScope; HStack { speedControl; Spacer(); sleepControl } }.frame(maxWidth: .infinity)
+                            VStack(spacing: 8) { transport(wide: true); savedAudioButton; actions }.frame(maxWidth: .infinity)
                         }
                     } else {
-                        VStack(spacing: 10) { narrator; chapterRow; transport(); actions }
+                        VStack(spacing: 8) { narrator; chapterRow; playbackScope; transport(); savedAudioButton; actions }
                     }
                 }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
             }.background(Obsidian.background)
@@ -60,6 +60,7 @@ struct ReaderPlayerView: View {
                     NavigationStack {
                         Group {
                             if case .chapters(let groups) = item { chapters(groups) }
+                            else if case .saved = item { savedAudio }
                             else if case .scope = item {
                                 GeometryReader { geometry in
                                     choices(.scope, wide: geometry.size.width > geometry.size.height * 1.5)
@@ -80,7 +81,7 @@ struct ReaderPlayerView: View {
                                     }.padding(20)
                                 }
                             }
-                        }.background(Obsidian.background).navigationTitle(item.id == "chapters" ? "Chapters" : "Narration").navigationBarTitleDisplayMode(.inline)
+                        }.background(Obsidian.background).navigationTitle(item.id == "chapters" ? "Chapters" : item.id == "saved" ? "Saved audio" : "Narration").navigationBarTitleDisplayMode(.inline)
                             .toolbar {
                                 ToolbarItem(placement: .cancellationAction) {
                                     if case .scope = item { Button("Back") { detail = .production } }
@@ -132,6 +133,118 @@ struct ReaderPlayerView: View {
         if matches.count == 1, let title = matches.first?.title { return title }
         return location.title ?? "Choose a chapter"
     }
+    private var recordings: [ReaderAudioRecording] {
+        guard let local = reader.book,
+              let book = companion.books.first(where: { $0.sourceSha256 == local.sourceSHA256 }),
+              let href = reader.location?.href.string,
+              let chapter = book.chapters.first(where: { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(href) }) else { return [] }
+        return ReaderAudioCatalog.recordings(book: book, chapter: chapter, mode: state.mode,
+            jobs: companion.jobs, localBookID: local.id, downloads: companion.orderedDownloads)
+    }
+    @ViewBuilder private var playbackScope: some View {
+        if state.mode != .device {
+            if dynamicTypeSize.isAccessibilitySize {
+                Button { chooser = .playbackScope } label: {
+                    Label(state.playbackScope == .page ? "Page" : "Chapter", systemImage: "chevron.down").frame(minHeight: 44)
+                }.disabled(state.working || discovering || reader.capturingScope).accessibilityIdentifier("reader.player.scope")
+            } else {
+                HStack(spacing: 0) {
+                    ForEach(NarrationScope.allCases) { scope in
+                        Button { selectScope(scope) } label: {
+                            Text(scope == .page ? "Page" : "Chapter").font(.subheadline.weight(.medium))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(state.playbackScope == scope ? Obsidian.surface : .clear, in: .rect(cornerRadius: 10))
+                        }.buttonStyle(.plain).accessibilityIdentifier("reader.scope." + scope.rawValue)
+                            .accessibilityAddTraits(state.playbackScope == scope ? .isSelected : [])
+                            .disabled(state.working || discovering || reader.capturingScope)
+                    }
+                }.background(.white.opacity(0.04), in: .rect(cornerRadius: 10))
+            }
+        }
+    }
+    private func selectScope(_ scope: NarrationScope) {
+        guard !state.working, !discovering, !reader.capturingScope else { return }
+        state.invalidatePlaybackIntent()
+        if active { player.pause() }
+        state.savedJobID = nil; state.selectedJobID = nil; state.showingSelection = false
+        state.playbackScope = scope; refreshLocal()
+    }
+    @ViewBuilder private var savedAudioButton: some View {
+        if state.mode != .device {
+            Button { detail = .saved } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "waveform")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Saved audio").font(.subheadline.weight(.medium))
+                        Text(savedSummary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    Spacer(minLength: 0); Image(systemName: "chevron.right").font(.caption)
+                }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 48).contentShape(.rect)
+            }.buttonStyle(.plain).background(Obsidian.surface, in: .rect(cornerRadius: 12))
+                .accessibilityIdentifier("reader.player.saved")
+        }
+    }
+    private var savedSummary: String {
+        let pages = recordings.filter { $0.scope == .page }.count
+        let chapter = recordings.contains { $0.scope == .chapter }
+        return "\(pages) page \(pages == 1 ? "clip" : "clips") · \(chapter ? "Chapter available" : "Chapter not generated")"
+    }
+    private var savedAudio: some View {
+        List {
+            Section { Text(currentChapter).font(.headline); Text(state.mode.title).foregroundStyle(.secondary) }
+            if let error = state.error { Section { Text(error).foregroundStyle(.red) } }
+            Section("Page clips") {
+                ForEach(recordings.filter { $0.scope == .page }) { recording in recordingRow(recording) }
+                if !recordings.contains(where: { $0.scope == .page }) { Text("No saved page clips in this chapter.").foregroundStyle(.secondary) }
+            }
+            Section("Full chapter") {
+                ForEach(recordings.filter { $0.scope == .chapter }) { recording in recordingRow(recording) }
+                if !recordings.contains(where: { $0.scope == .chapter }) {
+                    Text("Chapter not generated").foregroundStyle(.secondary)
+                    Button("Generate audio…") { detail = nil; chooser = .scope }.accessibilityIdentifier("reader.saved.generate")
+                }
+            }
+        }.scrollContentBackground(.hidden).accessibilityIdentifier("reader.saved.list")
+    }
+    private func recordingRow(_ recording: ReaderAudioRecording) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { selectRecording(recording) } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recording.scope == .chapter ? "Full chapter" : recording.preview).lineLimit(2)
+                    Text("\(recording.offline ? "Ready offline" : "On PC") · \(Int(recording.duration) / 60):\(String(format: "%02d", Int(recording.duration) % 60))").font(.caption).foregroundStyle(.secondary)
+                    if recording.scope == .page, let page = state.pageSelection, let book = state.remote,
+                       ReaderTakeMatch.covers(recording.job, book: book, selection: page) {
+                        Text("Covers current page").font(.caption).foregroundStyle(Obsidian.accent)
+                    }
+                }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(.rect)
+            }.buttonStyle(.plain).accessibilityIdentifier("reader.saved." + recording.id)
+            if !recording.offline {
+                Button("Download", systemImage: "arrow.down.circle") {
+                    Task {
+                        guard !state.working, let local = reader.book else { return }
+                        state.working = true; defer { state.working = false }
+                        if !(await companion.download(recording.job, localBook: local)) { state.error = companion.error }
+                        else if let book = state.remote,
+                                ReaderTakeMatch.ready(recording.job, book: book, selection: recording.selection,
+                                    records: companion.orderedDownloads(jobID: recording.id), localBookID: local.id),
+                                state.selectedJobID == recording.id { state.readyIDs.insert(recording.id) }
+                    }
+                }.frame(minHeight: 44).disabled(state.working).accessibilityIdentifier("reader.saved.download." + recording.id)
+            }
+        }
+    }
+    private func selectRecording(_ recording: ReaderAudioRecording) {
+        guard !state.working, let local = reader.book,
+              let book = companion.books.first(where: { $0.id == recording.job.bookId && $0.sourceSha256 == local.sourceSHA256 }),
+              ReaderTakeMatch.mode(recording.job) == state.mode else { return }
+        state.invalidatePlaybackIntent()
+        if player.bookID == reader.bookID { player.pause() }
+        state.snapshot = nil; state.selection = recording.selection; state.remote = book
+        state.savedJobID = recording.scope == .page ? recording.id : nil
+        state.playbackScope = recording.scope; state.selectedJobID = recording.id; state.candidates = [recording.job]
+        state.readyIDs = recording.offline ? [recording.id] : []; state.error = nil; state.showingSelection = false
+        detail = nil
+    }
     private var chapterRow: some View {
         HStack(spacing: 8) {
             Button { openChapters() } label: {
@@ -180,18 +293,20 @@ struct ReaderPlayerView: View {
     }
     private var readiness: String {
         if state.working { return "Preparing narration…" }
-        if discovering { return "Checking this page…" }
+        if discovering { return "Checking \(state.playbackScope == .page ? "this page" : "this chapter")…" }
         if let job, ["queued", "running", "paused"].contains(job.status) { return "\(job.status.capitalized) · \(job.completedSegments)/\(job.totalSegments) passages" }
         if state.showingSelection && !companion.paired { return "Pair your PC to generate · open details" }
         if state.error != nil { return "Needs attention · open details" }
-        return active ? (player.isPlaying ? "Playing" : "Paused") : state.mode == .device ? "Ready on this iPhone" : canPlay ? "Ready offline" : "No matching audio"
+        let status = active ? (player.isPlaying ? "Playing" : "Paused") : state.mode == .device ? "Ready on this iPhone" : canPlay ? "Ready offline" : job?.status == "completed" ? "On PC · download to play" : state.playbackScope == .chapter ? "Chapter not generated" : "No audio for this page"
+        return state.savedJobID == nil ? status : "Saved page clip · \(status)"
     }
     private var actions: some View {
         VStack(spacing: 8) {
             if let job, job.status == "completed", !state.readyIDs.contains(job.id) {
                 Button("Download & play") { Task { await downloadAndPlay(job) } }.frame(minHeight: 48).accessibilityIdentifier("reader.player.download")
                     .disabled(state.working)
-            } else if state.mode != .device { generateMenu }
+            }
+            if state.mode != .device { generateMenu }
         }.frame(maxWidth: .infinity)
     }
     private var generateMenu: some View {
@@ -235,6 +350,12 @@ struct ReaderPlayerView: View {
                         chooser = nil
                         if state.mode != mode { select(mode) }
                     }.accessibilityAddTraits(state.mode == mode ? .isSelected : [])
+                }
+            } else if choice == .playbackScope {
+                ForEach(NarrationScope.allCases) { scope in
+                    choiceButton(scope == .page ? "Page" : "Chapter", icon: scope == .page ? "doc.text" : "book", id: "reader.scope." + scope.rawValue) {
+                        chooser = nil; selectScope(scope)
+                    }
                 }
             } else {
                 ForEach(NarrationScope.allCases) { scope in
@@ -369,7 +490,7 @@ struct ReaderPlayerView: View {
     private func select(_ mode: ReaderVoiceMode) {
         state.invalidatePlaybackIntent()
         if active && state.mode != mode { player.pause() }
-        state.mode = mode; state.error = nil; state.needsCast = false; state.showingSelection = false; state.voice = nil; state.selectedJobID = nil
+        state.mode = mode; state.error = nil; state.needsCast = false; state.showingSelection = false; state.voice = nil; state.selectedJobID = nil; state.savedJobID = nil
         if mode != .device { refreshLocal() }
     }
 
@@ -382,7 +503,7 @@ struct ReaderPlayerView: View {
                 discovering = false
                 if pendingDiscovery { pendingDiscovery = false; refreshLocal() }
             }
-            do { let snapshot = try await reader.captureScope(.page); if let local = reader.book { state.discover(snapshot: snapshot, local: local, companion: companion) } }
+            do { let snapshot = try await reader.captureScope(state.playbackScope); if let local = reader.book { state.discover(snapshot: snapshot, local: local, companion: companion) } }
             catch { state.error = error.localizedDescription; state.readyIDs = []; state.selectedJobID = nil }
         }
     }
