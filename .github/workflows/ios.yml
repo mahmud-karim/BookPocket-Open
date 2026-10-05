@@ -52,6 +52,7 @@ jobs:
         timeout-minutes: 10
         run: python3 scripts/boot_simulator.py '${{ steps.device.outputs.id }}'
       - name: Run unit and UI tests
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           TEST_FILTERS=()
