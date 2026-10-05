@@ -105,6 +105,7 @@ enum ReaderTakeMatch {
     var showingSelection = false
     var pollRevision = 0
     private var playbackSession = UUID()
+    var requiresTakeSelection: Bool { selectedJobID == nil && candidates.contains { $0.status == "completed" } }
 
     func invalidatePlaybackIntent() { playbackSession = UUID() }
     func playbackIntent(jobID: String, bookID: String, location: Locator?) -> ReaderPlaybackIntent {

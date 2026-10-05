@@ -389,6 +389,28 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 120)
     }
 
+    func testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", "--reader-alternate-takes-fixture"]
+        XCUIDevice.shared.orientation = .portrait; app.launch()
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30))
+        app.tabBars.buttons["Library"].tap()
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch.tap()
+        XCTAssertTrue(waitForReaderContents(app)); app.buttons["reader.speak"].tap()
+        chooseReaderNarrator(app, "kyon")
+        XCTAssertEqual(app.staticTexts["reader.player.readiness"].label, "Choose a matching take · Saved audio")
+        XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
+        app.buttons["reader.player.saved"].tap()
+        let take = app.buttons["reader.saved.reader-alternate-job"]
+        XCTAssertTrue(take.waitForExistence(timeout: 10)); XCTAssertTrue(take.label.contains("Ready offline")); take.tap()
+        let play = app.buttons["reader.player.toggle"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertTrue(play.isEnabled)
+        XCTAssertEqual(play.value as? String, "Paused")
+        play.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: play)], timeout: 10), .completed)
+        play.tap()
+        assertReaderPlayerFits(app, name: "Obsidian explicit matching alternate audio selection")
+    }
     func testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge() {
         executionTimeAllowance = 240
         let app = XCUIApplication()

@@ -322,6 +322,7 @@ struct ReaderPlayerView: View {
         if let job, ["queued", "running", "paused"].contains(job.status) { return "\(job.status.capitalized) · \(job.completedSegments)/\(job.totalSegments) passages" }
         if state.showingSelection && !companion.paired { return "Pair your PC to generate · open details" }
         if state.error != nil { return "Needs attention · open details" }
+        if state.mode != .device && state.requiresTakeSelection { return "Choose a matching take · Saved audio" }
         let status = active ? (player.isPlaying ? "Playing" : "Paused") : state.mode == .device ? "Ready on this iPhone" : canPlay ? "Ready offline" : job?.status == "completed" ? "On PC · download to play" : state.playbackScope == .chapter ? "Chapter not generated" : "No audio for this page"
         return state.savedJobID == nil ? status : "Saved page clip · \(status)"
     }

@@ -85,6 +85,13 @@ import Foundation
         var otherBook = book; otherBook.id = "reader-other-book"; otherBook.sourceSha256 = String(repeating: "f", count: 64)
         var other = jobs[0]; other.id = "reader-other-job"; other.bookId = otherBook.id
         companion.books = [book, otherBook]; companion.jobs = jobs + [other]; companion.downloads = records
+        if ProcessInfo.processInfo.arguments.contains("--reader-alternate-takes-fixture") {
+            var alternate = jobs[0]; alternate.id = "reader-alternate-job"
+            companion.jobs.append(alternate)
+            companion.downloads += records.filter { $0.jobID == jobs[0].id }.map {
+                var record = $0; record.jobID = alternate.id; return record
+            }
+        }
         if ProcessInfo.processInfo.arguments.contains("--reader-page-clips-fixture") {
             // Deliberately no complete chapter take. Both clips use exact EPUB
             // spans; the second has PC metadata only and cannot play offline.

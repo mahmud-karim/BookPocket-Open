@@ -143,9 +143,11 @@ final class ReaderPlayerTests: XCTestCase {
         state.discover(snapshot: snapshot, local: local, companion: store)
         XCTAssertEqual(Set(state.candidates.map(\.id)), [first.id, alternate.id])
         XCTAssertEqual(state.readyIDs, [first.id, alternate.id]); XCTAssertNil(state.selectedJobID)
+        XCTAssertTrue(state.requiresTakeSelection, "Existing matching audio requires a choice, not a missing-audio message")
         state.selectedJobID = alternate.id
         state.discover(snapshot: snapshot, local: local, companion: store)
         XCTAssertEqual(state.selectedJobID, alternate.id)
+        XCTAssertFalse(state.requiresTakeSelection)
         XCTAssertTrue(store.readerPlayer(for: local.id) === state, "Closing a panel retains its explicit take")
         XCTAssertFalse(store.readerPlayer(for: "another-local") === state)
         try Data([0]).write(to: root.appendingPathComponent("tone.wav"))
