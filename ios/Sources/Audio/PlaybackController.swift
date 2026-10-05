@@ -178,7 +178,11 @@ struct RecordingInterval {
         speech?.pause()
         if let player {
             let wasPlaying = isPlaying
-            player.pause(); if !seeking, player.currentTime().seconds.isFinite { elapsed = player.currentTime().seconds }
+            player.pause()
+            // AVPlayer's clock can settle a fraction later after pause. Route
+            // loss or a repeated Pause must preserve the already frozen clock,
+            // just as it preserves the reader's manually chosen location.
+            if wasPlaying, !seeking, player.currentTime().seconds.isFinite { elapsed = player.currentTime().seconds }
             if wasPlaying { onProgress?(elapsed) }
         }
         isPlaying = false; nowPlaying()
