@@ -70,10 +70,10 @@ final class ReaderNarrationToolsTests: XCTestCase {
     }
     @MainActor func testAlignmentRepairPreservesActualJoinedAudioClockAndExactPageBounds() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: folder) }
+        defer { try? FileManager.default.removeItem(at: folder); ReaderToolsProtocol.handler = nil }
         let library = LibraryStore(root: folder.appendingPathComponent("Library"))
         let local = try await library.importBook(XCTUnwrap(Bundle(for: Self.self).url(forResource: "lantern", withExtension: "epub")))
-        let store = CompanionStore(root: folder.appendingPathComponent("Companion"))
+        let store = CompanionStore(root: folder.appendingPathComponent("Companion"), client: try client())
         var (book, job, segment) = words(); book.sourceSha256 = local.sourceSHA256
         let data = try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: "test-tone", withExtension: "wav")))
         try data.write(to: store.root.appendingPathComponent("tone.wav"))
@@ -111,6 +111,26 @@ final class ReaderNarrationToolsTests: XCTestCase {
         XCTAssertThrowsError(try store.acceptAlignedMetadata(malicious), "Repair must retain known page-boundary evidence")
         malicious = repaired; malicious.assets[0].timings[0].endOffset = 10_000
         XCTAssertThrowsError(try store.acceptAlignedMetadata(malicious))
+        var desktopRepair = repaired
+        for index in desktopRepair.assets.indices { desktopRepair.assets[index].timings[0].start = 0.17 }
+        ReaderToolsProtocol.handler = { request in
+            let object: [String: Any]
+            switch request.url!.path {
+            case "/v1/engines": object = ["engines": []]
+            case "/v1/voices": object = ["voices": []]
+            case "/v1/legacy-recordings": object = ["recordings": []]
+            case "/v1/pronunciations": object = ["pronunciation_rules": [], "revision": 0]
+            case "/v1/jobs": return (200, try JSONSerialization.data(withJSONObject: ["jobs": [JSONSerialization.jsonObject(with: CompanionClient.encoder.encode(desktopRepair))]]))
+            case "/v1/books": return (200, try JSONSerialization.data(withJSONObject: ["books": [JSONSerialization.jsonObject(with: CompanionClient.encoder.encode(book))]]))
+            default: throw URLError(.unsupportedURL)
+            }
+            return (200, try JSONSerialization.data(withJSONObject: object))
+        }
+        await store.refresh()
+        XCTAssertNil(store.error)
+        XCTAssertEqual(store.downloads[0].asset.timings[0].start, 0.17, accuracy: 0.0001, "Inventory refresh applies a desktop repair to the actual offline highlighting metadata")
+        XCTAssertEqual(player.recordingID, recording); XCTAssertEqual(player.duration, duration, accuracy: 0.0001)
+        XCTAssertEqual(player.elapsed, 0.45, accuracy: 0.001); XCTAssertFalse(player.isPlaying)
     }
     @MainActor func testPhoneCorrectionsPersistOfflineAndCASConflictKeepsDraft() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

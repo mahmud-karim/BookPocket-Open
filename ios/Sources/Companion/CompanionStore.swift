@@ -291,6 +291,15 @@ enum CompanionConnectionState: Equatable {
             async let p: PronunciationSettings = client.send("/v1/pronunciations")
             let result = try await (e, v, j, b, l, p)
             guard self.client === client, connectionEpoch == epoch else { return }
+            // A desktop repair can complete while this phone is offline. Merge
+            // its verified timing metadata into cached records before replacing
+            // inventory, preserving files and any active composition's clock.
+            for job in result.2.jobs where !deletedTakeIDs.contains(job.id)
+                && downloads.contains(where: { $0.jobID == job.id })
+                && jobs.contains(where: { $0.id == job.id && $0.status == "completed" })
+                && (job.alignmentStatus != nil || job.assets.contains(where: { $0.alignment == "word" })) {
+                try acceptAlignedMetadata(job)
+            }
             engines = result.0.engines; voices = result.1.voices
             let downloadedJobIDs = Set(downloads.map(\.jobID))
             let remoteJobIDs = Set(result.2.jobs.map(\.id))
