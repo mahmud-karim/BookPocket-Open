@@ -2,7 +2,7 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
-## Upcoming continuous recording in 0.1.17
+## Continuous recording in 0.1.17
 
 Update the existing LiveContainer app, keep its library/pairing, and select an existing Kyon page recording containing several passages. The seek bar must show zero elapsed and the complete recording duration before Play. Play past the first passage: elapsed time must keep increasing and the total must stay constant. Pause, drag the slider into a later passage, and use the 15-second controls across a passage boundary. Seeking and speed changes while paused must not resume playback; highlighting must follow the selected original words.
 
