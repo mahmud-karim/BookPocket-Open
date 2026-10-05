@@ -192,7 +192,7 @@ struct ConnectionView: View {
         case .connected: return "Ready for transfers and narration."
         case .checking: return "Checking your saved PC…"
         case .disconnected: return "Pairing saved. Downloads stay available."
-        case .unavailable: return "Your PC could not be verified. Try Start companion or check the connection details."
+        case .unavailable: return "Try Start companion to reconnect your PC."
         case .notChecked: return "Pairing saved. Check the connection to your PC."
         }
     }

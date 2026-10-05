@@ -12,6 +12,13 @@ final class ReaderUITests: XCTestCase {
         assertMinimumHitArea(start)
         XCTAssertTrue(start.isEnabled && start.isHittable)
         XCTAssertEqual(app.scrollViews.count, 0)
+        for id in ["connection.toggle", "connection.edit", "connection.forget"] {
+            let button = app.buttons[id]
+            assertMinimumHitArea(button)
+            XCTAssertTrue(button.isHittable)
+            XCTAssertLessThanOrEqual(button.frame.maxY, app.tabBars.firstMatch.frame.minY)
+        }
+        XCTAssertLessThanOrEqual(app.staticTexts["connection.retention"].frame.maxY, app.tabBars.firstMatch.frame.minY)
         let screen = XCTAttachment(screenshot: app.screenshot())
         screen.name = "Obsidian Start companion — unavailable test host"; screen.lifetime = .keepAlways; add(screen)
         start.tap()
