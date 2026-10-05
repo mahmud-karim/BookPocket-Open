@@ -44,8 +44,14 @@ class SelectionEngine:
             raise RuntimeError("Explicit test interruption")
         output.write_bytes((FIXTURES / "test-tone.wav").read_bytes())
         if self.word_mode:
-            # One controlled token from the selected original text; no real alignment claim.
-            return {"words": [{"text": "cafe", "start": 0.05, "end": 0.20}]}
+            # Complete controlled lexical coverage; these are test-only tone timings.
+            return {"words": [
+                {"text": "A", "start": 0.0, "end": 0.02},
+                {"text": "compass", "start": 0.02, "end": 0.04},
+                {"text": "points", "start": 0.04, "end": 0.045},
+                {"text": "toward", "start": 0.045, "end": 0.05},
+                {"text": "cafe", "start": 0.05, "end": 0.20},
+            ]}
 
 
 def connection(config, engine):
@@ -156,7 +162,10 @@ def test_partial_word_alignment_maps_pronunciation_back_to_absolute_source(selec
     asset = result["assets"][0]
     expected = book["chapters"][0]["segments"][0]["text"].index("café")
     assert asset["alignment"] == "word"
-    assert asset["timings"] == [{"start": .05, "end": .20, "start_offset": expected, "end_offset": expected + 4}]
+    assert len(asset["timings"]) == 5
+    assert asset["timings"][-1] == {"start": .05, "end": .20, "start_offset": expected, "end_offset": expected + 4}
+    original = book["chapters"][0]["segments"][0]["text"]
+    assert [original[t["start_offset"]:t["end_offset"]] for t in asset["timings"]] == ["A", "compass", "points", "toward", "café"]
     assert engine.calls == ["A compass 🧭 points toward cafe."]
 
 

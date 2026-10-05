@@ -25,7 +25,7 @@ concurrency:
 jobs:
   simulator:
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       UI_TEST_SCOPE: ${{ inputs.ui_scope || 'full' }}
     steps:
@@ -57,7 +57,7 @@ jobs:
         timeout-minutes: 10
         run: python3 scripts/boot_simulator.py '${{ steps.device.outputs.id }}'
       - name: Run unit and UI tests
-        timeout-minutes: 25
+        timeout-minutes: 35
         run: |
           set -euo pipefail
           TEST_FILTERS=()
@@ -84,6 +84,9 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate
               -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable
               -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
             )
           fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
@@ -99,7 +102,7 @@ jobs:
             done
           fi
           if [ "$UI_TEST_SCOPE" = reader ]; then
-            for TEST in testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages testContinuousRecordingTimelineFitsLargestTextSizes testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate testLargestDynamicTypeKeepsListenAndReaderControlsUsable testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet; do
+            for TEST in testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages testContinuousRecordingTimelineFitsLargestTextSizes testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate testLargestDynamicTypeKeepsListenAndReaderControlsUsable testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording testReaderRecordingRemovalKeepsOtherTakes testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged; do
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
           fi
@@ -116,7 +119,7 @@ jobs:
           xcrun simctl shutdown '${{ steps.device.outputs.id }}' || true
           python3 scripts/boot_simulator.py '${{ steps.compact.outputs.id }}'
       - name: Verify reader and Listen controls on compact iPhone
-        timeout-minutes: 20
+        timeout-minutes: 30
         run: |
           set -euo pipefail
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
@@ -131,6 +134,9 @@ jobs:
             -only-testing:BookPocketOpenUITests/ReaderUITests/testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionTabShowsVerifiedStatusAndKeepsPairing \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize \
@@ -149,6 +155,9 @@ jobs:
           grep -E 'Test Case.*testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testReaderRecordingRemovalKeepsOtherTakes.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testConnectionTabShowsVerifiedStatusAndKeepsPairing.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testConnectionOfflineForgetAndPairingEntry.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testConnectionSettingsRemainReachableAtLargestTextSize.*passed' artifacts/compact-tests.log

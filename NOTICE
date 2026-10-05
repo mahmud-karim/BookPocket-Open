@@ -19,6 +19,13 @@ the official Apache-2.0 runtime and pinned pretrained weights separately. OmniVo
 weights are CC-BY-NC; the Higgs audio tokenizer has its own community license.
 Neither model weights nor user voice references are bundled with this application.
 
+Optional English word alignment downloads facebook/wav2vec2-base-960h from its
+official Hugging Face repository at revision
+22aad52d435eb6dbaf354bdad9b0da84ce7d6156. Its upstream model card declares
+Apache-2.0. Model files and upstream notices remain separate downloads; they are
+not included in the iPhone IPA or Windows installer. The acoustic alignment
+adapter and CTC path implementation are original project code.
+
 Built with Higgs Materials licensed from Boson AI USA, Inc., Copyright Boson AI
 USA, Inc., All Rights Reserved and Meta Llama 3 licensed under the Meta Llama 3
 Community License, Copyright Meta Platforms, Inc., All Right Reserved.
