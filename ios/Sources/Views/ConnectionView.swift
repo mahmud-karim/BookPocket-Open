@@ -20,10 +20,11 @@ struct ConnectionView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $editConnection) { CompanionConnectionView() }
             .sheet(isPresented: $pair) { PairingView() }
-            .confirmationDialog("Forget this PC?", isPresented: $forget, titleVisibility: .visible) {
+            .alert("Forget this PC?", isPresented: $forget) {
                 Button("Forget PC", role: .destructive) {
                     do { try companion.forgetConnection() } catch { actionError = error.localizedDescription }
                 }
+                Button("Cancel", role: .cancel) {}
             } message: { Text("This removes the saved pairing from your iPhone. Books and downloaded narration stay available. Pair again to reconnect.") }
             .alert("Connection", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })) {
                 Button("OK") { actionError = nil }

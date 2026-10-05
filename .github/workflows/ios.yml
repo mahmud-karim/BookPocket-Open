@@ -6,6 +6,12 @@ on:
   pull_request:
     paths: ['ios/**', 'tests/fixtures/**', 'scripts/verify_ipa.py', 'scripts/select_xcode.py', 'scripts/select_simulator.py', 'scripts/boot_simulator.py', '.github/workflows/ios.yml']
   workflow_dispatch:
+    inputs:
+      ui_scope:
+        description: 'Primary iPhone UI coverage (compact coverage is always complete)'
+        type: choice
+        options: [full, connection]
+        default: full
 permissions:
   contents: read
 concurrency:
@@ -15,6 +21,8 @@ jobs:
   simulator:
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      UI_TEST_SCOPE: ${{ inputs.ui_scope || 'full' }}
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/select_xcode.py
@@ -46,12 +54,29 @@ jobs:
       - name: Run unit and UI tests
         run: |
           set -euo pipefail
+          TEST_FILTERS=()
+          if [ "$UI_TEST_SCOPE" = connection ]; then
+            TEST_FILTERS=(
+              -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testCompanionAddressChangeVerifiesBeforeReplacingPairing
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionTabShowsVerifiedStatusAndKeepsPairing
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testNarrationMiniPlayerLeavesNativeTabsVisibleAndUsable
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.device.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
+            "${TEST_FILTERS[@]}" \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/Tests.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-tests.log
+          if [ "$UI_TEST_SCOPE" = connection ]; then
+            for TEST in testCompanionAddressChangeVerifiesBeforeReplacingPairing testConnectionTabShowsVerifiedStatusAndKeepsPairing testConnectionOfflineForgetAndPairingEntry testConnectionSettingsRemainReachableAtLargestTextSize testNarrationMiniPlayerLeavesNativeTabsVisibleAndUsable; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
+            done
+          fi
       - name: Capture test evidence
         if: always()
         run: |
