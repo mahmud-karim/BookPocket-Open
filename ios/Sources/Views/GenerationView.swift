@@ -71,7 +71,7 @@ struct GenerationView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .onChange(of: localID) { remote = nil; selectedSegments = []; cast = [:]; chapterID = "all" }
             .sheet(isPresented: $showCast) { if let remote { CastView(book: remote) } }
-            .task { if rules.isEmpty { rules = companion.importedPronunciations } }
+            .task { if rules.isEmpty { rules = companion.narrationPronunciations } }
             .onChange(of: newTake) { takeID = newTake ? UUID().uuidString.lowercased() : nil }
         }
     }

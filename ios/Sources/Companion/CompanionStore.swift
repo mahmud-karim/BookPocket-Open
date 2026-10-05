@@ -39,6 +39,11 @@ enum CompanionConnectionState: Equatable {
     var pendingRequests: [GenerationRequest] = []
     var legacyRecordings: [LegacyRecording] = []
     var importedPronunciations: [PronunciationRule] = []
+    var pronunciationRevision = 0
+    var pronunciationDraft: [PronunciationRule]?
+    var pronunciationDraftRevision: Int?
+    var narrationPronunciations: [PronunciationRule] { pronunciationDraft ?? importedPronunciations }
+    private var deletedTakeIDs: Set<String> = []
     var error: String?
     var status: String?
     var refreshing = false
@@ -91,6 +96,10 @@ enum CompanionConnectionState: Equatable {
             pendingRequests = try database?.read("pendingRequests", as: [GenerationRequest].self) ?? []
             legacyRecordings = try database?.read("legacyRecordings", as: [LegacyRecording].self) ?? []
             importedPronunciations = try database?.read("pronunciations", as: [PronunciationRule].self) ?? []
+            pronunciationRevision = try database?.read("pronunciationRevision", as: Int.self) ?? 0
+            pronunciationDraft = try database?.read("pronunciationDraft", as: [PronunciationRule].self)
+            pronunciationDraftRevision = try database?.read("pronunciationDraftRevision", as: Int.self)
+            deletedTakeIDs = try database?.read("deletedTakeIDs", as: Set<String>.self) ?? []
             if let identity, let token = DeviceKeychain.read(account: identity.deviceID) { self.client = try CompanionClient(url: identity.url, fingerprint: identity.fingerprint, token: token) }
         } catch { self.error = error.localizedDescription }
         if let client { self.client = client }
@@ -109,6 +118,10 @@ enum CompanionConnectionState: Equatable {
             try database.write("pendingRequests", value: pendingRequests)
             try database.write("legacyRecordings", value: legacyRecordings)
             try database.write("pronunciations", value: importedPronunciations)
+            try database.write("pronunciationRevision", value: pronunciationRevision)
+            try database.write("pronunciationDraft", value: pronunciationDraft)
+            try database.write("pronunciationDraftRevision", value: pronunciationDraftRevision)
+            try database.write("deletedTakeIDs", value: deletedTakeIDs)
         }
     }
     func connect(qr: PairingQR) async {
@@ -270,19 +283,18 @@ enum CompanionConnectionState: Equatable {
             struct Jobs: Decodable { var jobs: [RemoteJob] }
             struct Books: Decodable { var books: [RemoteBook] }
             struct Legacy: Decodable { var recordings: [LegacyRecording] }
-            struct Pronunciations: Decodable { var pronunciationRules: [PronunciationRule] }
             async let e: Engines = client.send("/v1/engines")
             async let v: Voices = client.send("/v1/voices")
             async let j: Jobs = client.send("/v1/jobs")
             async let b: Books = client.send("/v1/books")
             async let l: Legacy = client.send("/v1/legacy-recordings")
-            async let p: Pronunciations = client.send("/v1/pronunciations")
+            async let p: PronunciationSettings = client.send("/v1/pronunciations")
             let result = try await (e, v, j, b, l, p)
             guard self.client === client, connectionEpoch == epoch else { return }
             engines = result.0.engines; voices = result.1.voices
             let downloadedJobIDs = Set(downloads.map(\.jobID))
             let remoteJobIDs = Set(result.2.jobs.map(\.id))
-            jobs = (result.2.jobs + jobs.filter { downloadedJobIDs.contains($0.id) && !remoteJobIDs.contains($0.id) }).map { job in
+            jobs = (result.2.jobs + jobs.filter { downloadedJobIDs.contains($0.id) && !remoteJobIDs.contains($0.id) }).filter { !deletedTakeIDs.contains($0.id) }.map { job in
                 var updated = job
                 if updated.voiceName == nil { updated.voiceName = voices.first { $0.id == job.voiceId && $0.engine == job.engine }?.name }
                 return updated
@@ -290,7 +302,7 @@ enum CompanionConnectionState: Equatable {
             let neededBookIDs = Set(jobs.map(\.bookId))
             let remoteBookIDs = Set(result.3.books.map(\.id))
             books = result.3.books + books.filter { neededBookIDs.contains($0.id) && !remoteBookIDs.contains($0.id) }
-            legacyRecordings = result.4.recordings; importedPronunciations = result.5.pronunciationRules
+            legacyRecordings = result.4.recordings; importedPronunciations = result.5.pronunciationRules; pronunciationRevision = result.5.revision ?? 0
             try persist(); status = "Connected to your companion"; connectionState = .connected; connectionError = nil
         } catch {
             guard self.client === client, connectionEpoch == epoch else { return }
@@ -362,6 +374,10 @@ enum CompanionConnectionState: Equatable {
     func refreshJob(_ id: String) async throws -> RemoteJob {
         guard let client else { throw BookError.message("Reconnect your paired PC to refresh this narration.") }
         let job: RemoteJob = try await client.send("/v1/jobs/\(id)")
+        guard !deletedTakeIDs.contains(id) else { throw BookError.message("This generated take was deleted.") }
+        if job.alignmentStatus != nil, jobs.contains(where: { $0.id == job.id && $0.status == "completed" }) {
+            try acceptAlignedMetadata(job); return job
+        }
         jobs.removeAll { $0.id == id }; jobs.insert(job, at: 0); try persist(); return job
     }
     func fetchCast(_ bookID: String) async throws -> BookCast {
@@ -424,7 +440,7 @@ enum CompanionConnectionState: Equatable {
         voices.append(voice)
     }
     @discardableResult func download(_ job: RemoteJob, localBook: LocalBook) async -> Bool {
-        guard downloading == nil else { return false }
+        guard downloading == nil, !deletedTakeIDs.contains(job.id) else { return false }
         downloading = job.id; defer { downloading = nil }
         error = nil
         do {
@@ -440,6 +456,10 @@ enum CompanionConnectionState: Equatable {
                 } else {
                     guard let client else { throw BookError.message("Reconnect your PC and retry the download to restore the missing audio.") }
                     try await client.download(asset, to: root.appendingPathComponent(file))
+                }
+                guard !deletedTakeIDs.contains(job.id) else {
+                    if !downloads.contains(where: { $0.file == file }) { try? FileManager.default.removeItem(at: root.appendingPathComponent(file)) }
+                    throw BookError.message("This generated take was deleted while downloading.")
                 }
                 let replaced = downloads.filter { $0.jobID == job.id && ($0.asset.id == asset.id || $0.asset.segmentId == asset.segmentId) }
                 downloads.removeAll { $0.jobID == job.id && ($0.asset.id == asset.id || $0.asset.segmentId == asset.segmentId) }
@@ -482,6 +502,7 @@ enum CompanionConnectionState: Equatable {
             // one global position throughout the selected page or chapter.
             let savedIndex = !fromBeginning ? selection.records.firstIndex(where: { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID }) : nil
             let currentFollow = player.bookID == book.id ? player.onLocator : nil
+            let currentClear = player.bookID == book.id ? player.onClearHighlight : nil
             try player.play(parts: parts, book: book, recordingID: selection.id)
             if let savedIndex {
                 let interval = player.recordingIntervals[savedIndex]
@@ -498,26 +519,24 @@ enum CompanionConnectionState: Equatable {
             player.onLocator = currentFollow ?? { [weak library] locator in
                 if Date().timeIntervalSince(locationSaved) >= 3 { library?.saveLocation(first.localBookID, locator: locator); locationSaved = Date() }
             }
+            player.onClearHighlight = currentClear
             var lastSaved = -5.0
             var lastRecordID: String?
-            player.onProgress = { [weak library, weak player] seconds in
+            player.onProgress = { [weak self, weak library, weak player] seconds in
                 guard let player, let position = player.recordingPosition(at: seconds), selection.records.indices.contains(position.index),
                       let library, var current = library.book(first.localBookID) else { return }
-                let record = selection.records[position.index], seconds = position.seconds
+                let original = selection.records[position.index]
+                let record = self?.downloads.first { $0.jobID == original.jobID && $0.id == original.id } ?? original
+                let seconds = position.seconds
                 if lastRecordID != record.id || abs(seconds - lastSaved) >= 5 {
                     current.audioAssetID = record.id; current.audioSeconds = seconds; library.update(current); lastSaved = seconds; lastRecordID = record.id
                 }
                 player.chapterTitle = remote?.chapters.first(where: { $0.segments.contains { $0.id == record.asset.segmentId } })?.title ?? player.chapterTitle
-                guard let segment = record.segment, var locator = segment.locator.locator else { return }
-                if let start = record.asset.sourceStart, let end = record.asset.sourceEnd, let range = SourceIdentity.scalarRange(start, end, in: segment.text) {
-                    locator.text.highlight = String(segment.text[range]); locator.text.before = String(segment.text[..<range.lowerBound].suffix(60)); locator.text.after = String(segment.text[range.upperBound...].prefix(60))
+                guard let locator = RecordedWordHighlight.locator(record: record, seconds: seconds) else {
+                    if player.speechLocator != nil { player.speechLocator = nil; player.onClearHighlight?() }
+                    return
                 }
-                if let timing = record.asset.timings.first(where: { $0.start <= seconds && $0.end > seconds }), let range = SourceIdentity.scalarRange(timing.startOffset, timing.endOffset, in: segment.text) {
-                    locator.text.highlight = String(segment.text[range])
-                    locator.text.before = String(segment.text[..<range.lowerBound].suffix(60))
-                    locator.text.after = String(segment.text[range.upperBound...].prefix(60))
-                }
-                player.speechLocator = locator; player.onLocator?(locator)
+                if player.speechLocator != locator { player.speechLocator = locator; player.onLocator?(locator) }
             }
             player.onProgress?(player.elapsed)
             player.onFinished = { [weak library, weak player] in
@@ -613,12 +632,11 @@ enum CompanionConnectionState: Equatable {
         guard let client else { throw BookError.message(connectionRequiredMessage) }
         struct Engines: Decodable { var engines: [RemoteEngine] }
         struct Voices: Decodable { var voices: [RemoteVoice] }
-        struct Pronunciations: Decodable { var pronunciationRules: [PronunciationRule] }
         async let e: Engines = client.send("/v1/engines")
         async let v: Voices = client.send("/v1/voices")
-        async let p: Pronunciations = client.send("/v1/pronunciations")
+        async let p: PronunciationSettings = client.send("/v1/pronunciations")
         let inventory = try await (e, v, p)
-        engines = inventory.0.engines; voices = inventory.1.voices; importedPronunciations = inventory.2.pronunciationRules
+        engines = inventory.0.engines; voices = inventory.1.voices; importedPronunciations = inventory.2.pronunciationRules; pronunciationRevision = inventory.2.revision ?? 0
         try persist()
     }
     func resumeRecord(jobID: String, library: LibraryStore) -> DownloadRecord? {
@@ -656,6 +674,84 @@ enum CompanionConnectionState: Equatable {
         downloads.removeAll { $0.jobID == jobID }
         do { try persist() } catch { downloads = previous; throw error }
         for record in removing where !downloads.contains(where: { $0.file == record.file }) { try? FileManager.default.removeItem(at: root.appendingPathComponent(record.file)) }
+    }
+    func savePronunciationsOnPhone(_ rules: [PronunciationRule]) throws {
+        let validated = try PronunciationCorrections.validate(rules)
+        let previous = pronunciationDraft, previousRevision = pronunciationDraftRevision
+        if pronunciationDraft == nil { pronunciationDraftRevision = pronunciationRevision }
+        pronunciationDraft = validated
+        do { try persist() } catch { pronunciationDraft = previous; pronunciationDraftRevision = previousRevision; throw error }
+    }
+    func reloadPronunciationsFromPC() async throws {
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        let draft = pronunciationDraft
+        let settings: PronunciationSettings = try await client.send("/v1/pronunciations")
+        guard self.client === client, pronunciationDraft == draft else { throw BookError.message("Your phone draft changed while loading. It was kept; try again after reviewing it.") }
+        let previous = (importedPronunciations, pronunciationRevision, pronunciationDraft, pronunciationDraftRevision)
+        importedPronunciations = settings.pronunciationRules; pronunciationRevision = settings.revision ?? 0
+        pronunciationDraft = nil; pronunciationDraftRevision = nil
+        do { try persist() } catch { (importedPronunciations, pronunciationRevision, pronunciationDraft, pronunciationDraftRevision) = previous; throw error }
+    }
+    func savePronunciationsToPC() async throws {
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        try await requireCapability("pronunciation_settings", message: "Update PC Companion to save pronunciation corrections, then reconnect.")
+        struct Request: Encodable { var pronunciationRules: [PronunciationRule]; var expectedRevision: Int }
+        let draft = narrationPronunciations
+        let settings: PronunciationSettings = try await client.send("/v1/pronunciations", method: "PUT", body: CompanionClient.encoder.encode(Request(pronunciationRules: draft, expectedRevision: pronunciationDraftRevision ?? pronunciationRevision)))
+        guard self.client === client else { throw BookError.message("The connection changed while saving. Your phone corrections are kept; reconnect and review the PC list.") }
+        let previous = (importedPronunciations, pronunciationRevision, pronunciationDraft, pronunciationDraftRevision)
+        importedPronunciations = settings.pronunciationRules; pronunciationRevision = settings.revision ?? pronunciationRevision
+        // Keep a newer phone edit if it arrived while this save was in flight.
+        if pronunciationDraft == draft { pronunciationDraft = nil; pronunciationDraftRevision = nil }
+        else if pronunciationDraft != nil { pronunciationDraftRevision = pronunciationRevision }
+        do { try persist() } catch { (importedPronunciations, pronunciationRevision, pronunciationDraft, pronunciationDraftRevision) = previous; throw error }
+    }
+    private func requireCapability(_ capability: String, message: String) async throws {
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        struct Health: Decodable { var capabilities: [String]? }
+        let health: Health = try await client.send("/v1/health")
+        guard health.capabilities?.contains(capability) == true else { throw BookError.message(message) }
+    }
+    func deleteGeneratedTake(_ jobID: String, library: LibraryStore, player: PlaybackController) async throws {
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        try await requireCapability("delete_recordings", message: "Update PC Companion to delete generated takes, then reconnect.")
+        try await client.command("/v1/jobs/\(jobID)")
+        let removing = downloads.filter { $0.jobID == jobID }
+        if let current = library.book(player.bookID ?? ""), removing.contains(where: { $0.id == current.audioAssetID || $0.asset.id == current.audioAssetID }) { player.stop() }
+        let previousJobs = jobs
+        deletedTakeIDs.insert(jobID)
+        jobs.removeAll { $0.id == jobID }
+        do { try removeDownloadedTake(jobID) } catch { jobs = previousJobs; throw error }
+        for state in readerPlayers.values where state.selectedJobID == jobID || state.savedJobID == jobID {
+            state.invalidatePlaybackIntent(); state.selectedJobID = nil; state.savedJobID = nil; state.readyIDs.remove(jobID); state.candidates.removeAll { $0.id == jobID }
+        }
+    }
+    func enableWordHighlighting(_ jobID: String) async throws -> RemoteJob {
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        try await requireCapability("word_alignment", message: "Update PC Companion to enable word highlighting, then reconnect.")
+        let updated: RemoteJob = try await client.send("/v1/jobs/\(jobID)/align", method: "POST")
+        try acceptAlignedMetadata(updated)
+        return updated
+    }
+    func acceptAlignedMetadata(_ job: RemoteJob) throws {
+        guard !deletedTakeIDs.contains(job.id), let old = jobs.first(where: { $0.id == job.id }), old.bookId == job.bookId, old.segmentIds == job.segmentIds,
+              old.status == "completed", job.status == "completed", old.engine == job.engine, old.voiceId == job.voiceId,
+              old.narrationMode == job.narrationMode, old.sourceRanges == job.sourceRanges, old.cast == job.cast, old.narrationPlan == job.narrationPlan,
+              old.assets.count == job.assets.count, Set(job.assets.map(\.id)).count == job.assets.count,
+              let book = books.first(where: { $0.id == job.bookId }),
+              job.assets.allSatisfy({ asset in old.assets.contains {
+                  $0.id == asset.id && $0.segmentId == asset.segmentId && $0.sha256 == asset.sha256 && $0.bytes == asset.bytes && $0.duration == asset.duration
+                      && $0.sourceStart == asset.sourceStart && $0.sourceEnd == asset.sourceEnd && $0.narrationMode == asset.narrationMode && $0.castSpans == asset.castSpans
+                      && (($0.sourceTimings ?? ($0.alignment == "word" ? [] : $0.timings)).allSatisfy { (asset.sourceTimings ?? []).contains($0) }
+                          || ($0.sourceTimings == nil && asset.timings == $0.timings))
+              } }) else { throw BookError.message("Word timing did not match this recording. Refresh your PC and retry.") }
+        try RangedAudioValidation.validate(job: job, book: book)
+        let previousJobs = jobs, previousDownloads = downloads
+        jobs = jobs.map { $0.id == job.id ? job : $0 }
+        for index in downloads.indices where downloads[index].jobID == job.id {
+            if let asset = job.assets.first(where: { $0.id == downloads[index].asset.id }) { downloads[index].asset = asset }
+        }
+        do { try persist() } catch { jobs = previousJobs; downloads = previousDownloads; throw error }
     }
     func export(_ job: RemoteJob, format: String) async throws -> URL {
         guard let client else { throw BookError.message("Connect to your companion first.") }

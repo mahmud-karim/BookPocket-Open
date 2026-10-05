@@ -36,7 +36,7 @@ enum ProjectImportValidation {
                       span.endOffset > span.startOffset, span.endOffset <= end else { throw invalid }
                 castEnd = span.endOffset
             }
-            for timing in asset.timings {
+            for timing in (asset.sourceTimings ?? []) + asset.timings {
                 guard timing.start.isFinite, timing.end.isFinite, timing.start >= 0,
                       timing.end > timing.start, timing.end <= asset.duration + 0.05,
                       timing.startOffset >= start, timing.endOffset <= end,

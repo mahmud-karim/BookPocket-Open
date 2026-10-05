@@ -59,7 +59,7 @@ struct RemoteEngine: Codable, Identifiable {
     var license: String
     var reason: String?
 }
-struct AudioTiming: Codable {
+struct AudioTiming: Codable, Equatable {
     var start: Double
     var end: Double
     var startOffset: Int
@@ -78,6 +78,8 @@ struct AudioAsset: Codable, Identifiable {
     var sourceEnd: Int?
     var narrationMode: String? = nil
     var castSpans: [NarrationSpan]? = nil
+    var alignment: String? = nil
+    var sourceTimings: [AudioTiming]? = nil
 }
 struct RemoteJob: Codable, Identifiable {
     var id: String
@@ -97,12 +99,18 @@ struct RemoteJob: Codable, Identifiable {
     var narrationPlan: [NarrationSpan]? = nil
     var cast: [String: String]? = nil
     var voiceName: String? = nil
+    var alignmentStatus: String? = nil
+    var alignmentError: String? = nil
 }
-struct PronunciationRule: Codable, Identifiable {
+struct PronunciationRule: Codable, Identifiable, Equatable {
     var term: String
     var replacement: String
     var enabled = true
     var id: String { term }
+}
+struct PronunciationSettings: Codable {
+    var pronunciationRules: [PronunciationRule]
+    var revision: Int?
 }
 struct GenerationRequest: Codable {
     var requestId: String

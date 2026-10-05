@@ -19,12 +19,13 @@ struct DownloadedRecordingSelection {
             let assetEnd = record.asset.sourceEnd ?? declared?.endOffset ?? segment.text.unicodeScalars.count
             guard range.startOffset >= assetStart, range.endOffset <= assetEnd, range.endOffset > range.startOffset else { throw BookError.message("This recording does not cover the selected words.") }
             var start = 0.0, end: Double? = nil
+            let timingEvidence = (record.asset.sourceTimings ?? []) + record.asset.timings
             if range.startOffset != assetStart {
-                guard let timing = record.asset.timings.first(where: { $0.startOffset == range.startOffset }) else { throw BookError.message("Generate this page to play exactly its words. This older recording has no timing at the page boundary.") }
+                guard let timing = timingEvidence.first(where: { $0.startOffset == range.startOffset }) else { throw BookError.message("Generate this page to play exactly its words. This older recording has no timing at the page boundary.") }
                 start = timing.start
             }
             if range.endOffset != assetEnd {
-                guard let timing = record.asset.timings.last(where: { $0.endOffset == range.endOffset }) else { throw BookError.message("Generate this page to play exactly its words. This older recording has no timing at the page boundary.") }
+                guard let timing = timingEvidence.first(where: { $0.endOffset == range.endOffset }) else { throw BookError.message("Generate this page to play exactly its words. This older recording has no timing at the page boundary.") }
                 end = timing.end
             }
             guard start.isFinite, start >= 0, (end ?? record.asset.duration).isFinite, (end ?? record.asset.duration) > start,

@@ -4,13 +4,6 @@ import Observation
 import ReadiumShared
 import ReadiumNavigator
 
-private final class SpeechRateDelegate: AVTTSEngineDelegate {
-    func avTTSEngine(_ engine: AVTTSEngine, didCreateUtterance utterance: AVSpeechUtterance) {
-        let speed = UserDefaults.standard.double(forKey: "playbackRate")
-        utterance.rate = min(0.65, max(0.2, AVSpeechUtteranceDefaultSpeechRate * Float(speed == 0 ? 1 : speed)))
-    }
-}
-
 struct RecordingPart {
     var url: URL
     var start: Double = 0
@@ -39,6 +32,7 @@ struct RecordingInterval {
     var chapterTitle = ""
     private var speechPublication: Publication?
     var onLocator: ((Locator) -> Void)?
+    var onClearHighlight: (() -> Void)?
     var onProgress: ((Double) -> Void)?
     var onFinished: (() -> Void)?
     private var speech: PublicationSpeechSynthesizer?
@@ -57,7 +51,6 @@ struct RecordingInterval {
         let interval = recordingIntervals[index]
         return (index, interval.sourceStart + max(0, position - interval.start))
     }
-    private let rateDelegate = SpeechRateDelegate()
     private var sleepTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
     private var notificationTokens: [NSObjectProtocol] = []
@@ -93,8 +86,7 @@ struct RecordingInterval {
         func flatten(_ links: [ReadiumShared.Link]) -> [ReadiumShared.Link] { links.flatMap { [$0] + flatten($0.children) } }
         speechChapters = flatten(publication.manifest.tableOfContents)
         if speechChapters.isEmpty { speechChapters = publication.readingOrder }
-        let delegate = rateDelegate
-        speech = PublicationSpeechSynthesizer(publication: publication, config: .init(voiceIdentifier: UserDefaults.standard.string(forKey: "speechVoice")), engineFactory: { AVTTSEngine(delegate: delegate) }, delegate: self)
+        speech = PublicationSpeechSynthesizer(publication: publication, config: .init(voiceIdentifier: UserDefaults.standard.string(forKey: "speechVoice")), engineFactory: { SystemWordSpeechEngine() }, delegate: self)
         guard let speech else { error = "This publication does not contain text that can be read aloud."; return }
         speech.start(from: locator)
     }
@@ -161,7 +153,7 @@ struct RecordingInterval {
         isPlaying = true; audio.playImmediately(atRate: Float(rate)); nowPlaying()
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
                 guard let self, let player = self.player else { return }
                 // A paused recording must not pull a manually turned page back
                 // to its old locator. Explicit seek still publishes below.
@@ -188,7 +180,7 @@ struct RecordingInterval {
         isPlaying = false; nowPlaying()
     }
     func resume() { speech?.resume(); if let player { if elapsed >= duration { seek(0) }; isPlaying = true; player.playImmediately(atRate: Float(rate)) }; nowPlaying() }
-    func stop() { speech?.stop(); speech = nil; speechPublication = nil; speechChapters = []; chapterTitle = ""; player?.pause(); player = nil; if let finishObserver { NotificationCenter.default.removeObserver(finishObserver) }; finishObserver = nil; tickTask?.cancel(); seekRevision = UUID(); seeking = false; recordingIntervals = []; recordingID = nil; isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
+    func stop() { speech?.stop(); speech = nil; speechPublication = nil; speechChapters = []; chapterTitle = ""; player?.pause(); player = nil; if let finishObserver { NotificationCenter.default.removeObserver(finishObserver) }; finishObserver = nil; tickTask?.cancel(); seekRevision = UUID(); seeking = false; recordingIntervals = []; recordingID = nil; isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onClearHighlight?(); onClearHighlight = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
     func skip(_ seconds: Double) { if player != nil { seek(elapsed + seconds) } else if seconds > 0 { speech?.next() } else { speech?.previous() } }
     func seek(_ value: Double) {
         guard let player, value.isFinite else { return }
@@ -217,7 +209,9 @@ struct RecordingInterval {
         case .stopped: isPlaying = false
         case .paused: isPlaying = false
         case .playing(let utterance, let range):
-            isPlaying = true; speechLocator = range ?? utterance.locator; onLocator?(range ?? utterance.locator)
+            isPlaying = true
+            if let range { speechLocator = range; onLocator?(range) }
+            else if speechLocator != nil { speechLocator = nil; onClearHighlight?() }
             let candidates = speechChapters.filter { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href((range ?? utterance.locator).href.string) }
             if candidates.count == 1, let title = candidates.first?.title { chapterTitle = title }
             else if chapterTitle.isEmpty, let title = speechLocator?.title { chapterTitle = title }

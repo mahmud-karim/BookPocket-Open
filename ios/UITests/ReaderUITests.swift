@@ -2,6 +2,85 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording() {
+        executionTimeAllowance = 300
+        let app = narrationToolsApp(); app.launch(); openContinuousPage(app)
+        let toggle = app.buttons["reader.player.toggle"], surface = app.otherElements["reader.player.surface"]
+        toggle.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: toggle)], timeout: 10), .completed)
+        toggle.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Paused"), object: toggle)], timeout: 10), .completed)
+        app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0.2)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Mira"), object: surface)], timeout: 10), .completed)
+        app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0.3)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "opened"), object: surface)], timeout: 10), .completed)
+        XCTAssertEqual(toggle.value as? String, "Paused"); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 124)
+        narrationToolsScreenshot(app, "Obsidian individual original word in continuous page timeline")
+        app.buttons["Done"].tap()
+        let original = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 15)); XCTAssertFalse(original.label.contains("Mee rah"))
+        narrationToolsScreenshot(app, "Obsidian original reader word highlight after paused seek")
+        app.buttons["reader.speak"].tap(); app.buttons["reader.player.details"].tap()
+        XCTAssertEqual(app.staticTexts["reader.player.timing"].label, "Word highlighting")
+        XCTAssertFalse(app.buttons["reader.alignment.enable"].exists)
+    }
+    func testReaderRecordingRemovalKeepsOtherTakes() {
+        executionTimeAllowance = 300
+        let app = narrationToolsApp(); app.launch(); openContinuousPage(app)
+        app.buttons["reader.player.saved"].tap()
+        let manage = app.buttons["reader.saved.manage.reader-continuous-page"]
+        XCTAssertTrue(manage.waitForExistence(timeout: 10)); manage.tap()
+        app.buttons["reader.saved.delete.reader-continuous-page"].tap()
+        XCTAssertTrue(app.buttons["Delete generated take"].waitForExistence(timeout: 5))
+        narrationToolsScreenshot(app, "Obsidian confirmed whole take deletion")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["reader.saved.reader-continuous-page"].label.contains("Ready offline"))
+        manage.tap(); app.buttons["reader.saved.remove.reader-continuous-page"].tap()
+        XCTAssertTrue(app.buttons["Remove download"].waitForExistence(timeout: 5)); app.buttons["Remove download"].tap()
+        let page = app.buttons["reader.saved.reader-continuous-page"], chapter = app.buttons["reader.saved.reader-continuous-chapter"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "On PC"), object: page)], timeout: 10), .completed)
+        XCTAssertTrue(chapter.label.contains("Ready offline"), "Another take retains shared audio files after phone-only removal")
+        narrationToolsScreenshot(app, "Obsidian removed phone download with other take retained")
+        manage.tap(); app.buttons["reader.saved.delete.reader-continuous-page"].tap(); app.buttons["Delete generated take"].tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Pair your PC")).firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(page.exists); XCTAssertTrue(chapter.label.contains("Ready offline"), "Offline PC deletion cannot remove other recordings")
+    }
+    func testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged() {
+        executionTimeAllowance = 300
+        let app = narrationToolsApp(); app.launch()
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.tabBars.buttons["Library"].tap()
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch.tap()
+        XCTAssertTrue(waitForReaderContents(app)); app.buttons["reader.options"].tap(); app.buttons["reader.pronunciation"].tap()
+        let term = app.textFields["pronunciation.term"], replacement = app.textFields["pronunciation.replacement"]
+        XCTAssertTrue(term.waitForExistence(timeout: 10)); term.tap(); term.typeText("Mira"); replacement.tap(); replacement.typeText("Mee rah")
+        app.buttons["pronunciation.keyboard.done"].tap()
+        narrationToolsScreenshot(app, "Obsidian pronunciation correction and labelled Apple preview")
+        app.buttons["pronunciation.save"].tap()
+        let edit = app.buttons["pronunciation.edit.Mira"]
+        toolsScrollTo(edit, app: app); XCTAssertTrue(edit.exists)
+        narrationToolsScreenshot(app, "Obsidian pronunciation saved offline for future audio")
+        app.buttons["pronunciation.done"].tap()
+        let original = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 15)); XCTAssertFalse(original.label.contains("Mee rah"))
+        app.buttons["reader.options"].tap(); app.buttons["reader.pronunciation"].tap()
+        toolsScrollTo(edit, app: app); edit.tap()
+        XCTAssertEqual(term.value as? String, "Mira"); XCTAssertEqual(replacement.value as? String, "Mee rah")
+        toolsScrollTo(app.buttons["pronunciation.regenerate"], app: app); app.buttons["pronunciation.regenerate"].tap()
+        XCTAssertTrue(app.buttons["reader.generate.page"].waitForExistence(timeout: 20)); XCTAssertTrue(app.buttons["reader.generate.chapter"].exists)
+        narrationToolsScreenshot(app, "Obsidian pronunciation regenerate exact page or chapter")
+    }
+    private func narrationToolsApp() -> XCUIApplication {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", "--reader-narration-tools-fixture", "-playbackRate", "0.5"]
+        return app
+    }
+    private func toolsScrollTo(_ element: XCUIElement, app: XCUIApplication) {
+        for _ in 0..<6 { if element.exists && element.isHittable { return }; app.swipeUp() }
+    }
+    private func narrationToolsScreenshot(_ app: XCUIApplication, _ name: String) {
+        let image = XCTAttachment(screenshot: app.screenshot()); image.name = name; image.lifetime = .keepAlways; add(image)
+    }
     func testStartCompanionVerifiesReadinessAndFitsScreen() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--connection-fixture", "--connection-startable"]

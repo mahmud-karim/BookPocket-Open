@@ -3,6 +3,16 @@ import Foundation
 enum RangedAudioValidation {
     static func validate(job: RemoteJob, book: RemoteBook) throws {
         let invalid = BookError.message("This audio does not confirm the selected source range. Update the PC companion and regenerate it, or import a fresh production archive.")
+        for asset in job.assets {
+            guard let segment = book.segments.first(where: { $0.id == asset.segmentId }) else { continue }
+            let lower = asset.sourceStart ?? job.sourceRanges?.first(where: { $0.segmentId == asset.segmentId })?.startOffset ?? 0
+            let upper = asset.sourceEnd ?? job.sourceRanges?.first(where: { $0.segmentId == asset.segmentId })?.endOffset ?? segment.text.unicodeScalars.count
+            for timing in (asset.sourceTimings ?? []) + asset.timings {
+                guard timing.start.isFinite, timing.end.isFinite, timing.start >= 0, timing.end > timing.start, timing.end <= asset.duration + 0.05,
+                      timing.startOffset >= lower, timing.endOffset <= upper, timing.endOffset > timing.startOffset,
+                      SourceIdentity.scalarRange(timing.startOffset, timing.endOffset, in: segment.text) != nil else { throw invalid }
+            }
+        }
         guard let ranges = job.sourceRanges, !ranges.isEmpty else {
             for asset in job.assets where asset.sourceStart != nil || asset.sourceEnd != nil {
                 guard let segment = book.segments.first(where: { $0.id == asset.segmentId }),

@@ -6,14 +6,16 @@ import AVFoundation
 struct NativeReader: UIViewControllerRepresentable {
     let navigator: EPUBNavigatorViewController
     let onHighlight: () -> Void
-    func makeUIViewController(context: Context) -> ReaderContainer { ReaderContainer(navigator: navigator, onHighlight: onHighlight) }
+    let onPronunciation: () -> Void
+    func makeUIViewController(context: Context) -> ReaderContainer { ReaderContainer(navigator: navigator, onHighlight: onHighlight, onPronunciation: onPronunciation) }
     func updateUIViewController(_ controller: ReaderContainer, context: Context) {}
 }
 
 final class ReaderContainer: UIViewController {
     let navigator: EPUBNavigatorViewController
     let onHighlight: () -> Void
-    init(navigator: EPUBNavigatorViewController, onHighlight: @escaping () -> Void) { self.navigator = navigator; self.onHighlight = onHighlight; super.init(nibName: nil, bundle: nil) }
+    let onPronunciation: () -> Void
+    init(navigator: EPUBNavigatorViewController, onHighlight: @escaping () -> Void, onPronunciation: @escaping () -> Void) { self.navigator = navigator; self.onHighlight = onHighlight; self.onPronunciation = onPronunciation; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("Not supported") }
     override func viewDidLoad() {
         super.viewDidLoad(); addChild(navigator); view.addSubview(navigator.view)
@@ -22,6 +24,7 @@ final class ReaderContainer: UIViewController {
         navigator.didMove(toParent: self)
     }
     @objc func highlightSelection(_ sender: Any?) { onHighlight() }
+    @objc func pronounceSelection(_ sender: Any?) { onPronunciation() }
 }
 
 struct ReaderView: View {
@@ -34,6 +37,8 @@ struct ReaderView: View {
     @State private var query = ""
     @State private var contentsError: String?
     @State private var showPlayer = false
+    @State private var pronunciationSelection: PronunciationSelection?
+    private struct PronunciationSelection: Identifiable { var id = UUID(); var text: String }
     @AppStorage("readerFontSize") private var fontSize = 110.0
     @AppStorage("readerScroll") private var scroll = false
     @AppStorage("readerTheme") private var theme = "cream"
@@ -42,7 +47,7 @@ struct ReaderView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let navigator = model.navigator { NativeReader(navigator: navigator, onHighlight: { model.addAnnotation(highlight: true) }).accessibilityIdentifier("reader.publication") }
+                if let navigator = model.navigator { NativeReader(navigator: navigator, onHighlight: { model.addAnnotation(highlight: true) }, onPronunciation: openPronunciation).accessibilityIdentifier("reader.publication") }
                 else if model.loading { ProgressView("Opening book…") }
                 else { ContentUnavailableView("Unable to open book", systemImage: "book.closed", description: Text(model.error ?? "Try importing the book again.")) }
             }
@@ -58,6 +63,7 @@ struct ReaderView: View {
                         Button("Highlight selection", systemImage: "highlighter") { model.addAnnotation(highlight: true) }
                         Button("Bookmarks & highlights", systemImage: "bookmark.square") { panel = .annotations }
                         Button("Reading appearance", systemImage: "textformat.size") { panel = .appearance }
+                        Button("Pronunciation", systemImage: "text.bubble") { openPronunciation() }.accessibilityIdentifier("reader.pronunciation")
                     } label: { Label("Reader options", systemImage: "ellipsis.circle") }.accessibilityIdentifier("reader.options")
                 }
             }
@@ -91,6 +97,13 @@ struct ReaderView: View {
             .sheet(isPresented: Binding(get: { showPlayer && dynamicTypeSize.isAccessibilitySize }, set: { if !$0 { closePlayer() } }), onDismiss: { companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent() }) {
                 ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID))
             }
+            .sheet(item: $pronunciationSelection) { selection in
+                PronunciationEditorView(selectedText: selection.text, language: model.book?.language ?? "en", onRegenerate: {
+                    let state = companion.readerPlayer(for: model.bookID)
+                    if state.mode == .device { state.mode = .kyon }
+                    state.requestGenerationChoice = true; openPlayer()
+                })
+            }
             .alert("Reader", isPresented: Binding(get: { model.error != nil && !model.loading && model.navigator != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
         }.tint(Obsidian.accent).preferredColorScheme(.dark)
             .overlay(alignment: .bottom) {
@@ -112,6 +125,10 @@ struct ReaderView: View {
     private func closePlayer() {
         companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent()
         showPlayer = false
+    }
+    private func openPronunciation() {
+        pronunciationSelection = .init(text: model.navigator?.currentSelection?.locator.text.highlight ?? "")
+        model.navigator?.clearSelection()
     }
     private func openPlayer() {
         let state = companion.readerPlayer(for: model.bookID)

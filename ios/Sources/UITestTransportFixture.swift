@@ -85,7 +85,7 @@ import Foundation
         var otherBook = book; otherBook.id = "reader-other-book"; otherBook.sourceSha256 = String(repeating: "f", count: 64)
         var other = jobs[0]; other.id = "reader-other-job"; other.bookId = otherBook.id
         companion.books = [book, otherBook]; companion.jobs = jobs + [other]; companion.downloads = records
-        if ProcessInfo.processInfo.arguments.contains("--reader-continuous-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--reader-continuous-fixture") || ProcessInfo.processInfo.arguments.contains("--reader-narration-tools-fixture") {
             // A complete chapter and a page excerpt each contain several actual
             // WAV assets. They exercise joined transport, not a speech engine.
             let chapter = chapters[0], selected = Array(chapter.segments.prefix(3))
@@ -108,6 +108,28 @@ import Foundation
             companion.downloads = [page, whole].flatMap { job in job.assets.map { asset in
                 DownloadRecord(localBookID: local.id, jobID: job.id, asset: asset, file: asset.duration == 4 ? shortFile : longFile, segment: chapter.segments.first { $0.id == asset.segmentId })
             } }
+            if ProcessInfo.processInfo.arguments.contains("--reader-narration-tools-fixture") {
+                // Explicit transport fixture metadata only, not acoustic speech
+                // alignment. Long intervals make native seek/word assertions
+                // deterministic even on overloaded Simulator runners.
+                for jobIndex in companion.jobs.indices {
+                    for assetIndex in companion.jobs[jobIndex].assets.indices {
+                        var asset = companion.jobs[jobIndex].assets[assetIndex]
+                        guard let source = chapter.segments.first(where: { $0.id == asset.segmentId }) else { continue }
+                        asset.sourceTimings = asset.timings; asset.alignment = "word"
+                        let words = assetIndex == 0 ? ["The", "Lantern"] : assetIndex == 1 ? ["Mira", "opened"] : assetIndex == 2 ? ["Can", "you"] : ["compass", "café"]
+                        asset.timings = words.enumerated().compactMap { index, word in
+                            guard let range = source.text.range(of: word) else { return nil }
+                            return AudioTiming(start: index == 0 ? 0 : asset.duration / 2, end: index == 0 ? asset.duration / 2 : asset.duration,
+                                startOffset: source.text[..<range.lowerBound].unicodeScalars.count, endOffset: source.text[..<range.upperBound].unicodeScalars.count)
+                        }
+                        companion.jobs[jobIndex].assets[assetIndex] = asset
+                    }
+                }
+                for index in companion.downloads.indices {
+                    if let asset = companion.jobs.first(where: { $0.id == companion.downloads[index].jobID })?.assets.first(where: { $0.id == companion.downloads[index].asset.id }) { companion.downloads[index].asset = asset }
+                }
+            }
         }
         if ProcessInfo.processInfo.arguments.contains("--reader-alternate-takes-fixture") {
             var alternate = jobs[0]; alternate.id = "reader-alternate-job"

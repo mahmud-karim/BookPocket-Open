@@ -25,7 +25,7 @@ import UIKit
         do {
             let publication = try await library.publications.open(library.file(book))
             self.publication = publication
-            let actions = EditingAction.defaultActions + [EditingAction(title: "Highlight", action: #selector(ReaderContainer.highlightSelection(_:)))]
+            let actions = EditingAction.defaultActions + [EditingAction(title: "Highlight", action: #selector(ReaderContainer.highlightSelection(_:))), EditingAction(title: "Pronunciation", action: #selector(ReaderContainer.pronounceSelection(_:)))]
             let navigator = try EPUBNavigatorViewController(publication: publication, initialLocation: book.locator, config: .init(preferences: preferences(), editingActions: actions))
             navigator.delegate = self
             self.navigator = navigator
@@ -83,6 +83,7 @@ import UIKit
             self?.follow(locator)
             if Date().timeIntervalSince(saved) >= 3 { library.saveLocation(id, locator: locator); saved = Date() }
         }
+        player.onClearHighlight = { [weak self] in self?.navigator?.apply(decorations: [], in: "speech") }
     }
     func search(_ query: String) async {
         guard let publication, !query.trimmingCharacters(in: .whitespaces).isEmpty else { searchResults = []; return }

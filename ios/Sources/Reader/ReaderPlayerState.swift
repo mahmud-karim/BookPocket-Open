@@ -108,6 +108,7 @@ enum ReaderTakeMatch {
     var needsCast = false
     var showingSelection = false
     var pollRevision = 0
+    var requestGenerationChoice = false
     private var playbackSession = UUID()
     var requiresTakeSelection: Bool { selectedJobID == nil && candidates.contains { $0.status == "completed" } }
 
@@ -196,7 +197,7 @@ enum ReaderTakeMatch {
         working = true; error = nil; defer { working = false }
         do {
             let job = try await companion.generate(book: remote, segments: selection.ranges.map(\.segmentId), voice: voice,
-                rules: companion.importedPronunciations, announce: false, narrationPlan: mode == .cast ? plan : nil,
+                rules: companion.narrationPronunciations, announce: false, narrationPlan: mode == .cast ? plan : nil,
                 sourceRanges: selection.ranges, narrationMode: mode.wireMode)
             selectedJobID = job.id; candidates = [job]; showingSelection = false; pollRevision += 1
         } catch { self.error = CompanionClient.narrationMessage(for: error) }

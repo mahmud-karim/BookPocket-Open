@@ -11,6 +11,9 @@ struct ReaderPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showPairing = false
     @State private var showCast = false
+    @State private var showPronunciation = false
+    @State private var removingRecording: ReaderAudioRecording?
+    @State private var deleteFromPC = false
     @State private var chooser: Chooser?
     @State private var discovering = false
     @State private var pendingDiscovery = false
@@ -53,6 +56,7 @@ struct ReaderPlayerView: View {
                 }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity)
             }.background(Obsidian.background)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("reader.player.surface")
+                .accessibilityValue(player.speechLocator?.text.highlight ?? "")
                 .navigationTitle("Read aloud").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -75,6 +79,7 @@ struct ReaderPlayerView: View {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 20) {
                                         generatedControls
+                                        pronunciationAndHighlighting
                                         if let error = state.attention { Text(error).foregroundStyle(.red) }
                                         if state.mode == .cast { Button("Set up cast", systemImage: "person.2") { Task { await openCast() } }.frame(minHeight: 48).disabled(state.working).accessibilityIdentifier("reader.player.cast") }
                                         if state.snapshot != nil {
@@ -95,11 +100,15 @@ struct ReaderPlayerView: View {
                     }.tint(Obsidian.accent)
                         .sheet(isPresented: $showPairing, onDismiss: { refresh() }) { PairingView() }
                         .sheet(isPresented: $showCast, onDismiss: { refreshPreparation() }) { if let remote = state.remote { CastView(book: remote) } }
+                        .sheet(isPresented: $showPronunciation) { PronunciationEditorView(language: reader.book?.language ?? "en", onRegenerate: { detail = nil; chooser = .scope }) }
+                        .confirmationDialog(deleteFromPC ? "Delete this entire generated take from your PC and iPhone?" : "Remove this download from your iPhone?", isPresented: Binding(get: { removingRecording != nil }, set: { if !$0 { removingRecording = nil } }), titleVisibility: .visible) {
+                            Button(deleteFromPC ? "Delete generated take" : "Remove download", role: .destructive) { removeRecording() }
+                        } message: { Text(deleteFromPC ? "All page or chapter assets in this take will be deleted. Your book and other takes are kept." : "Your PC copy stays available to download again.") }
                 }
                 .task(id: (state.selectedJobID ?? "") + ":\(state.pollRevision)") {
                     guard let id = state.selectedJobID else { return }
                     while !Task.isCancelled {
-                        guard let current = companion.jobs.first(where: { $0.id == id }), ["queued", "running"].contains(current.status) else { return }
+                        guard let current = companion.jobs.first(where: { $0.id == id }), ["queued", "running"].contains(current.status) || ["queued", "running"].contains(current.alignmentStatus ?? "") else { return }
                         do { _ = try await companion.refreshJob(id) } catch { state.error = CompanionClient.narrationMessage(for: error); return }
                         do { try await Task.sleep(for: .seconds(3)) } catch { return }
                     }
@@ -110,6 +119,7 @@ struct ReaderPlayerView: View {
                     if !(active && player.isPlaying) && !state.working && !state.showingSelection && state.mode != .device { refreshLocal() }
                 }
         }.tint(Obsidian.accent)
+            .onAppear { if state.requestGenerationChoice { state.requestGenerationChoice = false; chooser = .scope } }
             .onDisappear { state.invalidatePlaybackIntent() }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -246,6 +256,10 @@ struct ReaderPlayerView: View {
                     }
                 }.frame(minHeight: 44).disabled(state.working).accessibilityIdentifier("reader.saved.download." + recording.id)
             }
+            Menu {
+                if recording.offline { Button("Remove download", systemImage: "iphone.slash", role: .destructive) { deleteFromPC = false; removingRecording = recording }.accessibilityIdentifier("reader.saved.remove." + recording.id) }
+                Button("Delete generated take", systemImage: "trash", role: .destructive) { deleteFromPC = true; removingRecording = recording }.accessibilityIdentifier("reader.saved.delete." + recording.id)
+            } label: { Label("Manage recording", systemImage: "ellipsis.circle").frame(minHeight: 44) }.accessibilityIdentifier("reader.saved.manage." + recording.id)
         }
     }
     private func selectRecording(_ recording: ReaderAudioRecording) {
@@ -259,6 +273,36 @@ struct ReaderPlayerView: View {
         state.playbackScope = recording.scope; state.selectedJobID = recording.id; state.candidates = [recording.job]
         state.readyIDs = recording.offline ? [recording.id] : []; state.error = nil; state.captureError = nil; state.showingSelection = false
         detail = nil
+    }
+    private func removeRecording() {
+        guard let recording = removingRecording else { return }
+        removingRecording = nil
+        if deleteFromPC {
+            Task {
+                do { try await companion.deleteGeneratedTake(recording.id, library: library, player: player) }
+                catch { state.error = error.localizedDescription }
+            }
+        } else {
+            do {
+                let removing = companion.downloads.filter { $0.jobID == recording.id }
+                if let current = library.book(player.bookID ?? ""), removing.contains(where: { $0.id == current.audioAssetID || $0.asset.id == current.audioAssetID }) { player.stop() }
+                try companion.removeDownloadedTake(recording.id); state.readyIDs.remove(recording.id)
+            } catch { state.error = error.localizedDescription }
+        }
+    }
+    @ViewBuilder private var pronunciationAndHighlighting: some View {
+        Button("Pronunciation", systemImage: "text.bubble") { showPronunciation = true }.frame(minHeight: 48).accessibilityIdentifier("reader.player.pronunciation")
+        if let job, state.mode != .device {
+            let word = !job.assets.isEmpty && job.assets.allSatisfy { $0.alignment == "word" && !$0.timings.isEmpty }
+            Text(word ? "Word highlighting" : "Passage timing · word highlighting unavailable").font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("reader.player.timing")
+            if ["queued", "running"].contains(job.alignmentStatus ?? "") { ProgressView("Preparing word highlighting…").accessibilityIdentifier("reader.alignment.progress") }
+            else if !word {
+                Button("Enable word highlighting", systemImage: "text.word.spacing") {
+                    Task { do { _ = try await companion.enableWordHighlighting(job.id); state.pollRevision += 1 } catch { state.error = error.localizedDescription } }
+                }.frame(minHeight: 48).accessibilityIdentifier("reader.alignment.enable")
+            }
+            if let error = job.alignmentError { Text(error).foregroundStyle(.red) }
+        }
     }
     private var chapterRow: some View {
         HStack(spacing: 8) {
