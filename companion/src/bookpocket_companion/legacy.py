@@ -105,7 +105,11 @@ def import_legacy(store, content, ffmpeg):
                 existing_rules = json.loads(existing[0]) if existing else []
                 by_term = {r["term"].casefold(): r for r in rules}
                 by_term.update({r["term"].casefold(): r for r in existing_rules})
-                db.execute("INSERT OR REPLACE INTO preferences VALUES('pronunciation_rules',?)", (canonical(list(by_term.values())),))
+                merged = canonical(list(by_term.values()))
+                db.execute("INSERT OR REPLACE INTO preferences VALUES('pronunciation_rules',?)", (merged,))
+                if not existing or existing[0] != merged:
+                    revision = db.execute("SELECT value FROM preferences WHERE key='pronunciation_revision'").fetchone()
+                    db.execute("INSERT OR REPLACE INTO preferences VALUES('pronunciation_revision',?)", (str(int(revision[0]) + 1 if revision else 1),))
                 db.execute("INSERT INTO migrations VALUES(?,?)", (identity, canonical(result)))
             files.clear()
         return result

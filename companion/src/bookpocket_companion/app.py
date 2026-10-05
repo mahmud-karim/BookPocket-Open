@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .engines import engines_for, ManagedEngine
-from .models import Config, ExportRequest, GenerationRequest, PairRequest, validate_source_ranges, validate_narration_plan, job_metadata
+from .models import Config, ExportRequest, GenerationRequest, PairRequest, PronunciationSettings, validate_source_ranges, validate_narration_plan, job_metadata
 from .publication import parse_book, extract_cover
 from .store import Store, canonical, digest, now
 from .worker import Worker
@@ -34,12 +34,14 @@ def create_app(config=None, engines=None, start_worker=True):
     from .legacy import initialize as initialize_legacy
     initialize_legacy(store)
     engines = engines if engines is not None else engines_for(config)
+    from .alignment import WordAligner
+    aligner = WordAligner(config)
     def prepare_work(kind):
         if kind != "render":
             for engine in engines.values():
                 if hasattr(engine, "close"): engine.close()
     scheduler = WorkScheduler(prepare_work)
-    worker = Worker(store, engines, config, scheduler)
+    worker = Worker(store, engines, config, scheduler, aligner)
     key_file = store.root / "pairing.key"
     if not key_file.exists(): key_file.write_bytes(Fernet.generate_key())
     cipher = Fernet(key_file.read_bytes())
@@ -63,6 +65,7 @@ def create_app(config=None, engines=None, start_worker=True):
     app = FastAPI(title="Book Pocket Open", version=__version__, lifespan=lifespan)
     app.state.store, app.state.worker, app.state.config = store, worker, config
     app.state.scheduler = scheduler
+    app.state.aligner = aligner
     allowed_origins = {f"https://localhost:{config.port}", f"https://127.0.0.1:{config.port}"}
     allowed_origins |= {f"http://localhost:{config.studio_port}", f"http://127.0.0.1:{config.studio_port}"}
     if config.dev:
@@ -146,7 +149,7 @@ def create_app(config=None, engines=None, start_worker=True):
                 if key != "global" and (not attempts[key] or attempts[key][-1] < current - 60): del attempts[key]
 
     @app.get("/v1/health")
-    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id", "source_ranges_cast"]}
+    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id", "source_ranges_cast", "word_alignment", "delete_recordings", "pronunciation_settings"]}
 
     @app.get("/v1/admin/connection", dependencies=[Depends(admin)])
     def connection():
@@ -346,6 +349,8 @@ def create_app(config=None, engines=None, start_worker=True):
         payload = body.model_dump()
         serialized = canonical(payload)
         with store.db() as db:
+            if db.execute("SELECT 1 FROM deleted_jobs WHERE request_id=?", (body.request_id,)).fetchone():
+                raise HTTPException(410, "This recording was deleted; use a new request_id to generate a new take")
             existing = db.execute("SELECT request,data FROM jobs WHERE request_id=?", (body.request_id,)).fetchone()
         if existing:
             # New optional fields must not invalidate retries of jobs saved by an older version.
@@ -377,7 +382,11 @@ def create_app(config=None, engines=None, start_worker=True):
         if body.source_ranges: job["source_ranges"] = payload["source_ranges"]
         job = job_metadata(job, payload)
         try:
-            with store.db() as db: db.execute("INSERT INTO jobs VALUES(?,?,?,?)", (job["id"], body.request_id, serialized, canonical(job)))
+            with store.db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if db.execute("SELECT 1 FROM deleted_jobs WHERE request_id=?", (body.request_id,)).fetchone():
+                    raise HTTPException(410, "This recording was deleted; use a new request_id to generate a new take")
+                db.execute("INSERT INTO jobs VALUES(?,?,?,?)", (job["id"], body.request_id, serialized, canonical(job)))
         except sqlite3.IntegrityError:
             return create_job(body)
         worker.wake.set()
@@ -393,6 +402,50 @@ def create_app(config=None, engines=None, start_worker=True):
         row = require("jobs", identity)
         return job_metadata(json.loads(row["data"]), json.loads(row["request"]))
 
+    @app.delete("/v1/jobs/{identity}", status_code=204, dependencies=[Depends(auth)])
+    def delete_job(identity: str):
+        with store.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT request_id,data FROM jobs WHERE id=?", (identity,)).fetchone()
+            if not row:
+                if db.execute("SELECT 1 FROM deleted_jobs WHERE id=?", (identity,)).fetchone(): return Response(status_code=204)
+                raise HTTPException(404, "Recording not found")
+            job = json.loads(row["data"])
+            db.execute("INSERT INTO deleted_jobs VALUES(?,?,?)", (identity, row["request_id"], now()))
+            db.execute("DELETE FROM jobs WHERE id=?", (identity,))
+            retained = {asset["id"] for value in db.execute("SELECT data FROM jobs") for asset in json.loads(value[0]).get("assets", [])}
+            retained.update(json.loads(value[0])["asset"]["id"] for value in db.execute("SELECT data FROM legacy_recordings"))
+            for asset in job["assets"]:
+                if asset["id"] in retained: continue
+                stored = db.execute("SELECT path FROM assets WHERE id=?", (asset["id"],)).fetchone()
+                if stored:
+                    path = Path(stored[0])
+                    # Never interpret imported metadata as arbitrary deletion.
+                    if path.resolve().parent != (store.root / 'assets').resolve(): continue
+                    db.execute("DELETE FROM assets WHERE id=?", (asset["id"],))
+                    db.execute("INSERT OR IGNORE INTO deleted_asset_files VALUES(?)", (str(path),))
+        store.cleanup_deleted_assets()
+        worker.wake.set()
+        return Response(status_code=204)
+
+    @app.post("/v1/jobs/{identity}/align", status_code=202, dependencies=[Depends(auth)])
+    def align_job(identity: str):
+        if scheduler.stopped.is_set(): raise HTTPException(503, scheduler.stop_reason)
+        with store.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT data,request FROM jobs WHERE id=?", (identity,)).fetchone()
+            if not row: raise HTTPException(404, "Recording not found")
+            job, request = json.loads(row["data"]), json.loads(row["request"])
+            if job["status"] != "completed" or not job["assets"]: raise HTTPException(409, "Finish generating this recording before word alignment")
+            if request.get("language", "en") != "en": raise HTTPException(409, "Word alignment currently supports English")
+            if job.get("alignment_status") not in {"queued", "running"}:
+                job.update(alignment_status="completed" if all(a.get("alignment") == "word" for a in job["assets"]) else "queued",
+                           alignment_error=None, alignment_requested_at=now())
+                db.execute("UPDATE jobs SET data=? WHERE id=?", (canonical(job), identity))
+        worker.wake.set()
+        return get_job(identity)
+    alignment_route = app.router.routes.pop()
+
     @app.post("/v1/jobs/{identity}/{action}", dependencies=[Depends(auth)])
     def action_job(identity: str, action: str):
         transitions = {"cancel": ({"queued", "running", "paused", "failed"}, "cancelled"), "pause": ({"queued", "running"}, "paused"),
@@ -404,6 +457,8 @@ def create_app(config=None, engines=None, start_worker=True):
         if not result: raise HTTPException(409, "This action is not available for the current job state")
         worker.wake.set()
         return get_job(identity)
+    # The explicit action must precede the generic {action} route.
+    app.router.routes.insert(len(app.router.routes) - 1, alignment_route)
 
     @app.get("/v1/assets/{identity}", dependencies=[Depends(auth)])
     def get_asset(identity: str):
@@ -475,8 +530,24 @@ def create_app(config=None, engines=None, start_worker=True):
 
     @app.get("/v1/pronunciations", dependencies=[Depends(auth)])
     def imported_pronunciations():
-        with store.db() as db: row = db.execute("SELECT value FROM preferences WHERE key='pronunciation_rules'").fetchone()
-        return {"pronunciation_rules": json.loads(row[0]) if row else []}
+        with store.db() as db:
+            row = db.execute("SELECT value FROM preferences WHERE key='pronunciation_rules'").fetchone()
+            revision = db.execute("SELECT value FROM preferences WHERE key='pronunciation_revision'").fetchone()
+        return {"pronunciation_rules": json.loads(row[0]) if row else [], "revision": int(revision[0]) if revision else 0}
+
+    @app.put("/v1/pronunciations", dependencies=[Depends(auth)])
+    def save_pronunciations(body: PronunciationSettings):
+        rules = [rule.model_dump() for rule in body.pronunciation_rules]
+        if any(not rule["term"].strip() for rule in rules): raise HTTPException(422, "Pronunciation terms cannot be blank")
+        if len({rule["term"].casefold() for rule in rules}) != len(rules): raise HTTPException(422, "Each pronunciation term can have only one correction")
+        with store.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT value FROM preferences WHERE key='pronunciation_revision'").fetchone()
+            revision = int(row[0]) if row else 0
+            if revision != body.expected_revision: raise HTTPException(409, "Pronunciations changed on another device; refresh before saving")
+            db.execute("INSERT OR REPLACE INTO preferences VALUES('pronunciation_rules',?)", (canonical(rules),))
+            db.execute("INSERT OR REPLACE INTO preferences VALUES('pronunciation_revision',?)", (str(revision + 1),))
+        return {"pronunciation_rules": rules, "revision": revision + 1}
 
     from .casting import register_casting
     register_casting(app, store, auth, admin, get_book, scheduler)

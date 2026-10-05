@@ -47,6 +47,17 @@ def test_pairing_shared_library_cast_and_revocation(gateway):
     assert phone.get("/v1/books").status_code == 401
 
 
+def test_recording_alignment_deletion_and_pronunciations_are_protected_device_routes(gateway):
+    _, _, phone, _ = gateway
+    assert phone.put('/v1/pronunciations', json={'pronunciation_rules': [{'term': 'Kyon', 'replacement': 'Key on'}], 'expected_revision': 0}).status_code == 200
+    assert phone.get('/v1/pronunciations').json()['revision'] == 1
+    for method, path in [('post', '/v1/jobs/missing/align'), ('delete', '/v1/jobs/missing')]:
+        response = getattr(phone, method)(path)
+        assert response.status_code == 404 and response.json()['detail'] != 'Phone API route not found'
+        assert getattr(phone, method)(path, headers={'Authorization': 'Bearer fixture-admin'}).status_code == 401
+    assert phone.put('/v1/pronunciations', json={'pronunciation_rules': [], 'expected_revision': 1}, headers={'Authorization': 'Bearer fixture-admin'}).status_code == 401
+
+
 @pytest.mark.parametrize("path", ["/", "/docs", "/redoc", "/openapi.json", "/v1/admin/connection", "/v1/admin/pairing-tickets", "/v1/admin/analyzer", "/v1/books/a/unknown", "/bookpocket/v1/health"])
 def test_admin_and_nondevice_routes_blocked(gateway, path):
     _, _, phone, _ = gateway

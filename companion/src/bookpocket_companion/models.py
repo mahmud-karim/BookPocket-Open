@@ -24,6 +24,10 @@ class Pronunciation(BaseModel):
     replacement: str = Field(max_length=1024)
     enabled: bool = True
 
+class PronunciationSettings(BaseModel):
+    pronunciation_rules: list[Pronunciation] = Field(max_length=1000)
+    expected_revision: int = Field(ge=0, strict=True)
+
 class SourceRange(BaseModel):
     segment_id: str
     start_offset: int = Field(ge=0, strict=True)

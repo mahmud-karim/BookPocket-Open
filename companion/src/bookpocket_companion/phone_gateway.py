@@ -12,13 +12,14 @@ _ROUTES = (
     ("GET", r"/v1/(health|engines|voices|books|jobs|legacy-recordings|pronunciations)"),
     ("POST", r"/v1/(pairings|voices|books|jobs|projects/import)"),
     ("GET", rf"/v1/(pairings|voices|books|jobs|assets|analyses)/{_ID}"),
-    ("DELETE", rf"/v1/(voices|books)/{_ID}"),
+    ("DELETE", rf"/v1/(voices|books|jobs)/{_ID}"),
+    ("PUT", r"/v1/pronunciations"),
     ("DELETE", r"/v1/devices/current"),
     ("GET", rf"/v1/books/{_ID}/(source|cover|cast)"),
     ("PUT", rf"/v1/books/{_ID}/cast"),
     ("POST", rf"/v1/books/{_ID}/analyze"),
     ("GET", rf"/v1/voices/{_ID}/reference"),
-    ("POST", rf"/v1/jobs/{_ID}/(cancel|pause|resume|retry|export)"),
+    ("POST", rf"/v1/jobs/{_ID}/(cancel|pause|resume|retry|export|align)"),
 )
 _ALLOWED = tuple((method, re.compile(path)) for method, path in _ROUTES)
 

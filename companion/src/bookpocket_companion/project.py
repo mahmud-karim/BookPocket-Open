@@ -1,5 +1,6 @@
 """Portable audiobook project import. No archive paths are extracted."""
 import json
+import math
 from pathlib import Path, PurePosixPath
 import uuid
 import zipfile
@@ -80,12 +81,17 @@ def import_project(store, content):
                 size, checksum = copy_member(archive, "audio/" + asset["id"] + ".wav", path, MAX_ASSET)
                 if checksum != asset["sha256"]: raise ValueError("Project audio failed checksum validation")
                 duration = validate_wav(path)
-                previous = 0.0
-                for timing in asset.get("timings", []):
-                    if not (0 <= timing["start"] <= timing["end"] <= duration + .05 and timing["start"] >= previous - .05
-                            and source_start <= timing["start_offset"] < timing["end_offset"] <= source_end):
-                        raise ValueError("Project timings fall outside the original text or audio")
-                    previous = timing["end"]
+                for field in ('timings', 'source_timings'):
+                    previous = 0.0
+                    intervals = asset.get(field, [])
+                    if not isinstance(intervals, list): raise ValueError("Project timing intervals must be lists")
+                    for timing in intervals:
+                        if (not isinstance(timing, dict) or type(timing.get('start_offset')) is not int or type(timing.get('end_offset')) is not int
+                                or not all(type(timing.get(k)) in {int, float} and math.isfinite(timing[k]) for k in ('start', 'end'))
+                                or not (0 <= timing["start"] <= timing["end"] <= duration + .05 and timing["start"] >= previous - .05
+                                        and source_start <= timing["start_offset"] < timing["end_offset"] <= source_end)):
+                            raise ValueError("Project timings fall outside the original text or audio")
+                        previous = timing["end"]
                 metadata = {**asset, "id": asset_id, "duration": duration, "bytes": size, "url": "/v1/assets/" + asset_id,
                             "source_start": source_start, "source_end": source_end, "narration_mode": mode, "cast_spans": expected_plan}
                 assets.append((metadata, path))

@@ -1,6 +1,7 @@
 import contextlib
 import hashlib
 import json
+from pathlib import Path
 import sqlite3
 from datetime import datetime, timezone
 
@@ -26,6 +27,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS books(id TEXT PRIMARY KEY, data TEXT NOT NULL, source TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS voices(id TEXT PRIMARY KEY, data TEXT NOT NULL, reference TEXT, transcript TEXT);
                 CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, request TEXT NOT NULL, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS deleted_jobs(id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, deleted_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS deleted_asset_files(path TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS assets(id TEXT PRIMARY KEY, cache_key TEXT UNIQUE, data TEXT NOT NULL, path TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS render_workspaces(id TEXT PRIMARY KEY, job_id TEXT NOT NULL, segment_id TEXT NOT NULL, marker TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS devices(id TEXT PRIMARY KEY, name TEXT, token_hash TEXT UNIQUE, created_at TEXT);
@@ -56,3 +59,14 @@ class Store:
         assert table in {"books", "voices", "jobs", "assets"}
         with self.db() as db:
             return [json.loads(row[0]) for row in db.execute(f"SELECT data FROM {table} ORDER BY rowid DESC")]
+
+    def cleanup_deleted_assets(self):
+        """Retry Windows files held open by a finishing download after deletion."""
+        with self.db() as db:
+            rows = db.execute("SELECT path FROM deleted_asset_files").fetchall()
+        for row in rows:
+            path = Path(row[0])
+            if path.resolve().parent != (self.root / 'assets').resolve(): continue
+            try: path.unlink(missing_ok=True)
+            except OSError: continue
+            with self.db() as db: db.execute("DELETE FROM deleted_asset_files WHERE path=?", (str(path),))
