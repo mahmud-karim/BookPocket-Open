@@ -101,6 +101,10 @@ enum ReaderTakeMatch {
     var plan: [NarrationSpan] = []
     var working = false
     var error: String?
+    // Capture failures belong to the visible source. A later exact capture can
+    // recover them without hiding a generation, download, or playback failure.
+    var captureError: String?
+    var attention: String? { error ?? captureError }
     var needsCast = false
     var showingSelection = false
     var pollRevision = 0
@@ -141,7 +145,7 @@ enum ReaderTakeMatch {
         self.snapshot = snapshot; selection = nil; candidates = []; readyIDs = []; remote = nil
         guard let book = companion.books.first(where: { $0.sourceSha256 == local.sourceSHA256 }),
               let selection = try? ReaderSourceMapper.resolve(snapshot, book: book) else { selectedJobID = nil; return }
-        remote = book; self.selection = selection
+        remote = book; self.selection = selection; captureError = nil
         pageSelection = snapshot.scope == .page ? selection : nil
         // An explicitly selected saved clip remains identifiable after reflow.
         // Chapter navigation and narrator changes cannot inherit that selection.
@@ -175,7 +179,7 @@ enum ReaderTakeMatch {
             try await companion.requireSourceRangeCast()
             try await companion.refreshNarrationInventory()
             let book = try await companion.upload(local, library: library)
-            remote = book; selection = try ReaderSourceMapper.resolve(snapshot, book: book)
+            remote = book; selection = try ReaderSourceMapper.resolve(snapshot, book: book); captureError = nil
             guard let selection else { return }
             if mode == .cast {
                 guard !companion.castDraft(for: book.id).dirty, !companion.castDraft(for: book.id).busy else {

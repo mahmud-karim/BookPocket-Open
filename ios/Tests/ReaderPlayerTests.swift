@@ -35,6 +35,38 @@ private final class ReaderJobProtocol: Foundation.URLProtocol {
 }
 
 final class ReaderPlayerTests: XCTestCase {
+    @MainActor func testExactSourceDiscoveryRecoversCaptureAttentionWithoutHidingProductionErrors() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var remote = book
+        let other = RemoteSegment(id: "bridge", text: "At dawn, Mira crossed the bridge.", kind: "paragraph", locator: .object([:]))
+        remote.chapters.append(.init(id: "bridge-chapter", title: "Across the Bridge", href: "bridge.xhtml", segments: [other]))
+        let store = CompanionStore(root: root); store.books = [remote]
+        var cast = job("bridge-cast"); cast.segmentIds = [other.id]; cast.narrationMode = "full_cast"
+        store.jobs = [job(), cast]
+        let local = LocalBook(id: "local", title: remote.title, author: remote.author, language: "en", sourceFile: "unused.txt", readingFile: "unused.txt", sourceSHA256: remote.sourceSha256)
+        let state = store.readerPlayer(for: local.id); state.mode = .kyon; state.selectedJobID = "take"
+        state.captureError = "No stable visible text was found. Stop scrolling and try again on a text page."
+        XCTAssertNotNil(state.attention)
+        let snapshot = ReaderScopeSnapshot(scope: .page, hrefs: ["text.xhtml", "bridge.xhtml"], documents: ["bridge.xhtml": .init(blocks: [.init(text: other.text, visible: [.init(start: 0, end: other.text.unicodeScalars.count)])], anchors: [])], current: .init(resource: 1, block: 0, offset: 0), boundaries: [], isText: false)
+        // A successful capture must recover the transient navigation error,
+        // while preserving exact chapter and narrator isolation.
+        state.discover(snapshot: snapshot, local: local, companion: store)
+        XCTAssertEqual(state.selection?.ranges.map(\.segmentId), [other.id])
+        XCTAssertEqual(state.selection?.text, other.text)
+        XCTAssertNil(state.attention); XCTAssertNil(state.selectedJobID)
+        XCTAssertTrue(state.candidates.isEmpty); XCTAssertTrue(state.readyIDs.isEmpty)
+        state.error = "Generation failed. Retry this job."
+        state.captureError = "The previous page stopped responding."
+        state.discover(snapshot: snapshot, local: local, companion: store)
+        XCTAssertNil(state.captureError)
+        XCTAssertEqual(state.attention, "Generation failed. Retry this job.", "Source recovery cannot hide a genuine production failure")
+        state.captureError = "An exact source capture is still required."
+        var invalid = snapshot; invalid.documents = [:]
+        state.discover(snapshot: invalid, local: local, companion: store)
+        XCTAssertEqual(state.captureError, "An exact source capture is still required.", "An unmappable source cannot claim recovery")
+        XCTAssertNil(state.selection); XCTAssertNil(state.selectedJobID); XCTAssertTrue(state.readyIDs.isEmpty)
+    }
     @MainActor func testReaderCaptureDeadlineReleasesStalledCaptureAndIgnoresLateResults() async throws {
         let stalled = ReaderDownloadGate()
         var busy = false, lateReturned = false

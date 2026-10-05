@@ -119,7 +119,7 @@ struct ReaderView: View {
         Task {
             if !state.working && !state.showingSelection && state.mode != .device {
                 do { let snapshot = try await model.captureScope(state.playbackScope); if let local = model.book { state.discover(snapshot: snapshot, local: local, companion: companion) } }
-                catch { state.error = error.localizedDescription; state.readyIDs = [] }
+                catch { state.captureError = error.localizedDescription; state.readyIDs = [] }
             }
             showPlayer = true
         }

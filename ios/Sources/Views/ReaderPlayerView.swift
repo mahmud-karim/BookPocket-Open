@@ -75,7 +75,7 @@ struct ReaderPlayerView: View {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 20) {
                                         generatedControls
-                                        if let error = state.error { Text(error).foregroundStyle(.red) }
+                                        if let error = state.attention { Text(error).foregroundStyle(.red) }
                                         if state.mode == .cast { Button("Set up cast", systemImage: "person.2") { Task { await openCast() } }.frame(minHeight: 48).disabled(state.working).accessibilityIdentifier("reader.player.cast") }
                                         if state.snapshot != nil {
                                             Text(state.selection?.title ?? state.snapshot?.scope.title ?? "Selected words").font(.headline)
@@ -104,7 +104,11 @@ struct ReaderPlayerView: View {
                         do { try await Task.sleep(for: .seconds(3)) } catch { return }
                     }
                 }
-                .onChange(of: reader.location) { if !(active && player.isPlaying) && !state.working && !reader.capturingScope && !state.showingSelection && state.mode != .device { refreshLocal() } }
+                .onChange(of: reader.location) {
+                    // A chapter move can invalidate a capture already in flight.
+                    // Queue its replacement instead of dropping that source change.
+                    if !(active && player.isPlaying) && !state.working && !state.showingSelection && state.mode != .device { refreshLocal() }
+                }
         }.tint(Obsidian.accent)
             .onDisappear { state.invalidatePlaybackIntent() }
             .presentationDetents([.large])
@@ -201,7 +205,7 @@ struct ReaderPlayerView: View {
         let pages = all.filter { $0.scope == .page }, chapters = all.filter { $0.scope == .chapter }
         return List {
             Section { Text(currentChapter).font(.headline); Text(state.mode.title).foregroundStyle(.secondary) }
-            if let error = state.error { Section { Text(error).foregroundStyle(.red) } }
+            if let error = state.attention { Section { Text(error).foregroundStyle(.red) } }
             Section("Page clips") {
                 ForEach(Array(pages.enumerated()), id: \.element.id) { index, recording in recordingRow(recording, number: index + 1).listRowBackground(Obsidian.surface) }
                 if pages.isEmpty { Text("No saved page clips in this chapter.").foregroundStyle(.secondary) }
@@ -253,7 +257,7 @@ struct ReaderPlayerView: View {
         state.snapshot = nil; state.selection = recording.selection; state.remote = book
         state.savedJobID = recording.scope == .page ? recording.id : nil
         state.playbackScope = recording.scope; state.selectedJobID = recording.id; state.candidates = [recording.job]
-        state.readyIDs = recording.offline ? [recording.id] : []; state.error = nil; state.showingSelection = false
+        state.readyIDs = recording.offline ? [recording.id] : []; state.error = nil; state.captureError = nil; state.showingSelection = false
         detail = nil
     }
     private var chapterRow: some View {
@@ -268,7 +272,7 @@ struct ReaderPlayerView: View {
             }.buttonStyle(.plain).background(Obsidian.surface, in: .rect(cornerRadius: 12))
                 .accessibilityLabel("Chapters").accessibilityValue(currentChapter).accessibilityIdentifier("reader.player.chapters")
             if state.mode != .device {
-                control("Narration details and takes", icon: state.error == nil ? "ellipsis.circle" : "exclamationmark.circle", id: "details") { detail = .production }
+                control("Narration details and takes", icon: state.attention == nil ? "ellipsis.circle" : "exclamationmark.circle", id: "details") { detail = .production }
             }
         }
     }
@@ -333,7 +337,7 @@ struct ReaderPlayerView: View {
         if discovering { return "Checking \(state.playbackScope == .page ? "this page" : "this chapter")…" }
         if let job, ["queued", "running", "paused"].contains(job.status) { return "\(job.status.capitalized) · \(job.completedSegments)/\(job.totalSegments) passages" }
         if state.showingSelection && !companion.paired { return "Pair your PC to generate · open details" }
-        if state.error != nil { return "Needs attention · open details" }
+        if state.attention != nil { return "Needs attention · open details" }
         if state.mode != .device && state.requiresTakeSelection { return "Choose a matching take · Saved audio" }
         if state.mode != .device, let job, state.readyIDs.contains(job.id), recording == nil { return "Generate page audio for these exact words" }
         let status = active ? (player.isPlaying ? "Playing" : "Paused") : state.mode == .device ? "Ready on this iPhone" : canPlay ? "Ready offline" : job?.status == "completed" ? "On PC · download to play" : state.playbackScope == .chapter ? "Chapter not generated" : "No audio for this page"
@@ -535,7 +539,7 @@ struct ReaderPlayerView: View {
     private func select(_ mode: ReaderVoiceMode) {
         state.invalidatePlaybackIntent()
         if active && state.mode != mode { player.pause() }
-        state.mode = mode; state.error = nil; state.needsCast = false; state.showingSelection = false; state.voice = nil; state.selectedJobID = nil; state.savedJobID = nil
+        state.mode = mode; state.error = nil; state.captureError = nil; state.needsCast = false; state.showingSelection = false; state.voice = nil; state.selectedJobID = nil; state.savedJobID = nil
         if mode != .device { refreshLocal() }
     }
 
@@ -549,7 +553,7 @@ struct ReaderPlayerView: View {
                 if pendingDiscovery { pendingDiscovery = false; refreshLocal() }
             }
             do { let snapshot = try await reader.captureScope(state.playbackScope); if let local = reader.book { state.discover(snapshot: snapshot, local: local, companion: companion) } }
-            catch { state.error = error.localizedDescription; state.readyIDs = []; state.selectedJobID = nil }
+            catch { state.captureError = error.localizedDescription; state.readyIDs = []; state.selectedJobID = nil }
         }
     }
     private func capture(_ scope: NarrationScope) {
