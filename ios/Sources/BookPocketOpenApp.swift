@@ -16,7 +16,7 @@ import SwiftUI
             _library = State(initialValue: LibraryStore(root: root.appendingPathComponent("Library")))
             do { _companion = State(initialValue: try UITestConnectionFixture.store(root: root.appendingPathComponent("Companion"))) }
             catch { fatalError("Isolated connection UI fixture failed: \(error)") }
-            _selectedTab = State(initialValue: "studio")
+            _selectedTab = State(initialValue: "connection")
             return
         }
         if UITestTransportFixture.enabled {
@@ -40,6 +40,9 @@ import SwiftUI
                 Tab("Listen", systemImage: "headphones", value: "listen") { ListenView() }
                 Tab("Studio", systemImage: "waveform", value: "studio") {
                     StudioView().safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
+                }
+                Tab("Connection", systemImage: "desktopcomputer", value: "connection") {
+                    ConnectionView().safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
                 }
             }
             .tint(Obsidian.accent)

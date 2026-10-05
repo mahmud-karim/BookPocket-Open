@@ -76,6 +76,9 @@ jobs:
             -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionTabShowsVerifiedStatusAndKeepsPairing \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/CompactListen.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
@@ -85,6 +88,9 @@ jobs:
           grep -E 'Test Case.*testLargestDynamicTypeKeepsListenAndReaderControlsUsable.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testConnectionTabShowsVerifiedStatusAndKeepsPairing.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testConnectionOfflineForgetAndPairingEntry.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testConnectionSettingsRemainReachableAtLargestTextSize.*passed' artifacts/compact-tests.log
       - name: Capture compact Listen evidence
         if: always()
         run: |

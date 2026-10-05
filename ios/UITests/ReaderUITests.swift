@@ -2,15 +2,100 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testConnectionSettingsRemainReachableAtLargestTextSize() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--connection-fixture", "--content-size-probe",
+            "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch()
+        let probe = app.descendants(matching: .any).matching(identifier: "test.content-size").firstMatch
+        let expected = "UIKit=\(UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue); SwiftUI=accessibility5"
+        let actual = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [actual], timeout: 30), .completed)
+        let edit = app.buttons["connection.edit"]
+        for _ in 0..<6 {
+            if edit.exists && edit.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(edit.isHittable)
+        assertMinimumHitArea(edit)
+        XCTAssertTrue(app.tabBars.buttons["Connection"].isHittable)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "Obsidian Connection largest text — reachable settings"; screen.lifetime = .keepAlways; add(screen)
+        edit.tap()
+        XCTAssertTrue(app.textFields["connection.address"].waitForExistence(timeout: 10))
+    }
+
+    func testConnectionTabShowsVerifiedStatusAndKeepsPairing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--connection-fixture"]
+        app.launch()
+        let live = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Connected"), object: app.staticTexts["connection.status"])
+        XCTAssertEqual(XCTWaiter.wait(for: [live], timeout: 15), .completed)
+        for name in ["Library", "Listen", "Studio", "Connection"] {
+            let tab = app.tabBars.buttons[name]
+            XCTAssertTrue(tab.exists && tab.isHittable)
+            XCTAssertTrue(app.frame.contains(tab.frame))
+        }
+        XCTAssertTrue(app.tabBars.buttons["Connection"].isSelected)
+        for id in ["connection.toggle", "connection.edit", "connection.forget"] {
+            let button = app.buttons[id]
+            XCTAssertTrue(button.exists && button.isHittable)
+            XCTAssertTrue(app.frame.contains(button.frame))
+            assertMinimumHitArea(button)
+            XCTAssertLessThanOrEqual(button.frame.maxY, app.tabBars.frame.minY)
+        }
+        let footer = app.staticTexts["connection.retention"]
+        let position = footer.frame
+        app.swipeUp()
+        XCTAssertEqual(footer.frame, position, "Connection controls should fit without scrolling at standard text size")
+        let connected = XCTAttachment(screenshot: app.screenshot())
+        connected.name = "Obsidian Connection connected — isolated transport fixture"; connected.lifetime = .keepAlways; add(connected)
+        app.buttons["connection.toggle"].tap()
+        XCTAssertEqual(app.buttons["connection.toggle"].label, "Connect")
+        XCTAssertTrue(app.staticTexts["connection.status"].label.contains("Disconnected"))
+        XCTAssertTrue(app.buttons["connection.edit"].exists, "Disconnect must keep pairing settings")
+        app.tabBars.buttons["Studio"].tap()
+        XCTAssertTrue(app.buttons["studio.primary"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["studio.primary"].label.contains("Create narration"), "Disconnect must not request a new pairing")
+        app.tabBars.buttons["Connection"].tap()
+        let disconnected = XCTAttachment(screenshot: app.screenshot())
+        disconnected.name = "Obsidian Connection disconnected — pairing retained"; disconnected.lifetime = .keepAlways; add(disconnected)
+        app.buttons["connection.toggle"].tap()
+        let reconnected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Connected"), object: app.staticTexts["connection.status"])
+        XCTAssertEqual(XCTWaiter.wait(for: [reconnected], timeout: 15), .completed)
+        XCTAssertEqual(app.buttons["connection.toggle"].label, "Disconnect")
+        app.buttons["connection.forget"].tap()
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["connection.edit"].exists, "Cancel must retain pairing")
+    }
+
+    func testConnectionOfflineForgetAndPairingEntry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--connection-fixture", "--connection-unavailable"]
+        app.launch()
+        let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Unavailable"), object: app.staticTexts["connection.status"])
+        XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
+        XCTAssertTrue(app.staticTexts["connection.help"].label.contains("unreachable"))
+        XCTAssertTrue(app.buttons["connection.edit"].isHittable)
+        let unavailable = XCTAttachment(screenshot: app.screenshot())
+        unavailable.name = "Obsidian Connection unavailable — isolated transport fixture"; unavailable.lifetime = .keepAlways; add(unavailable)
+        app.buttons["connection.forget"].tap(); app.buttons["Forget PC"].tap()
+        XCTAssertTrue(app.buttons["connection.pair"].waitForExistence(timeout: 10))
+        let unpaired = XCTAttachment(screenshot: app.screenshot())
+        unpaired.name = "Obsidian Connection unpaired — original empty state"; unpaired.lifetime = .keepAlways; add(unpaired)
+        app.buttons["connection.pair"].tap()
+        XCTAssertTrue(app.navigationBars["Pair companion"].waitForExistence(timeout: 10))
+        app.navigationBars["Pair companion"].buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["connection.pair"].exists)
+    }
+
     func testCompanionAddressChangeVerifiesBeforeReplacingPairing() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--connection-fixture"]
         app.launch()
-        XCTAssertTrue(app.buttons["studio.primary"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.buttons["studio.primary"].label.contains("Create narration"))
+        XCTAssertTrue(app.buttons["connection.edit"].waitForExistence(timeout: 20))
         func openConnection() {
-            app.buttons["studio.settings"].tap()
-            app.buttons["studio.connection"].tap()
+            app.buttons["connection.edit"].tap()
             XCTAssertTrue(app.textFields["connection.address"].waitForExistence(timeout: 10))
         }
         func enter(_ address: String) {
@@ -29,7 +114,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(app.textFields["connection.address"].value as? String, "https://old-connection.invalid", "A rejected public connection must retain the paired address")
         enter("https://new-connection.invalid:10000/bookpocket/")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.navigationBars["Companion connection"])], timeout: 15), .completed)
-        XCTAssertTrue(app.buttons["studio.primary"].label.contains("Create narration"), "Changing the address must keep the existing pairing")
+        XCTAssertTrue(app.buttons["connection.edit"].exists, "Changing the address must keep the existing pairing")
         openConnection()
         XCTAssertEqual(app.textFields["connection.address"].value as? String, "https://new-connection.invalid:10000/bookpocket")
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -597,7 +682,7 @@ final class ReaderUITests: XCTestCase {
         // Measure the actual interactive row, not that decorative background envelope.
         let controlsFrame = open.frame.union(toggle.frame)
         var geometry = ["Container: \(mini.frame)", "Open control: \(open.frame)", "Playback control: \(toggle.frame)", "Interactive row: \(controlsFrame)"]
-        for name in ["Library", "Listen", "Studio"] {
+        for name in ["Library", "Listen", "Studio", "Connection"] {
             let tab = app.tabBars.buttons[name]
             XCTAssertTrue(tab.exists && tab.isHittable, "\(name) must remain visible and tappable", file: file, line: line)
             XCTAssertGreaterThan(tab.frame.width, 0, file: file, line: line)

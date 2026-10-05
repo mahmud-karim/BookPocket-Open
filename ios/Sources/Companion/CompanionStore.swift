@@ -4,6 +4,10 @@ import ReadiumShared
 import UIKit
 import ReadiumZIPFoundation
 
+enum CompanionConnectionState: Equatable {
+    case notChecked, checking, connected, unavailable, disconnected
+}
+
 @MainActor @Observable final class CompanionStore {
     var identity: CompanionIdentity?
     var engines: [RemoteEngine] = []
@@ -22,8 +26,16 @@ import ReadiumZIPFoundation
     var updatingConnection = false
     var exporting = false
     var receivingBook = false
-    var paired: Bool { identity != nil && client != nil }
+    var paired: Bool { identity != nil && (client != nil || suspendedClient != nil) }
+    private(set) var connectionPaused = false
+    private(set) var connectionState: CompanionConnectionState = .notChecked
+    private(set) var connectionError: String?
     private var client: CompanionClient?
+    private var connectionRequiredMessage: String {
+        connectionPaused ? "Connect your saved PC in the Connection tab, then try again." : "Pair your PC in the Connection tab first."
+    }
+    @ObservationIgnored private var suspendedClient: CompanionClient?
+    @ObservationIgnored private var connectionEpoch = UUID()
     private var database: LibraryDatabase?
     private struct VerifiedFile {
         var size: Int
@@ -49,6 +61,7 @@ import ReadiumZIPFoundation
             try FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true)
             database = try LibraryDatabase(url: self.root.appendingPathComponent("companion.sqlite"))
             identity = try database?.read("identity", as: CompanionIdentity.self)
+            connectionPaused = try database?.read("connectionPaused", as: Bool.self) ?? false
             downloads = try database?.read("downloads", as: [DownloadRecord].self) ?? []
             books = try database?.read("books", as: [RemoteBook].self) ?? []
             jobs = try database?.read("jobs", as: [RemoteJob].self) ?? []
@@ -58,11 +71,15 @@ import ReadiumZIPFoundation
             if let identity, let token = DeviceKeychain.read(account: identity.deviceID) { self.client = try CompanionClient(url: identity.url, fingerprint: identity.fingerprint, token: token) }
         } catch { self.error = error.localizedDescription }
         if let client { self.client = client }
+        if connectionPaused {
+            suspendedClient = self.client; self.client = nil; connectionState = .disconnected
+        }
     }
     private func persist() throws {
         guard let database else { throw BookError.message("Companion storage is unavailable.") }
         try database.transaction {
             try database.write("identity", value: identity)
+            try database.write("connectionPaused", value: connectionPaused)
             try database.write("downloads", value: downloads)
             try database.write("books", value: books)
             try database.write("jobs", value: jobs)
@@ -88,7 +105,10 @@ import ReadiumZIPFoundation
                     try DeviceKeychain.save(token, account: device)
                     candidate.token = token
                     identity = CompanionIdentity(url: candidate.baseURL, fingerprint: candidate.fingerprint, deviceID: device)
-                    client = candidate; try persist(); status = "Paired securely"; await refresh(); return
+                    client = candidate; suspendedClient = nil; connectionPaused = false
+                    connectionEpoch = UUID()
+                    connectionState = .notChecked; connectionError = nil
+                    try persist(); status = "Paired securely"; await refresh(); return
                 }
                 if ["rejected", "expired"].contains(result.status) { throw BookError.message("Pairing \(result.status). Create a new code in your PC's Studio.") }
                 try await Task.sleep(for: .seconds(2))
@@ -98,10 +118,11 @@ import ReadiumZIPFoundation
         catch { self.error = CompanionClient.narrationMessage(for: error); status = nil }
     }
     func updateConnection(url: URL, fingerprint: String?, configuration: URLSessionConfiguration? = nil) async throws {
-        guard !updatingConnection, !pairing, let previous = identity, let oldClient = client,
+        guard !updatingConnection, !pairing, let previous = identity, let oldClient = client ?? suspendedClient,
               let token = oldClient.token else { throw BookError.message("Pair this device before changing its companion address.") }
         updatingConnection = true
         defer { updatingConnection = false }
+        let epoch = connectionEpoch
         let candidate = try CompanionClient(url: url, fingerprint: fingerprint, token: token, configuration: configuration)
         struct Health: Decodable { var apiVersion: String }
         let health: Health = try await candidate.send("/v1/health")
@@ -111,22 +132,77 @@ import ReadiumZIPFoundation
         // alone cannot establish that the new address reaches our paired PC.
         let _: Engines = try await candidate.send("/v1/engines")
         try Task.checkCancellation()
-        guard client === oldClient, identity?.deviceID == previous.deviceID,
+        guard connectionEpoch == epoch, (client ?? suspendedClient) === oldClient, identity?.deviceID == previous.deviceID,
               identity?.url == previous.url, identity?.fingerprint == previous.fingerprint else { throw CancellationError() }
         identity = CompanionIdentity(url: candidate.baseURL, fingerprint: candidate.fingerprint, deviceID: previous.deviceID)
         do { try persist() } catch { identity = previous; throw error }
-        client = candidate
+        if connectionPaused { suspendedClient = candidate } else { client = candidate }
+        connectionEpoch = UUID()
+        connectionState = connectionPaused ? .disconnected : .connected; connectionError = nil
         error = nil; status = "Connected to your companion"
+    }
+    /// Disconnect locally without revoking the device token or cancelling PC work.
+    func pauseConnection() throws {
+        guard identity != nil, !connectionPaused else { return }
+        connectionPaused = true
+        do { try persist() } catch { connectionPaused = false; throw error }
+        suspendedClient = client; client = nil
+        connectionEpoch = UUID()
+        connectionState = .disconnected; connectionError = nil; status = "Disconnected · pairing saved"
+    }
+    func resumeConnection() async {
+        guard connectionPaused else { await checkConnection(); return }
+        do {
+            guard let candidate = suspendedClient else { throw BookError.message("Pair this device again to restore PC access.") }
+            connectionPaused = false
+            do { try persist() } catch { connectionPaused = true; throw error }
+            client = candidate; suspendedClient = nil
+            connectionEpoch = UUID()
+            await checkConnection()
+        } catch { connectionError = error.localizedDescription }
+    }
+    /// Forget is local and also works when the PC is offline. Downloads remain intact.
+    func forgetConnection() throws {
+        let previous = identity, wasPaused = connectionPaused
+        identity = nil; connectionPaused = false
+        do { try persist() } catch { identity = previous; connectionPaused = wasPaused; throw error }
+        if let previous { DeviceKeychain.remove(account: previous.deviceID) }
+        client = nil; suspendedClient = nil; engines = []; voices = []
+        connectionEpoch = UUID()
+        connectionState = .notChecked; connectionError = nil; status = nil; error = nil
+    }
+    /// A public health check alone is insufficient: the saved device must authenticate.
+    func checkConnection() async {
+        guard let client, connectionState != .checking else { return }
+        let epoch = connectionEpoch, previousState = connectionState
+        connectionState = .checking; connectionError = nil
+        do {
+            struct Health: Decodable { var apiVersion: String }
+            struct Engines: Decodable { var engines: [RemoteEngine] }
+            let health: Health = try await client.send("/v1/health")
+            guard health.apiVersion == "1" else { throw BookError.message("Update your PC companion to connect.") }
+            let _: Engines = try await client.send("/v1/engines")
+            try Task.checkCancellation()
+            guard self.client === client, connectionEpoch == epoch else { return }
+            connectionState = .connected; status = "Connected to your companion"
+        } catch {
+            guard self.client === client, connectionEpoch == epoch else { return }
+            if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                if connectionState == .checking { connectionState = previousState }
+                return
+            }
+            connectionState = .unavailable; connectionError = CompanionClient.narrationMessage(for: error)
+        }
     }
     func disconnect() async {
         do {
-            if let client { try await client.command("/v1/devices/current") }
-            if let identity { DeviceKeychain.remove(account: identity.deviceID) }
-            identity = nil; client = nil; engines = []; voices = []; try persist(); status = nil
+            if let client = client ?? suspendedClient { try await client.command("/v1/devices/current") }
+            try forgetConnection()
         } catch { self.error = error.localizedDescription }
     }
     func refresh(reportErrors: Bool = true) async {
         guard let client, !refreshing else { return }
+        let epoch = connectionEpoch
         refreshing = true; defer { refreshing = false }
         do {
             struct Engines: Decodable { var engines: [RemoteEngine] }
@@ -142,6 +218,7 @@ import ReadiumZIPFoundation
             async let l: Legacy = client.send("/v1/legacy-recordings")
             async let p: Pronunciations = client.send("/v1/pronunciations")
             let result = try await (e, v, j, b, l, p)
+            guard self.client === client, connectionEpoch == epoch else { return }
             engines = result.0.engines; voices = result.1.voices
             let downloadedJobIDs = Set(downloads.map(\.jobID))
             let remoteJobIDs = Set(result.2.jobs.map(\.id))
@@ -154,8 +231,13 @@ import ReadiumZIPFoundation
             let remoteBookIDs = Set(result.3.books.map(\.id))
             books = result.3.books + books.filter { neededBookIDs.contains($0.id) && !remoteBookIDs.contains($0.id) }
             legacyRecordings = result.4.recordings; importedPronunciations = result.5.pronunciationRules
-            try persist(); status = "Connected to your companion"
-        } catch { status = "Companion unavailable · downloaded books stay ready"; if reportErrors { self.error = CompanionClient.narrationMessage(for: error) } }
+            try persist(); status = "Connected to your companion"; connectionState = .connected; connectionError = nil
+        } catch {
+            guard self.client === client, connectionEpoch == epoch else { return }
+            status = "Companion unavailable · downloaded books stay ready"
+            connectionState = .unavailable; connectionError = CompanionClient.narrationMessage(for: error)
+            if reportErrors { self.error = connectionError }
+        }
     }
     func receiveBook(_ remote: RemoteBook, library: LibraryStore) async {
         guard let client, !receivingBook else { return }
@@ -180,7 +262,7 @@ import ReadiumZIPFoundation
         } catch { self.error = error.localizedDescription }
     }
     func upload(_ local: LocalBook, library: LibraryStore) async throws -> RemoteBook {
-        guard let client else { throw BookError.message("Pair your PC companion first.") }
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
         if let existing = books.first(where: { $0.sourceSha256 == local.sourceSHA256 }) {
             var updated = library.book(local.id) ?? local; updated.companionBookID = existing.id; library.update(updated)
             return existing
@@ -204,13 +286,13 @@ import ReadiumZIPFoundation
         return try await submit(request)
     }
     func requireSourceRanges() async throws {
-        guard let client else { throw BookError.message("Pair your PC companion in Studio first.") }
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
         struct Health: Decodable { var capabilities: [String]? }
         let health: Health = try await client.send("/v1/health")
         guard health.capabilities?.contains("source_ranges") == true else { throw BookError.message("Update PC Companion to a version supporting exact source ranges, then reconnect. This PC cannot safely generate only the selected page.") }
     }
     func requireSourceRangeCast() async throws {
-        guard let client else { throw BookError.message("Pair your PC companion in Studio first.") }
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
         struct Health: Decodable { var capabilities: [String]? }
         let health: Health = try await client.send("/v1/health")
         guard health.capabilities?.contains("source_ranges_cast") == true else {
@@ -248,7 +330,7 @@ import ReadiumZIPFoundation
         return try await client.send("/v1/analyses/\(id)")
     }
     @discardableResult func submit(_ request: GenerationRequest) async throws -> RemoteJob {
-        guard let client else { throw BookError.message("Pair your PC companion first.") }
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
         if request.sourceRanges?.isEmpty == false { try await requireSourceRanges() }
         if request.narrationMode != nil || (request.sourceRanges?.isEmpty == false && request.narrationPlan?.isEmpty == false) { try await requireSourceRangeCast() }
         let job: RemoteJob = try await client.send("/v1/jobs", method: "POST", body: CompanionClient.encoder.encode(request))
@@ -276,7 +358,7 @@ import ReadiumZIPFoundation
         } catch { self.error = error.localizedDescription; return false }
     }
     func clone(name: String, engine: String, language: String, transcript: String, sample: URL) async throws {
-        guard let client else { throw BookError.message("Pair your companion first.") }
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
         let scoped = sample.startAccessingSecurityScopedResource(); defer { if scoped { sample.stopAccessingSecurityScopedResource() } }
         let voice = try await client.cloneVoice(name: name, engine: engine, language: language, transcript: transcript, sample: sample)
         voices.append(voice)
@@ -441,7 +523,7 @@ import ReadiumZIPFoundation
         return groups
     }
     func refreshNarrationInventory() async throws {
-        guard let client else { throw BookError.message("Pair your PC companion in Studio first.") }
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
         struct Engines: Decodable { var engines: [RemoteEngine] }
         struct Voices: Decodable { var voices: [RemoteVoice] }
         struct Pronunciations: Decodable { var pronunciationRules: [PronunciationRule] }

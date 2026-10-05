@@ -11,6 +11,7 @@ enum UITestConnectionFixture {
     }
     @MainActor static func store(root: URL) throws -> CompanionStore {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        if ProcessInfo.processInfo.arguments.contains("--connection-unpaired") { return CompanionStore(root: root) }
         let identity = CompanionIdentity(url: URL(string: "https://old-connection.invalid")!, fingerprint: nil, deviceID: "test-only-connection-device")
         let client = try CompanionClient(url: identity.url, fingerprint: nil, token: "test-only-connection-token")
         let store = CompanionStore(root: root, client: client)
@@ -26,6 +27,9 @@ private final class ConnectionUITestProtocol: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
+        if ProcessInfo.processInfo.arguments.contains("--connection-unavailable") {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)); return
+        }
         let allowed = ["old-connection.invalid", "new-connection.invalid"].contains(url.host ?? "")
         let health = url.path.hasSuffix("/health")
         let authorized = allowed && request.value(forHTTPHeaderField: "Authorization") == "Bearer test-only-connection-token"
