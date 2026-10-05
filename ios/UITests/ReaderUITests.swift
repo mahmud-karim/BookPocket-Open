@@ -270,26 +270,29 @@ final class ReaderUITests: XCTestCase {
     }
 
     private func assertReaderPlayerFits(_ app: XCUIApplication, name: String) {
+        let viewport = app.frame
         let surface = app.otherElements["reader.player.surface"]
         XCTAssertTrue(surface.exists)
         XCTAssertEqual(surface.scrollViews.count, 0, "The compact reader player must not scroll")
         var frames: [String] = []
+        var positions: [String: CGRect] = [:]
         if app.buttons["reader.voice.device"].exists {
-            for mode in ["device", "kyon", "cast"] { assertMinimumHitArea(app.buttons["reader.voice." + mode]) }
-        } else { assertMinimumHitArea(app.buttons["reader.player.narrator"]) }
+            for mode in ["device", "kyon", "cast"] { assertMinimumHitArea(app.buttons["reader.voice." + mode], viewport: viewport) }
+        } else { assertMinimumHitArea(app.buttons["reader.player.narrator"], viewport: viewport) }
         for id in ["backward", "toggle", "forward", "speed", "chapters", "sleep", "generate", "details"] {
             let control = app.buttons["reader.player." + id]
-            if control.isEnabled { assertMinimumHitArea(control) }
+            let frame = control.frame; positions[id] = frame
+            if control.isEnabled { assertMinimumHitArea(control, frame: frame, viewport: viewport) }
             else {
-                XCTAssertTrue(control.exists && app.frame.contains(control.frame))
-                XCTAssertGreaterThanOrEqual(control.frame.width + 0.001, 44)
-                XCTAssertGreaterThanOrEqual(control.frame.height + 0.001, 44)
+                XCTAssertTrue(control.exists && viewport.contains(frame))
+                XCTAssertGreaterThanOrEqual(frame.width + 0.001, 44)
+                XCTAssertGreaterThanOrEqual(frame.height + 0.001, 44)
             }
-            frames.append("\(id): \(control.frame)")
+            frames.append("\(id): \(frame)")
         }
-        XCTAssertLessThanOrEqual(app.buttons["reader.player.backward"].frame.maxX, app.buttons["reader.player.toggle"].frame.minX)
-        XCTAssertLessThanOrEqual(app.buttons["reader.player.toggle"].frame.maxX, app.buttons["reader.player.forward"].frame.minX)
-        XCTAssertFalse(app.buttons["reader.player.toggle"].frame.intersects(app.buttons["reader.player.generate"].frame), "Transport and actions must not overlap in either layout")
+        XCTAssertLessThanOrEqual(positions["backward"]!.maxX, positions["toggle"]!.minX)
+        XCTAssertLessThanOrEqual(positions["toggle"]!.maxX, positions["forward"]!.minX)
+        XCTAssertFalse(positions["toggle"]!.intersects(positions["generate"]!), "Transport and actions must not overlap in either layout")
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
         let geometry = XCTAttachment(string: frames.joined(separator: "\n")); geometry.name = name + " geometry"; geometry.lifetime = .keepAlways; add(geometry)
     }
@@ -398,27 +401,27 @@ final class ReaderUITests: XCTestCase {
     func testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages() {
         executionTimeAllowance = 300
         let app = XCUIApplication()
-        let arguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", "--reader-continuous-fixture", "-playbackRate", "1"]
+        let arguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", "--reader-continuous-fixture", "-playbackRate", "0.5"]
         app.launchArguments = arguments
         XCUIDevice.shared.orientation = .portrait; app.launch()
         openContinuousPage(app)
         let play = app.buttons["reader.player.toggle"]
-        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 12)
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 124)
         XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 0)
         assertReaderTimelineFits(app, name: "Obsidian continuous page ready with full duration")
         play.tap()
         let crossed = NSPredicate { _, _ in self.audioSeconds(app.staticTexts["reader.player.elapsed"]) >= 5 }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: crossed, object: nil)], timeout: 12), .completed, "Playback must pass the four-second asset boundary on one global clock")
-        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 12)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: crossed, object: nil)], timeout: 35), .completed, "Playback must pass the four-second asset boundary on one global clock")
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 124)
         XCTAssertEqual(play.value as? String, "Playing")
         play.tap(); XCTAssertEqual(play.value as? String, "Paused")
         let slider = app.sliders["reader.player.seek"]
         slider.adjust(toNormalizedSliderPosition: 0.8)
         let seek = audioSeconds(app.staticTexts["reader.player.elapsed"])
-        XCTAssertGreaterThanOrEqual(seek, 8, "The slider can seek directly into a later backend passage")
-        XCTAssertEqual(Double(slider.normalizedSliderPosition) * 12, seek, accuracy: 1)
-        app.buttons["reader.player.backward"].tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 0)
-        app.buttons["reader.player.forward"].tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 12)
+        XCTAssertGreaterThanOrEqual(seek, 64, "The slider can seek directly into the third backend passage")
+        XCTAssertEqual(Double(slider.normalizedSliderPosition) * 124, seek, accuracy: 1)
+        app.buttons["reader.player.backward"].tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), seek - 15, accuracy: 1)
+        app.buttons["reader.player.forward"].tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), seek, accuracy: 1)
         slider.adjust(toNormalizedSliderPosition: 0.55)
         assertReaderTimelineFits(app, name: "Obsidian continuous page paused across passage boundary")
         XCTAssertEqual(play.value as? String, "Paused")
@@ -427,18 +430,24 @@ final class ReaderUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait; XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
         app.buttons["reader.scope.chapter"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: play)], timeout: 20), .completed)
-        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 16, "Changing scope prepares the complete chapter, not the paused page clock")
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 184, "Changing scope prepares the complete chapter, not the paused page clock")
         XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 0); XCTAssertEqual(play.value as? String, "Paused")
-        play.tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 16)
+        play.tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 184)
         play.tap(); assertReaderTimelineFits(app, name: "Obsidian continuous whole chapter timeline")
         app.navigationBars["Read aloud"].buttons["Done"].tap(); app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
-        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 16)
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 184)
         XCTAssertEqual(app.buttons["player.full.toggle"].value as? String, "Paused")
         assertDownloadedListenFits(app, name: "Obsidian continuous chapter shared Listen timeline")
-        app.terminate()
-        app.launchArguments = arguments + ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+    }
+    func testContinuousRecordingTimelineFitsLargestTextSizes() {
+        executionTimeAllowance = 300
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", "--reader-continuous-fixture", "-playbackRate", "0.5", "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        XCUIDevice.shared.orientation = .portrait
         app.launch(); openContinuousPage(app)
-        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 12)
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 124)
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 0)
+        XCTAssertEqual(app.buttons["reader.player.toggle"].value as? String, "Paused", "Accessibility layout verification must not start playback")
         assertReaderTimelineFits(app, name: "Obsidian continuous page timeline largest text")
         XCUIDevice.shared.orientation = .landscapeRight; XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
         assertReaderTimelineFits(app, name: "Obsidian continuous page timeline largest text landscape")
@@ -458,13 +467,14 @@ final class ReaderUITests: XCTestCase {
     private func assertReaderTimelineFits(_ app: XCUIApplication, name: String) {
         assertReaderPlayerFits(app, name: name)
         let slider = app.sliders["reader.player.seek"], elapsed = app.staticTexts["reader.player.elapsed"], duration = app.staticTexts["reader.player.duration"]
-        for text in [elapsed, duration] { XCTAssertTrue(text.exists && text.isHittable && app.frame.contains(text.frame)); XCTAssertGreaterThan(text.frame.height, 0) }
-        XCTAssertLessThanOrEqual(slider.frame.maxY, elapsed.frame.minY + 1)
-        XCTAssertLessThanOrEqual(elapsed.frame.maxY, app.buttons["reader.player.toggle"].frame.minY)
-        XCTAssertLessThanOrEqual(duration.frame.maxY, app.buttons["reader.player.toggle"].frame.minY)
-        XCTAssertLessThanOrEqual(elapsed.frame.maxX, duration.frame.minX)
-        let surface = app.otherElements["reader.player.surface"]
-        XCTAssertGreaterThanOrEqual(surface.frame.maxY, app.frame.maxY - 1, "The charcoal player extends to the display's bottom edge")
+        let viewport = app.frame, sliderFrame = slider.frame, elapsedFrame = elapsed.frame, durationFrame = duration.frame
+        let toggleFrame = app.buttons["reader.player.toggle"].frame, surfaceFrame = app.otherElements["reader.player.surface"].frame
+        for (text, frame) in [(elapsed, elapsedFrame), (duration, durationFrame)] { XCTAssertTrue(text.exists && text.isHittable && viewport.contains(frame)); XCTAssertGreaterThan(frame.height, 0) }
+        XCTAssertLessThanOrEqual(sliderFrame.maxY, elapsedFrame.minY + 1)
+        XCTAssertLessThanOrEqual(elapsedFrame.maxY, toggleFrame.minY)
+        XCTAssertLessThanOrEqual(durationFrame.maxY, toggleFrame.minY)
+        XCTAssertLessThanOrEqual(elapsedFrame.maxX, durationFrame.minX)
+        XCTAssertGreaterThanOrEqual(surfaceFrame.maxY, viewport.maxY - 1, "The charcoal player extends to the display's bottom edge")
     }
 
     func testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage() {
@@ -554,11 +564,12 @@ final class ReaderUITests: XCTestCase {
         app.navigationBars["Read aloud"].buttons["Done"].tap()
     }
 
-    private func assertMinimumHitArea(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+    private func assertMinimumHitArea(_ element: XCUIElement, frame capturedFrame: CGRect? = nil, viewport capturedViewport: CGRect? = nil, file: StaticString = #filePath, line: UInt = #line) {
+        let frame = capturedFrame ?? element.frame, viewport = capturedViewport ?? XCUIApplication().frame
         XCTAssertTrue(element.exists && element.isHittable, file: file, line: line)
-        XCTAssertGreaterThanOrEqual(element.frame.width + 0.001, 44, file: file, line: line)
-        XCTAssertGreaterThanOrEqual(element.frame.height + 0.001, 44, file: file, line: line)
-        XCTAssertTrue(XCUIApplication().frame.contains(element.frame), file: file, line: line)
+        XCTAssertGreaterThanOrEqual(frame.width + 0.001, 44, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(frame.height + 0.001, 44, file: file, line: line)
+        XCTAssertTrue(viewport.contains(frame), file: file, line: line)
     }
 
     private func assertEmptyListenFits(_ app: XCUIApplication, name: String, file: StaticString = #filePath, line: UInt = #line) {

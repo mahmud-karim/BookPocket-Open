@@ -89,19 +89,24 @@ import Foundation
             // A complete chapter and a page excerpt each contain several actual
             // WAV assets. They exercise joined transport, not a speech engine.
             let chapter = chapters[0], selected = Array(chapter.segments.prefix(3))
-            let data = tone(seconds: 4, frequency: 220), file = "reader-continuous.wav"
-            try data.write(to: companion.root.appendingPathComponent(file), options: .atomic)
-            let assets = selected.map { segment in
-                AudioAsset(id: "reader-continuous-" + segment.id, segmentId: segment.id, mediaType: "audio/wav", duration: 4, sha256: SourceIdentity.hash(data), bytes: data.count, url: "/explicit-test-tone-not-speech", timings: scalarTimings(segment.text, seconds: 4), narrationMode: "single", castSpans: [])
+            // Keep the first natural boundary quick, with ample remaining audio
+            // for native gestures on cold or overloaded Simulator runners.
+            let short = tone(seconds: 4, frequency: 220), long = tone(seconds: 60, frequency: 220)
+            let shortFile = "reader-continuous-short.wav", longFile = "reader-continuous-long.wav"
+            try short.write(to: companion.root.appendingPathComponent(shortFile), options: .atomic)
+            try long.write(to: companion.root.appendingPathComponent(longFile), options: .atomic)
+            let assets = selected.enumerated().map { index, segment in
+                let data = index == 0 ? short : long, seconds = index == 0 ? 4.0 : 60.0
+                return AudioAsset(id: "reader-continuous-" + segment.id, segmentId: segment.id, mediaType: "audio/wav", duration: seconds, sha256: SourceIdentity.hash(data), bytes: data.count, url: "/explicit-test-tone-not-speech", timings: scalarTimings(segment.text, seconds: seconds), narrationMode: "single", castSpans: [])
             }
             let page = RemoteJob(id: "reader-continuous-page", bookId: book.id, status: "completed", engine: "omnivoice", voiceId: "test-only-tone", segmentIds: selected.map(\.id), completedSegments: 3, totalSegments: 3, assets: assets, createdAt: "2026-01-01T00:00:00Z", narrationMode: "single", voiceName: "Kyon")
             var whole = page; whole.id = "reader-continuous-chapter"
             whole.segmentIds = chapter.segments.map(\.id); whole.completedSegments = 4; whole.totalSegments = 4
             let last = chapter.segments[3]
-            whole.assets.append(.init(id: "reader-continuous-last", segmentId: last.id, mediaType: "audio/wav", duration: 4, sha256: SourceIdentity.hash(data), bytes: data.count, url: "/explicit-test-tone-not-speech", timings: scalarTimings(last.text, seconds: 4), narrationMode: "single", castSpans: []))
+            whole.assets.append(.init(id: "reader-continuous-last", segmentId: last.id, mediaType: "audio/wav", duration: 60, sha256: SourceIdentity.hash(long), bytes: long.count, url: "/explicit-test-tone-not-speech", timings: scalarTimings(last.text, seconds: 60), narrationMode: "single", castSpans: []))
             companion.jobs = [page, whole]
             companion.downloads = [page, whole].flatMap { job in job.assets.map { asset in
-                DownloadRecord(localBookID: local.id, jobID: job.id, asset: asset, file: file, segment: chapter.segments.first { $0.id == asset.segmentId })
+                DownloadRecord(localBookID: local.id, jobID: job.id, asset: asset, file: asset.duration == 4 ? shortFile : longFile, segment: chapter.segments.first { $0.id == asset.segmentId })
             } }
         }
         if ProcessInfo.processInfo.arguments.contains("--reader-alternate-takes-fixture") {
