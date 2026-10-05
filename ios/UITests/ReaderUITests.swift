@@ -42,7 +42,7 @@ final class ReaderUITests: XCTestCase {
             XCTAssertTrue(button.exists && button.isHittable)
             XCTAssertTrue(app.frame.contains(button.frame))
             assertMinimumHitArea(button)
-            XCTAssertLessThanOrEqual(button.frame.maxY, app.tabBars.frame.minY)
+            XCTAssertLessThanOrEqual(button.frame.maxY, app.tabBars.firstMatch.frame.minY)
         }
         let footer = app.staticTexts["connection.retention"]
         let position = footer.frame
@@ -649,6 +649,12 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Studio"].waitForExistence(timeout: 10))
         assertMiniPlayerAboveTabs(in: app)
         XCTAssertEqual(app.buttons["player.mini.toggle"].value as? String, "Playing", "Changing tabs must preserve speech")
+        app.tabBars.buttons["Connection"].tap()
+        XCTAssertTrue(app.buttons["connection.pair"].waitForExistence(timeout: 10))
+        assertMiniPlayerAboveTabs(in: app)
+        XCTAssertEqual(app.buttons["player.mini.toggle"].value as? String, "Playing")
+        let connectionPlayer = XCTAttachment(screenshot: app.screenshot())
+        connectionPlayer.name = "Obsidian Connection with active mini player"; connectionPlayer.lifetime = .keepAlways; add(connectionPlayer)
         app.tabBars.buttons["Listen"].tap()
         let fullPlayer = app.buttons["player.full.toggle"]
         XCTAssertTrue(fullPlayer.waitForExistence(timeout: 10))
