@@ -3,7 +3,8 @@
 Open **Connection** in the bottom navigation, alongside Library, Listen and Studio.
 
 - **Connected / Live** means the saved PC responded and accepted this phone's device credential. A saved pairing or public health response alone does not establish a connection.
-- **Unavailable** means the PC could not be verified. Keep the Windows companion running and check the saved address. Reading and downloaded narration remain available.
+- **Unavailable** means the PC could not be verified. Reading and downloaded narration remain available.
+- **Start companion** appears for an unavailable saved connection in iOS 0.1.15. With the optional [Pocket Hub receiver](COMPANION-START.md), it starts the installed Windows companion using this phone's existing pairing. Starting is an acknowledgement; Connected appears only after authenticated access succeeds. Failures retain pairing and downloads. Windows must be awake, signed in and online, with Pocket Hub and Funnel running.
 - **Disconnect** pauses new requests from this phone and keeps the pairing, address and downloads. The setting survives closing the app. Existing PC generation continues; an already-started request can finish.
 - **Connect** resumes the saved connection and checks it without requesting a new pairing code.
 - **Edit connection details** opens the existing address editor. The replacement address must pass HTTPS verification and authenticated device access before it replaces the saved address. Public HTTPS uses system certificate validation; a local connection uses the certificate fingerprint supplied by the PC.
@@ -13,4 +14,4 @@ An unpaired phone shows **Pair a companion**, using the existing QR or manual pa
 
 The standard phone layout fits the controls above the native four-tab menu. Large accessibility text and landscape can scroll this settings screen. Listen retains its separate one-screen transport layout.
 
-An existing public Funnel address continues to work away from home without a phone VPN. The Windows companion and Funnel must remain running. See [Funnel setup](FUNNEL.md).
+An existing public Funnel address continues to work away from home without a phone VPN. The optional receiver can start a stopped companion through that same address; Pocket Hub and Funnel must remain running. See [Funnel setup](FUNNEL.md).

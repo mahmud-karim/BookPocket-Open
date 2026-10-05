@@ -6,6 +6,12 @@ Windows must be awake and online. Pocket Hub's background supervisor and the HTT
 
 The optional receiver is original Apache-2.0 code in `scripts/pocket_hub_receiver.py`. It runs in the companion's bundled Python environment and does not load speech models. Pocket Hub must register the fixed `bookopen` service for the installed companion launcher, and supervise the receiver as a separate service. Use the exact installed executable/script identity and persistent intentional-stop/recovery behavior; repeated Start must not reset an enabled service's failure backoff.
 
+The fixed companion launch must enable the phone gateway on 8785 with system TLS mode and the verified public URL. Keep these as verified local launch settings when the background process cannot see persisted settings. Do not take them from the phone's Start request. Companion readiness should check both the studio and phone listeners; a working studio alone does not establish phone access.
+
+Before switching the public mount, verify that the native supervisor and receiver see the existing paired profile, including device and library records. [Packaged Windows launch environments can virtualize LocalAppData](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-behind-the-scenes); identical displayed paths can therefore expose different stores. Use read-only counts and fingerprints, without logging credentials or source text. An empty store with a passing public health check is not a working paired companion. Resolve profile access explicitly and preserve existing data before enabling the receiver's public route.
+
+Configure the companion's real physical data directory explicitly when needed. Keep the render data directory and its parents free of symbolic links and junctions, as required by the existing render-workspace safeguards. Do not loosen those safeguards to make a background launch succeed.
+
 Run the receiver under Pocket Hub with:
 
 ```powershell

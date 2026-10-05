@@ -21,6 +21,8 @@ success does not establish that the reported OSStatus -50 is resolved on-device.
 
 ## Public HTTPS connection
 
+For iOS 0.1.15 with the optional Pocket Hub receiver, retain the existing pairing and public address. First refresh Connection on cellular with the phone VPN off. To check Start, stop only Book Pocket Open from Pocket Hub while no narration job is active; keep the start receiver, Pocket Hub and Funnel running. Refresh on the phone, then tap **Start companion**. It should show Starting, then Connected / Live after verified access. Existing books, voices, pairing and downloads must remain. Try one short narration request after connection succeeds. A sleeping/offline PC or stopped receiver must produce an actionable failure and retain pairing. This physical phone test remains distinct from automated fixtures and the local real-process start check.
+
 With iOS 0.1.11 and Companion 0.1.7 or later, configure [Funnel](FUNNEL.md) and
 pair using the public-address QR. Disable Tailscale and Wi-Fi on the iPhone,
 leaving cellular internet enabled. Refresh the companion, generate one short
