@@ -111,7 +111,7 @@ final class ReaderUITests: XCTestCase {
         app.launch()
         let offline = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Unavailable"), object: app.staticTexts["connection.status"])
         XCTAssertEqual(XCTWaiter.wait(for: [offline], timeout: 15), .completed)
-        XCTAssertTrue(app.staticTexts["connection.help"].label.contains("unreachable"))
+        XCTAssertTrue(app.staticTexts["connection.help"].label.contains("Start companion"))
         XCTAssertTrue(app.buttons["connection.edit"].isHittable)
         let unavailable = XCTAttachment(screenshot: app.screenshot())
         unavailable.name = "Obsidian Connection unavailable — isolated transport fixture"; unavailable.lifetime = .keepAlways; add(unavailable)
