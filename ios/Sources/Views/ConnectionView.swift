@@ -3,6 +3,7 @@ import SwiftUI
 struct ConnectionView: View {
     @Environment(CompanionStore.self) private var companion
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var editConnection = false
     @State private var pair = false
     @State private var forget = false
@@ -49,12 +50,9 @@ struct ConnectionView: View {
                     Text("Your PC, in one place.").font(compact ? .subheadline : .body).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if companion.identity != nil && !companion.connectionPaused {
-                    Button { Task { await companion.checkConnection() } } label: {
-                        Label("Refresh connection", systemImage: "arrow.clockwise").labelStyle(.iconOnly).frame(width: 44, height: 44)
-                    }.disabled(companion.connectionState == .checking).accessibilityIdentifier("connection.refresh")
-                }
+                if canRefresh && !dynamicTypeSize.isAccessibilitySize { refreshButton }
             }
+            if canRefresh && dynamicTypeSize.isAccessibilitySize { HStack { Spacer(); refreshButton } }
             if companion.identity != nil {
                 savedPC(compact: compact)
                 Button {
@@ -120,21 +118,29 @@ struct ConnectionView: View {
             .background(Obsidian.surface, in: .rect(cornerRadius: 22))
     }
     private func statusRow(_ title: String, icon: String, value: String, live: Bool) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).frame(width: 24)
-            Text(title)
-            Spacer()
-            if live { Circle().fill(.green).frame(width: 7, height: 7).accessibilityHidden(true) }
-            Text(value).foregroundStyle(live ? .green : .secondary)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label { Text(title) } icon: { Image(systemName: icon).font(.system(size: 20)).frame(width: 24).accessibilityHidden(true) }
+                    Text(value).foregroundStyle(live ? connectedColor : .secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
+            } else {
+                HStack(spacing: 12) {
+                    Image(systemName: icon).font(.system(size: 20)).frame(width: 24).accessibilityHidden(true)
+                    Text(title)
+                    Spacer()
+                    if live { Circle().fill(connectedColor).frame(width: 7, height: 7).accessibilityHidden(true) }
+                    Text(value).foregroundStyle(live ? connectedColor : .secondary)
+                }
+            }
         }.font(.subheadline).padding(.horizontal, 14).frame(minHeight: 44)
             .background(.primary.opacity(0.025), in: .rect(cornerRadius: 12))
     }
     private func settingsRow(_ title: String, icon: String) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon).frame(width: 24).foregroundStyle(Obsidian.accent)
-            Text(title).foregroundStyle(.primary)
-            Spacer()
-            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            Image(systemName: icon).font(.system(size: 20)).frame(width: 24).foregroundStyle(Obsidian.accent).accessibilityHidden(true)
+            Text(title).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading).layoutPriority(1)
+            Image(systemName: "chevron.right").font(.system(size: 11)).frame(width: 12).foregroundStyle(.secondary).accessibilityHidden(true)
         }.font(.subheadline).padding(.horizontal, 16).frame(minHeight: 44).contentShape(.rect)
     }
     private var statusTitle: String {
@@ -146,7 +152,16 @@ struct ConnectionView: View {
         case .disconnected: "Disconnected"
         }
     }
-    private var statusColor: Color { companion.connectionState == .connected ? .green : Obsidian.accent }
+    private var connectedColor: Color {
+        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? .systemGreen : UIColor(red: 0, green: 0.4, blue: 0.2, alpha: 1) })
+    }
+    private var canRefresh: Bool { companion.identity != nil && !companion.connectionPaused }
+    private var refreshButton: some View {
+        Button { Task { await companion.checkConnection() } } label: {
+            Label("Refresh connection", systemImage: "arrow.clockwise").labelStyle(.iconOnly).font(.system(size: 20)).frame(width: 44, height: 44)
+        }.disabled(companion.connectionState == .checking).accessibilityIdentifier("connection.refresh")
+    }
+    private var statusColor: Color { companion.connectionState == .connected ? connectedColor : Obsidian.accent }
     private var supportingText: String {
         if !companion.paired { return "Pair this iPhone again to restore access." }
         switch companion.connectionState {

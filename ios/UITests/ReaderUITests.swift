@@ -13,8 +13,8 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [actual], timeout: 30), .completed)
         let edit = app.buttons["connection.edit"]
         for _ in 0..<6 {
-            if edit.exists && edit.isHittable { break }
-            app.swipeUp()
+            if edit.exists && edit.isHittable && app.frame.contains(edit.frame) && edit.frame.maxY <= app.tabBars.firstMatch.frame.minY { break }
+            app.scrollViews.firstMatch.swipeUp()
         }
         XCTAssertTrue(edit.isHittable)
         assertMinimumHitArea(edit)
@@ -582,7 +582,9 @@ final class ReaderUITests: XCTestCase {
         app.launch()
         let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 30)); book.tap()
-        XCTAssertTrue(waitForReaderContents(app))
+        // The compact cold simulator needed about 70 seconds to report its
+        // first viewport. Keep the real enabled/hittable readiness predicate.
+        XCTAssertTrue(waitForReaderContents(app, timeout: 90))
         let paragraph = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
         // Cold WebKit exposes the toolbar before revealing its initial spread.
         // Do not open another presentation until the original page is painted.
