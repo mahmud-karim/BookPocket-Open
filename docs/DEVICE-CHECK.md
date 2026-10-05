@@ -2,6 +2,14 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
+## Connection tab
+
+With iOS 0.1.14, open **Connection** and confirm the four bottom tabs match the approved design. The existing pairing should remain saved after updating. With the Windows companion running, refresh and confirm **Connected / Live**. Stop or make the PC unreachable and confirm the indicator changes to **Unavailable** after a check, while books and downloaded audio still work.
+
+Tap **Disconnect**: it should show **Disconnected** and **Connect**, retain the address and pairing, and leave PC generation running. Close and reopen the app, confirm it stays disconnected, then tap **Connect** to resume without pairing again. Check **Edit connection details**, including rejecting an invalid replacement without losing the old address. Cancel **Forget this PC** and confirm the pairing remains. Only test confirming Forget if prepared to pair again; imported books and downloaded narration must remain.
+
+Check the Connection tab while audio plays: the mini-player must stay above the four accessible tabs. Confirm standard text fits on screen; the largest accessibility text must allow reaching settings by scrolling. See [connection controls](CONNECTION.md).
+
 For iOS 0.1.13 and Windows Companion 0.1.9, stop VoiceStudio, keep the companion
 running, and refresh the phone's Studio inventory. Generate a short page with
 the imported companion-managed Kyon voice, download it and play it. Repeat for

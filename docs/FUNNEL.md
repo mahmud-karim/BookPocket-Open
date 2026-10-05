@@ -35,10 +35,10 @@ Studio listener or the narration engine itself.
 ## Connect the phone
 
 In PC Studio, open Devices and create a new connection code. In the iPhone's
-Studio tab, scan its QR code and approve that request on the PC. The QR carries
+Connection tab, choose **Pair a companion**, scan the QR code and approve that request on the PC (older versions also provide pairing in Studio). The QR carries
 the public HTTPS address without the private LAN certificate fingerprint.
 For an existing pairing with the same PC, iOS 0.1.12 or later can switch addresses
-while away from home. Open **Studio → … → Companion connection**, enter the
+while away from home. Open **Connection → Edit connection details** in iOS 0.1.14 or later (older versions use **Studio → … → Companion connection**), enter the
 public HTTPS address including its mount path, and leave the certificate
 fingerprint empty for a public certificate. Clear the old fingerprint if it is
 filled in. Choose **Verify & save address**. The app

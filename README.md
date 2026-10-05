@@ -2,7 +2,9 @@
 
 A local-first EPUB reader and audiobook studio. Read on iPhone, generate narration on your Windows PC, and keep your original books and audio.
 
-**Development preview available:** [download the unsigned iPhone IPA (0.1.13)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.13-preview.1/BookPocketOpen.ipa) and [the compatible Windows installer (0.1.9)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/windows-v0.1.9-preview.1/BookPocketOpen-Setup-x64.exe). Published downloads were retrieved and checksum-verified; [iPhone release notes](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.13-preview.1) and [Windows release notes](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/windows-v0.1.9-preview.1) record their checks. An optional [Funnel connection](docs/FUNNEL.md) supports ordinary phone internet without a phone VPN. Tap **Read aloud** in the reader to open its player and choose **On-device**, **Kyon**, or **Full cast**. PC voices require matching, verified downloaded audio before Play becomes available. **Generate** asks for the current page or chapter and starts generation in the player; **Details** opens the exact original source preview. Existing paired phones can change to the public HTTPS address from **Studio → … → Companion connection** while away from home. Listen keeps its controls on one screen with chapter selection and explicit alternate takes. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
+**Development preview available:** [download the unsigned iPhone IPA (0.1.14)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/v0.1.14-preview.1/BookPocketOpen.ipa) and [the compatible Windows installer (0.1.9)](https://github.com/mahmud-karim/BookPocket-Open/releases/download/windows-v0.1.9-preview.1/BookPocketOpen-Setup-x64.exe). Published downloads were retrieved and checksum-verified; [iPhone release notes](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.14-preview.1) and [Windows release notes](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/windows-v0.1.9-preview.1) record their checks. The bottom menu now has **Library · Listen · Studio · Connection**. [Connection](docs/CONNECTION.md) verifies live PC access, keeps saved pairing when disconnected, and provides address editing and local forgetting. An optional [Funnel connection](docs/FUNNEL.md) supports ordinary phone internet without a phone VPN. Existing paired phones can change to the public HTTPS address from **Connection → Edit connection details** while away from home.
+
+Tap **Read aloud** in the reader to open its player and choose **On-device**, **Kyon**, or **Full cast**. PC voices require matching, verified downloaded audio before Play becomes available. **Generate** asks for the current page or chapter and starts generation in the player; **Details** opens the exact original source preview. Listen keeps its controls on one screen with chapter selection and explicit alternate takes. See [the verification ledger](docs/VERIFICATION.md) for tested behavior and [the physical iPhone check](docs/DEVICE-CHECK.md) for the remaining device gates.
 
 ## Obsidian in the actual app
 
@@ -17,6 +19,7 @@ Simulator screenshots show the original public test book. These are rendered app
 <img src="docs/screenshots/ios-studio.png" alt="Native Obsidian audiobook studio" width="220">
 <img src="docs/screenshots/ios-playing-tabs.png" alt="Narration controls above accessible native tabs" width="220">
 <img src="docs/screenshots/ios-listen.png" alt="Fixed Listen player with chapter selection" width="220">
+<img src="docs/screenshots/ios-connection.png" alt="Connection dashboard and four native tabs" width="220">
 </p>
 
 Generate starts preparation and generation after selecting page or chapter; the separate Details view retains the exact source preview. The public-book screens use an unpaired simulator, so they do not establish real phone generation. Offline player screenshots use explicitly labelled transport tones; these fixtures prove playback behavior, not narrator quality.
@@ -27,6 +30,8 @@ Listen keeps its player controls on one screen, with a chapter selector and a tr
 
 The [downloaded chapter panel](docs/screenshots/ios-chapter-takes.png) and [compact panel](docs/screenshots/ios-chapter-takes-compact.png) show separately generated chapters and an alternate excerpt. These isolated offline playback tests use explicitly labelled non-speech tones, not a synthesized narrator.
 
+The new [Connection tab](docs/CONNECTION.md) shows saved pairing separately from verified live access. Its [compact layout](docs/screenshots/ios-connection-compact.png) fits on one screen, [large accessibility text](docs/screenshots/ios-connection-accessibility-compact.png) can scroll to settings, and [active narration](docs/screenshots/ios-connection-playing.png) leaves all four tabs accessible. The connection-state screenshots use isolated transport fixtures, not a connection to a personal PC.
+
 ![Windows Obsidian library](docs/screenshots/windows-library.png)
 
 ## The experience
@@ -36,6 +41,7 @@ The [downloaded chapter panel](docs/screenshots/ios-chapter-takes.png) and [comp
 - Preview the exact source text, follow durable PC generation, and download finished narration for offline playback. Pausing leaves manually chosen pages alone, and a late download cannot start after changing the selected narrator, take or page.
 - Listen without scrolling; choose chapters for on-device reading or browse downloaded chapter recordings across the book. Alternate takes and excerpts remain explicit choices. Keep playback speed, sleep timer and transport controls together.
 - Windows companion and an Obsidian desktop studio: local library, durable narration jobs, voice collection, device approval, and audio exports.
+- Dedicated Connection tab with verified status, refresh, saved-pairing disconnect/reconnect, address editing, and offline local forgetting that retains books and downloaded narration.
 - Managed Kokoro preset narration, Qwen3-TTS cloning, and [OmniVoice cloning](docs/OMNIVOICE.md), installed separately. OmniVoice runs inside the companion without VoiceStudio; its pretrained weights have noncommercial terms. An external VoiceStudio adapter remains optional.
 - Full-cast narration from exact source passages, with editable voices and explicit review of model suggestions.
 - No reading account. Original files, model runtimes, credentials, and audio stay outside the source checkout.
