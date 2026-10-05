@@ -2,6 +2,15 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
+For iOS 0.1.13 and Windows Companion 0.1.9, stop VoiceStudio, keep the companion
+running, and refresh the phone's Studio inventory. Generate a short page with
+the imported companion-managed Kyon voice, download it and play it. Repeat for
+a chapter, then try the downloaded take in airplane mode. Existing external
+recordings must remain selectable. This version removes the invalid explicit
+AirPlay option from the playback audio session; confirm downloaded speech starts
+on the physical iPhone, then check AirPlay and Bluetooth separately. Simulator
+success does not establish that the reported OSStatus -50 is resolved on-device.
+
 ## Public HTTPS connection
 
 With iOS 0.1.11 and Companion 0.1.7 or later, configure [Funnel](FUNNEL.md) and

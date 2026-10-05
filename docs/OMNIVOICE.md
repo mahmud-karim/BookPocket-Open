@@ -7,6 +7,13 @@ Ready. A supported NVIDIA driver uses CUDA; other machines use CPU. Installation
 requires several gigabytes and internet access. Generation uses the local model.
 VoiceStudio is not required.
 
+Windows Companion 0.1.9 adds this engine. Use iOS 0.1.13 or later for the reader's
+managed Kyon option. After upgrading the iPhone, refresh Studio, open your book,
+tap Read aloud, choose Kyon, then Generate and Current page or Current chapter.
+Download the finished take to play it offline. Keep the companion running on
+the PC while it generates. An existing paired Funnel address works without a
+phone VPN; neither a new address nor re-pairing is required for this update.
+
 Open Voices, import reference audio, select OmniVoice, and enter the exact words
 spoken in that reference. Name the voice Kyon to use the iPhone's Kyon narrator
 option. Other imported voices can be assigned in Cast Studio. References and
