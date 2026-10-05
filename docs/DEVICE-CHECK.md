@@ -2,6 +2,14 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
+## Saved page audio in 0.1.16
+
+Update the existing LiveContainer app with the 0.1.16 IPA and retain its library and pairing. Open a chapter that has generated page excerpts but no full-chapter recording. Tap **Read aloud** → **Kyon** → **Saved audio**. Existing page clips should appear independently of **Chapter not generated**. Select a downloaded clip, confirm the original-text preview and **Saved page clip** label, then press Play; selecting it alone must not start playback.
+
+For a completed PC-only clip, tap **Download** in Saved audio. It must become **Ready offline** only after all files verify, and downloading there must not autoplay. Try it again in airplane mode. If several takes match the visible page, the player should ask **Choose a matching take**; select one explicitly. Change font size and reopen Saved audio: clips must remain tied to their original words. Switching to Full cast must not select Kyon recordings.
+
+Check **Page** and **Chapter** separately, then **Generate** → **Current page** and **Current chapter**. Confirm a missing full chapter never hides existing excerpts. In portrait and landscape, the main player should fit without scrolling and its charcoal background should reach the bottom of the screen, including the home-indicator area, with no separate gray strip. The Saved audio browser may scroll. Repeat with larger text and check that controls remain reachable. See [the page-audio guide](PAGE-AUDIO.md).
+
 ## Connection tab
 
 With iOS 0.1.14, open **Connection** and confirm the four bottom tabs match the approved design. The existing pairing should remain saved after updating. With the Windows companion running, refresh and confirm **Connected / Live**. Stop or make the PC unreachable and confirm the indicator changes to **Unavailable** after a check, while books and downloaded audio still work.
