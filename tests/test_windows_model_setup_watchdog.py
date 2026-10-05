@@ -58,9 +58,16 @@ def test_closing_only_job_handle_kills_live_child_and_grandchild(tmp_path):
         (tmp_path / "start.flag").write_text("assigned", encoding="ascii")
         child.resume()
         deadline = time.monotonic() + 10
-        while not (tmp_path / "grandchild.pid").exists() and time.monotonic() < deadline:
-            time.sleep(.05)
-        grandchild = kernel.OpenProcess(0x100000 | 0x1000, False, int((tmp_path / "grandchild.pid").read_text()))
+        grandchild_pid = None
+        while time.monotonic() < deadline:
+            try:
+                grandchild_pid = int((tmp_path / "grandchild.pid").read_text())
+                break
+            except (FileNotFoundError, ValueError):
+                # Creation precedes content publication; require the actual PID.
+                time.sleep(.05)
+        assert grandchild_pid is not None, "The live fixture grandchild did not publish its PID"
+        grandchild = kernel.OpenProcess(0x100000 | 0x1000, False, grandchild_pid)
         assert grandchild
         contained = wintypes.BOOL()
         assert kernel.IsProcessInJob(grandchild, job.handle, ctypes.byref(contained)) and contained.value
