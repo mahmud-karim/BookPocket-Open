@@ -2,9 +2,45 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testStartCompanionVerifiesReadinessAndFitsScreen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--connection-fixture", "--connection-startable"]
+        app.launch()
+        let unavailable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Unavailable"), object: app.staticTexts["connection.status"])
+        XCTAssertEqual(XCTWaiter.wait(for: [unavailable], timeout: 15), .completed)
+        let start = app.buttons["connection.start"]
+        assertMinimumHitArea(start)
+        XCTAssertTrue(start.isEnabled && start.isHittable)
+        XCTAssertEqual(app.scrollViews.count, 0)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "Obsidian Start companion — unavailable test host"; screen.lifetime = .keepAlways; add(screen)
+        start.tap()
+        let connected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Connected"), object: app.staticTexts["connection.status"])
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 20), .completed)
+        XCTAssertFalse(start.exists)
+        for name in ["Library", "Listen", "Studio", "Connection"] { XCTAssertTrue(app.tabBars.buttons[name].isHittable) }
+        XCTAssertEqual(app.buttons["connection.toggle"].label, "Disconnect")
+    }
+    func testStartCompanionFailureKeepsUnavailableAndPairing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--connection-fixture", "--connection-startable", "--connection-start-fails"]
+        app.launch()
+        let start = app.buttons["connection.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 15))
+        start.tap()
+        XCTAssertTrue(app.alerts["Connection"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.alerts["Connection"].staticTexts["Pocket Hub test receiver could not acknowledge the launch."].exists)
+        let screen = XCTAttachment(screenshot: app.screenshot())
+        screen.name = "Obsidian Start companion — actionable test failure"; screen.lifetime = .keepAlways; add(screen)
+        app.alerts["Connection"].buttons["OK"].tap()
+        XCTAssertEqual(app.staticTexts["connection.status"].label, "Unavailable")
+        XCTAssertTrue(start.isEnabled && start.isHittable)
+        XCTAssertTrue(app.buttons["connection.edit"].isHittable)
+        XCTAssertEqual(app.buttons["connection.toggle"].label, "Disconnect")
+    }
     func testConnectionSettingsRemainReachableAtLargestTextSize() {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting", "--connection-fixture", "--content-size-probe",
+        app.launchArguments = ["--uitesting", "--connection-fixture", "--connection-unavailable", "--content-size-probe",
             "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
         app.launch()
         let probe = app.descendants(matching: .any).matching(identifier: "test.content-size").firstMatch

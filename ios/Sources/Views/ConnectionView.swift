@@ -55,17 +55,13 @@ struct ConnectionView: View {
             if canRefresh && dynamicTypeSize.isAccessibilitySize { HStack { Spacer(); refreshButton } }
             if companion.identity != nil {
                 savedPC(compact: compact)
-                Button {
-                    if !companion.paired { pair = true }
-                    else if companion.connectionPaused { Task { await companion.resumeConnection() } }
-                    else { do { try companion.pauseConnection() } catch { actionError = error.localizedDescription } }
-                } label: {
-                    Text(!companion.paired ? "Pair again" : companion.connectionPaused ? "Connect" : "Disconnect").frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.plain).foregroundStyle(Obsidian.accent)
-                .overlay { RoundedRectangle(cornerRadius: 16).stroke(Obsidian.accent.opacity(0.8), lineWidth: 1) }
-                .disabled(companion.updatingConnection || companion.pairing)
-                .accessibilityIdentifier("connection.toggle")
+                if showStart {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 10) { startButton; connectionToggle }
+                    } else {
+                        HStack(spacing: 10) { startButton; connectionToggle }
+                    }
+                } else { connectionToggle }
                 VStack(alignment: .leading, spacing: compact ? 6 : 12) {
                     Text("Saved PC").font(.headline)
                     VStack(spacing: 0) {
@@ -75,7 +71,7 @@ struct ConnectionView: View {
                         Button { forget = true } label: { settingsRow("Forget this PC", icon: "trash") }
                             .accessibilityIdentifier("connection.forget")
                     }.buttonStyle(.plain).background(Obsidian.surface, in: .rect(cornerRadius: 16))
-                        .disabled(companion.updatingConnection || companion.pairing)
+                        .disabled(companion.updatingConnection || companion.pairing || companion.startingCompanion)
                 }
                 Text("Pairing stays saved when disconnected.").font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity).multilineTextAlignment(.center).accessibilityIdentifier("connection.retention")
@@ -93,6 +89,34 @@ struct ConnectionView: View {
         }
         .padding(compact ? 16 : 24).frame(maxWidth: 620)
         .fixedSize(horizontal: false, vertical: true)
+    }
+    private var showStart: Bool {
+        companion.paired && !companion.connectionPaused && (companion.connectionState == .unavailable || companion.startingCompanion)
+    }
+    private var startButton: some View {
+        Button {
+            Task { do { try await companion.startCompanion() } catch { actionError = error.localizedDescription } }
+        } label: {
+            HStack(spacing: 8) {
+                if companion.startingCompanion { ProgressView().tint(Obsidian.onAccent) }
+                Text(companion.startingCompanion ? "Starting…" : "Start companion")
+            }.font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+        }.buttonStyle(.plain).foregroundStyle(Obsidian.onAccent)
+            .background(Obsidian.accent, in: .rect(cornerRadius: 16))
+            .disabled(companion.startingCompanion || companion.updatingConnection || companion.pairing)
+            .accessibilityIdentifier("connection.start")
+    }
+    private var connectionToggle: some View {
+        Button {
+            if !companion.paired { pair = true }
+            else if companion.connectionPaused { Task { await companion.resumeConnection() } }
+            else { do { try companion.pauseConnection() } catch { actionError = error.localizedDescription } }
+        } label: {
+            Text(!companion.paired ? "Pair again" : companion.connectionPaused ? "Connect" : "Disconnect").frame(maxWidth: .infinity, minHeight: 44)
+        }.buttonStyle(.plain).foregroundStyle(Obsidian.accent)
+            .overlay { RoundedRectangle(cornerRadius: 16).stroke(Obsidian.accent.opacity(0.8), lineWidth: 1) }
+            .disabled(companion.updatingConnection || companion.pairing || companion.startingCompanion)
+            .accessibilityIdentifier("connection.toggle")
     }
 
     private func savedPC(compact: Bool) -> some View {
@@ -168,7 +192,7 @@ struct ConnectionView: View {
         case .connected: return "Ready for transfers and narration."
         case .checking: return "Checking your saved PC…"
         case .disconnected: return "Pairing saved. Downloads stay available."
-        case .unavailable: return "Your PC is unreachable. Check it is running or edit the connection details."
+        case .unavailable: return "Your PC could not be verified. Try Start companion or check the connection details."
         case .notChecked: return "Pairing saved. Check the connection to your PC."
         }
     }

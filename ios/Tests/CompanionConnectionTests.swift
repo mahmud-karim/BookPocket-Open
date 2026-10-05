@@ -27,6 +27,120 @@ private final class ConnectionProtocol: URLProtocol {
 }
 
 final class CompanionConnectionTests: XCTestCase {
+    private func requestBody(_ request: URLRequest) throws -> Data {
+        if let body = request.httpBody { return body }
+        let stream = try XCTUnwrap(request.httpBodyStream)
+        stream.open(); defer { stream.close() }
+        var data = Data(), bytes = [UInt8](repeating: 0, count: 1024)
+        while true {
+            let capacity = bytes.count
+            let count = stream.read(&bytes, maxLength: capacity)
+            if count < 0 { throw stream.streamError ?? BookError.message("Test request stream failed") }
+            if count == 0 { break }
+            data.append(contentsOf: bytes.prefix(count))
+        }
+        return data
+    }
+    private func inventory(_ request: URLRequest) -> (Int, String) {
+        let path = request.url!.path
+        if path.hasSuffix("/health") { return (200, health) }
+        if path.hasSuffix("/engines") { return (200, #"{"engines":[]}"#) }
+        if path.hasSuffix("/voices") { return (200, #"{"voices":[]}"#) }
+        if path.hasSuffix("/jobs") { return (200, #"{"jobs":[]}"#) }
+        if path.hasSuffix("/books") { return (200, #"{"books":[]}"#) }
+        if path.hasSuffix("/pronunciations") { return (200, #"{"pronunciation_rules":[]}"#) }
+        return (200, #"{"recordings":[]}"#)
+    }
+    @MainActor func testStartAcknowledgementWaitsForAuthenticatedReadiness() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { ConnectionProtocol.handler = nil; try? FileManager.default.removeItem(at: root) }
+        let (store, _) = try fixture(root)
+        let gate = ConnectionGate()
+        var hold = true, starts = 0
+        ConnectionProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer unchanged-test-token")
+            if request.url!.path.hasSuffix("/companion/start") {
+                XCTAssertEqual(request.httpMethod, "POST")
+                let body = try self.requestBody(request)
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
+                XCTAssertEqual(Set(payload.keys), ["request_id"])
+                XCTAssertNotNil(UUID(uuidString: payload["request_id"]!))
+                starts += 1
+                return (200, #"{"status":"starting"}"#)
+            }
+            if request.url!.path.hasSuffix("/engines") && hold { hold = false; await gate.wait() }
+            return self.inventory(request)
+        }
+        let operation = Task { try await store.startCompanion() }
+        await fulfillment(of: [gate.entered], timeout: 5)
+        XCTAssertTrue(store.startingCompanion)
+        XCTAssertNotEqual(store.connectionState, .connected, "A launch acknowledgement cannot establish Connected")
+        gate.finish()
+        try await operation.value
+        XCTAssertEqual(starts, 1)
+        XCTAssertEqual(store.connectionState, .connected)
+        XCTAssertFalse(store.startingCompanion)
+        XCTAssertTrue(store.paired)
+    }
+    @MainActor func testLostStartAcknowledgementRetryRetainsRequestIdentity() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { ConnectionProtocol.handler = nil; try? FileManager.default.removeItem(at: root) }
+        let (store, _) = try fixture(root)
+        var bodies: [Data] = []
+        ConnectionProtocol.handler = { request in
+            if request.url!.path.hasSuffix("/companion/start") {
+                bodies.append(try self.requestBody(request))
+                if bodies.count == 1 { throw URLError(.networkConnectionLost) }
+                return (200, #"{"status":"starting"}"#)
+            }
+            return self.inventory(request)
+        }
+        do { try await store.startCompanion(); XCTFail("Lost acknowledgement must not claim readiness") } catch {}
+        XCTAssertFalse(store.startingCompanion)
+        XCTAssertNotEqual(store.connectionState, .connected)
+        try await store.startCompanion()
+        XCTAssertEqual(bodies.count, 2)
+        XCTAssertEqual(bodies[0], bodies[1], "Retry after unknown outcome retains the idempotent request UUID")
+        XCTAssertEqual(store.connectionState, .connected)
+    }
+    @MainActor func testDisconnectDuringStartCannotReconnectObsoleteClient() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { ConnectionProtocol.handler = nil; try? FileManager.default.removeItem(at: root) }
+        let (store, _) = try fixture(root)
+        let gate = ConnectionGate()
+        var checks = 0
+        ConnectionProtocol.handler = { request in
+            if request.url!.path.hasSuffix("/companion/start") { await gate.wait(); return (200, #"{"status":"starting"}"#) }
+            checks += 1
+            return self.inventory(request)
+        }
+        let operation = Task { try await store.startCompanion() }
+        await fulfillment(of: [gate.entered], timeout: 5)
+        try store.pauseConnection()
+        gate.finish()
+        do { try await operation.value; XCTFail("Changed connection must end the old start check") } catch {}
+        XCTAssertEqual(checks, 0)
+        XCTAssertEqual(store.connectionState, .disconnected)
+        XCTAssertTrue(store.connectionPaused && store.paired)
+        XCTAssertFalse(store.startingCompanion)
+    }
+    @MainActor func testRejectedStartDoesNotErasePairingOrClaimConnected() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { ConnectionProtocol.handler = nil; try? FileManager.default.removeItem(at: root) }
+        let (store, _) = try fixture(root)
+        var checks = 0
+        ConnectionProtocol.handler = { request in
+            if request.url!.path.hasSuffix("/companion/start") { return (401, #"{"detail":"Pair this device again"}"#) }
+            checks += 1
+            return self.inventory(request)
+        }
+        do { try await store.startCompanion(); XCTFail("A rejected launch must fail") }
+        catch let failure as CompanionHTTPError { XCTAssertEqual(failure.statusCode, 401) }
+        XCTAssertEqual(checks, 0)
+        XCTAssertTrue(store.paired)
+        XCTAssertFalse(store.startingCompanion)
+        XCTAssertNotEqual(store.connectionState, .connected)
+    }
     private let health = #"{"api_version":"1","capabilities":["source_ranges"]}"#
     private func configuration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral

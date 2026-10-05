@@ -30,6 +30,8 @@ enum CompanionConnectionState: Equatable {
     private(set) var connectionPaused = false
     private(set) var connectionState: CompanionConnectionState = .notChecked
     private(set) var connectionError: String?
+    private(set) var startingCompanion = false
+    @ObservationIgnored private var companionStartRequest: (epoch: UUID, id: UUID)?
     private var client: CompanionClient?
     private var connectionRequiredMessage: String {
         connectionPaused ? "Connect your saved PC in the Connection tab, then try again." : "Pair your PC in the Connection tab first."
@@ -193,6 +195,42 @@ enum CompanionConnectionState: Equatable {
             }
             connectionState = .unavailable; connectionError = CompanionClient.narrationMessage(for: error)
             status = "Companion unavailable · downloaded books stay ready"
+        }
+    }
+    /// Pocket Hub acknowledges a launch; authenticated companion checks establish readiness.
+    func startCompanion() async throws {
+        guard let client, paired, !connectionPaused else { throw BookError.message(connectionRequiredMessage) }
+        guard !startingCompanion else { throw BookError.message("A companion start is already in progress.") }
+        let epoch = connectionEpoch
+        let requestID = companionStartRequest?.epoch == epoch ? companionStartRequest!.id : UUID()
+        companionStartRequest = (epoch, requestID)
+        startingCompanion = true
+        defer { startingCompanion = false }
+        do {
+            struct Started: Decodable { var status: String }
+            let body = try JSONSerialization.data(withJSONObject: ["request_id": requestID.uuidString])
+            let result: Started = try await client.send("/v1/companion/start", method: "POST", body: body)
+            guard result.status == "starting" else { throw BookError.message("Pocket Hub returned an unexpected start response.") }
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(60))
+            while clock.now < deadline {
+                try Task.checkCancellation()
+                guard self.client === client, connectionEpoch == epoch else { throw BookError.message("The saved connection changed. Refresh your current PC connection.") }
+                await checkConnection()
+                guard self.client === client, connectionEpoch == epoch else { throw BookError.message("The saved connection changed. Refresh your current PC connection.") }
+                if connectionState == .connected {
+                    companionStartRequest = nil
+                    await refresh(reportErrors: false)
+                    return
+                }
+                try await Task.sleep(for: .seconds(2))
+            }
+            throw BookError.message("Start was requested, but the companion has not become reachable. Check Pocket Hub on your PC, then refresh.")
+        } catch let failure as CompanionHTTPError where failure.statusCode == 404 {
+            companionStartRequest = nil
+            throw BookError.message("Start companion needs the Pocket Hub receiver on your PC.")
+        } catch is URLError {
+            throw BookError.message("Could not reach Pocket Hub. Your PC must be awake and online. Refresh or try again.")
         }
     }
     func disconnect() async {

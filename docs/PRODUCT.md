@@ -25,6 +25,9 @@ The approved reader concept keeps the cream publication visible above a compact 
 
 ## Delivery gates
 
+The Connection screen offers **Start companion** when paired PC access is unavailable. An optional lightweight receiver under Pocket Hub stays up independently of narration, validates the existing phone credential, and sends only the fixed companion Start command. Starting is separate from verified Connected status. The receiver shares the existing HTTPS mount and streams ordinary phone requests to the companion; no phone VPN or separate reading account is introduced. It can launch a stopped companion while Windows is awake, not power on an asleep or switched-off PC.
+
+
 Linux/Windows tests, real installed Windows workflow, macOS simulator unit/UI tests and inspected screenshots, unsigned device ARM64 IPA with verified published checksum. Real iPhone installation, Keychain, import, Bluetooth/interruption handling, and one-hour screen-locked playback remain explicit device gates, never silently claimed. Full-book interrupted render must produce complete nonduplicated output. Public CI cannot execute untrusted PR code on the user's PC or access private credentials.
 
 ## Milestones

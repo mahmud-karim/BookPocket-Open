@@ -63,6 +63,8 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry
               -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize
               -only-testing:BookPocketOpenUITests/ReaderUITests/testNarrationMiniPlayerLeavesNativeTabsVisibleAndUsable
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionVerifiesReadinessAndFitsScreen
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionFailureKeepsUnavailableAndPairing
             )
           fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
@@ -73,7 +75,7 @@ jobs:
             -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/Tests.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-tests.log
           if [ "$UI_TEST_SCOPE" = connection ]; then
-            for TEST in testCompanionAddressChangeVerifiesBeforeReplacingPairing testConnectionTabShowsVerifiedStatusAndKeepsPairing testConnectionOfflineForgetAndPairingEntry testConnectionSettingsRemainReachableAtLargestTextSize testNarrationMiniPlayerLeavesNativeTabsVisibleAndUsable; do
+            for TEST in testCompanionAddressChangeVerifiesBeforeReplacingPairing testConnectionTabShowsVerifiedStatusAndKeepsPairing testConnectionOfflineForgetAndPairingEntry testConnectionSettingsRemainReachableAtLargestTextSize testNarrationMiniPlayerLeavesNativeTabsVisibleAndUsable testStartCompanionVerifiesReadinessAndFitsScreen testStartCompanionFailureKeepsUnavailableAndPairing; do
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
           fi
@@ -104,6 +106,8 @@ jobs:
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionTabShowsVerifiedStatusAndKeepsPairing \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionVerifiesReadinessAndFitsScreen \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionFailureKeepsUnavailableAndPairing \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/CompactListen.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
@@ -116,6 +120,8 @@ jobs:
           grep -E 'Test Case.*testConnectionTabShowsVerifiedStatusAndKeepsPairing.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testConnectionOfflineForgetAndPairingEntry.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testConnectionSettingsRemainReachableAtLargestTextSize.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testStartCompanionVerifiesReadinessAndFitsScreen.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testStartCompanionFailureKeepsUnavailableAndPairing.*passed' artifacts/compact-tests.log
       - name: Capture compact Listen evidence
         if: always()
         run: |

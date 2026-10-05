@@ -23,11 +23,24 @@ enum UITestConnectionFixture {
 }
 
 private final class ConnectionUITestProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var started = false
     override class func canInit(with request: URLRequest) -> Bool { UITestConnectionFixture.enabled }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
-        if ProcessInfo.processInfo.arguments.contains("--connection-unavailable") {
+        let arguments = ProcessInfo.processInfo.arguments
+        let isStart = url.path.hasSuffix("/companion/start") && request.httpMethod == "POST"
+        let startable = arguments.contains("--connection-startable")
+        if startable && isStart {
+            let failure = arguments.contains("--connection-start-fails")
+            if !failure { Self.lock.withLock { Self.started = true } }
+            let json = failure ? #"{"detail":"Pocket Hub test receiver could not acknowledge the launch."}"# : #"{"status":"starting"}"#
+            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: failure ? 503 : 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(json.utf8)); client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+        if arguments.contains("--connection-unavailable") || (startable && !Self.lock.withLock { Self.started }) {
             client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet)); return
         }
         let allowed = ["old-connection.invalid", "new-connection.invalid"].contains(url.host ?? "")
