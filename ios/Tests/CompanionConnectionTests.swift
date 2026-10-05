@@ -69,6 +69,7 @@ final class CompanionConnectionTests: XCTestCase {
         await store.checkConnection()
         XCTAssertEqual(store.connectionState, .unavailable)
         XCTAssertNotNil(store.connectionError)
+        XCTAssertTrue(store.status?.contains("unavailable") == true, "Other screens must not retain a stale Connected message")
     }
     @MainActor func testDisconnectPersistsWithoutRevokingAndForgetKeepsDownloadsOffline() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -139,6 +140,7 @@ final class CompanionConnectionTests: XCTestCase {
         }
         try await store.updateConnection(url: URL(string: "https://new-fixture.example/bookpocket")!, fingerprint: nil, configuration: configuration())
         XCTAssertEqual(store.connectionState, .disconnected); XCTAssertTrue(store.connectionPaused)
+        XCTAssertTrue(store.status?.contains("Disconnected") == true, "Verifying a new address cannot announce that a paused connection resumed")
         await store.checkConnection(); XCTAssertEqual(urls.count, 2)
         await store.resumeConnection()
         XCTAssertEqual(store.connectionState, .connected)

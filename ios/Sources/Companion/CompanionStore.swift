@@ -139,7 +139,7 @@ enum CompanionConnectionState: Equatable {
         if connectionPaused { suspendedClient = candidate } else { client = candidate }
         connectionEpoch = UUID()
         connectionState = connectionPaused ? .disconnected : .connected; connectionError = nil
-        error = nil; status = "Connected to your companion"
+        error = nil; status = connectionPaused ? "Disconnected · pairing saved" : "Connected to your companion"
     }
     /// Disconnect locally without revoking the device token or cancelling PC work.
     func pauseConnection() throws {
@@ -192,6 +192,7 @@ enum CompanionConnectionState: Equatable {
                 return
             }
             connectionState = .unavailable; connectionError = CompanionClient.narrationMessage(for: error)
+            status = "Companion unavailable · downloaded books stay ready"
         }
     }
     func disconnect() async {
