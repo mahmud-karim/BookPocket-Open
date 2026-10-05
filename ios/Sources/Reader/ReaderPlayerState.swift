@@ -148,11 +148,8 @@ enum ReaderTakeMatch {
         if let saved = companion.jobs.first(where: { $0.id == savedJobID }),
            ReaderTakeMatch.mode(saved) == mode, saved.status == "completed",
            (try? RangedAudioValidation.validate(job: saved, book: book)) != nil,
-           let savedSelection = ReaderAudioCatalog.selection(job: saved, book: book),
-           book.chapters.contains(where: { chapter in
-               ReaderSourceMapper.href(chapter.href) == ReaderSourceMapper.href(snapshot.hrefs[snapshot.current.resource])
-               && savedSelection.ranges.contains(where: { range in chapter.segments.contains { $0.id == range.segmentId } })
-           }) {
+           let chapter = book.chapters.first(where: { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(snapshot.hrefs[snapshot.current.resource]) }),
+           let savedSelection = ReaderAudioCatalog.selection(job: saved, book: book, chapter: chapter) {
             self.selection = savedSelection; candidates = [saved]; selectedJobID = saved.id
             if ReaderTakeMatch.ready(saved, book: book, selection: savedSelection, records: companion.orderedDownloads(jobID: saved.id), localBookID: local.id) { readyIDs.insert(saved.id) }
             return

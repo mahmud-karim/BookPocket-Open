@@ -35,6 +35,40 @@ private final class ReaderJobProtocol: Foundation.URLProtocol {
 }
 
 final class ReaderPlayerTests: XCTestCase {
+    @MainActor func testSavedAudioFromWiderTakeKeepsOnlyCurrentChapterAndRestoresScopedExcerpt() throws {
+        var remote = book
+        let other = RemoteSegment(id: "other-source", text: "Original words from the next chapter.", kind: "paragraph", locator: .object([:]))
+        remote.chapters.append(.init(id: "other-chapter", title: "Next chapter", href: "other.xhtml", segments: [other]))
+        var whole = job("whole-book")
+        whole.segmentIds = ["segment", other.id]; whole.completedSegments = 2; whole.totalSegments = 2
+        whole.assets = remote.segments.enumerated().map { index, segment in
+            .init(id: "asset-\(index)", segmentId: segment.id, mediaType: "audio/wav", duration: index == 0 ? 2 : 3, sha256: String(repeating: "a", count: 64), bytes: 100, url: "/explicit-test-only", timings: [], narrationMode: "single")
+        }
+        for (index, expected) in [(0, 2.0), (1, 3.0)] {
+            let catalog = ReaderAudioCatalog.recordings(book: remote, chapter: remote.chapters[index], mode: .kyon, jobs: [whole], localBookID: "local", downloads: { _ in [] })
+            let chosen = try XCTUnwrap(catalog.first)
+            XCTAssertEqual(chosen.scope, .chapter)
+            XCTAssertEqual(chosen.selection.ranges.map(\.segmentId), remote.chapters[index].segments.map(\.id), "A whole-book take must not turn a selected chapter into whole-book playback")
+            XCTAssertEqual(chosen.duration, expected, accuracy: 0.001)
+        }
+        var excerpt = whole; excerpt.id = "cross-chapter-excerpt"
+        excerpt.sourceRanges = [range, .init(segmentId: other.id, startOffset: 0, endOffset: 5)]
+        for index in excerpt.assets.indices {
+            excerpt.assets[index].sourceStart = excerpt.sourceRanges?[index].startOffset
+            excerpt.assets[index].sourceEnd = excerpt.sourceRanges?[index].endOffset
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CompanionStore(root: root); store.books = [remote]; store.jobs = [excerpt]
+        let local = LocalBook(id: "local", title: remote.title, author: remote.author, language: "en", sourceFile: "unused.txt", readingFile: "unused.txt", sourceSHA256: remote.sourceSha256)
+        let state = store.readerPlayer(for: local.id); state.mode = .kyon; state.savedJobID = excerpt.id
+        let snapshot = ReaderScopeSnapshot(scope: .page, hrefs: ["text.xhtml"], documents: ["text.xhtml": .init(blocks: [.init(text: words, visible: [.init(start: 20, end: 24)])], anchors: [])], current: .init(resource: 0, block: 0, offset: 20), boundaries: [], isText: false)
+        state.discover(snapshot: snapshot, local: local, companion: store)
+        XCTAssertEqual(state.savedJobID, excerpt.id)
+        XCTAssertEqual(state.selection?.ranges.map(\.segmentId), ["segment"], "Restoring a saved cross-chapter excerpt preserves only its current chapter's exact spans")
+        XCTAssertEqual(state.selection?.ranges.first?.startOffset, range.startOffset)
+        XCTAssertEqual(state.selection?.ranges.first?.endOffset, range.endOffset)
+    }
     private let words = "A compass 🧭 said, “Stay.” Then Mira replied, “Go.”"
     private var book: RemoteBook { .init(id: "original-book", title: "Original reader fixture", author: "Test", language: "en", sourceSha256: "original-sha", chapters: [.init(id: "chapter", title: "Original", href: "text.xhtml", segments: [.init(id: "segment", text: words, kind: "paragraph", locator: .object([:]))])]) }
     private var voice: RemoteVoice { .init(id: "fixture-kyon", name: "Kyon", engine: "voicestudio", kind: "test-only", language: "en") }

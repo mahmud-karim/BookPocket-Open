@@ -479,12 +479,8 @@ struct ReaderPlayerView: View {
         guard player.isPlaying else { state.error = player.error; return }
         state.remote = remote; state.selectedJobID = job.id; state.readyIDs.insert(job.id)
         state.snapshot = nil
-        if var selection = ReaderAudioCatalog.selection(job: job, book: remote),
-           let chapter = remote.chapters.first(where: { $0.segments.contains { $0.id == take.firstRecord.asset.segmentId } }) {
-            let indices = selection.ranges.indices.filter { index in chapter.segments.contains { $0.id == selection.ranges[index].segmentId } }
-            selection.ranges = indices.map { selection.ranges[$0] }; selection.excerpts = indices.map { selection.excerpts[$0] }
-            state.selection = selection
-        } else { state.selection = nil }
+        let chapter = remote.chapters.first(where: { $0.segments.contains { $0.id == take.firstRecord.asset.segmentId } })
+        state.selection = ReaderAudioCatalog.selection(job: job, book: remote, chapter: chapter)
         state.playbackScope = take.scope == "Full chapter" ? .chapter : .page
         state.savedJobID = state.playbackScope == .page ? job.id : nil
         reader.connectPlayback(player); detail = nil

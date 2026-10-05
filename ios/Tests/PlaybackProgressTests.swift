@@ -3,6 +3,55 @@ import MediaPlayer
 @testable import BookPocketOpen
 
 final class PlaybackProgressTests: XCTestCase {
+    @MainActor func testDownloadedJoinedTakeResumesInsideAssetAndReplaysAfterActualCompletion() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = LibraryStore(root: root.appendingPathComponent("Library"))
+        let epub = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lantern", withExtension: "epub"))
+        var local = try await library.importBook(epub)
+        let store = CompanionStore(root: root.appendingPathComponent("Companion"))
+        let segments = ["The Lantern", "Mira opened the brass lantern. A small blue light filled the room."].enumerated().map { index, text in
+            RemoteSegment(id: "source-\(index)", text: text, kind: "paragraph", locator: .object(["href": .string("EPUB/chapter1.xhtml"), "type": .string("application/xhtml+xml"), "text": .object(["highlight": .string(text)])]))
+        }
+        let remote = RemoteBook(id: "original-book", title: local.title, author: "Original test fixture", language: "en", sourceSha256: local.sourceSHA256,
+            chapters: [.init(id: "chapter", title: "The Lantern", href: "EPUB/chapter1.xhtml", segments: segments)])
+        let tone = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "test-tone", withExtension: "wav"))
+        let bytes = try Data(contentsOf: tone)
+        let assets = segments.enumerated().map { index, segment in
+            AudioAsset(id: "audio-\(index)", segmentId: segment.id, mediaType: "audio/wav", duration: 0.25, sha256: SourceIdentity.hash(bytes), bytes: bytes.count, url: "/explicit-test-tone-not-speech", timings: [.init(start: 0, end: 0.25, startOffset: 0, endOffset: segment.text.unicodeScalars.count)])
+        }
+        let job = RemoteJob(id: "joined-take", bookId: remote.id, status: "completed", engine: "test-only-pcm-tone", voiceId: "not-a-voice", segmentIds: segments.map(\.id), completedSegments: 2, totalSegments: 2, assets: assets)
+        store.books = [remote]; store.jobs = [job]
+        for index in assets.indices {
+            let file = "tone-\(index).wav"; try bytes.write(to: store.root.appendingPathComponent(file))
+            store.downloads.append(.init(localBookID: local.id, jobID: job.id, asset: assets[index], file: file, segment: segments[index]))
+        }
+        let first = store.downloads[0], last = store.downloads[1]
+        local.audioAssetID = last.id; local.audioSeconds = 0.12; library.update(local)
+        let player = PlaybackController(), previousRate = player.rate
+        defer { player.stop(); player.rate = previousRate }
+        player.rate = 1
+        store.playDownloadedTake(jobID: job.id, library: library, player: player)
+        player.pause()
+        XCTAssertEqual(player.duration, 0.5, accuracy: 0.001)
+        XCTAssertEqual(player.elapsed, 0.37, accuracy: 0.001, "An asset-local saved position restores into the single global timeline")
+        XCTAssertEqual(library.book(local.id)?.audioAssetID, last.id)
+        XCTAssertEqual(try XCTUnwrap(library.book(local.id)?.audioSeconds), 0.12, accuracy: 0.001)
+        let finished = expectation(description: "Actual joined recording finishes and stores its final source position")
+        let persistFinished = player.onFinished
+        player.onFinished = { persistFinished?(); finished.fulfill() }
+        player.resume(); await fulfillment(of: [finished], timeout: 4)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(player.elapsed, 0.5, accuracy: 0.001)
+        XCTAssertEqual(library.book(local.id)?.audioAssetID, last.id)
+        XCTAssertEqual(try XCTUnwrap(library.book(local.id)?.audioSeconds), 0.25, accuracy: 0.001)
+        store.playDownloadedTake(jobID: job.id, library: library, player: player)
+        XCTAssertTrue(player.isPlaying, "Selecting a completed download must replay, not seek a fresh item to its end")
+        XCTAssertEqual(player.elapsed, 0, accuracy: 0.001); XCTAssertEqual(player.duration, 0.5, accuracy: 0.001)
+        XCTAssertEqual(library.book(local.id)?.audioAssetID, first.id)
+        player.pause(); try await Task.sleep(for: .milliseconds(700))
+        XCTAssertFalse(player.isPlaying); XCTAssertEqual(player.elapsed, 0, accuracy: 0.02)
+    }
     @MainActor func testContinuousRecordingUsesOneTimelineAcrossAssetBoundaries() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -8,7 +8,7 @@ struct ReaderAudioRecording: Identifiable {
     let scope: NarrationScope
     let offline: Bool
     var id: String { job.id }
-    var duration: Double { job.assets.reduce(0) { $0 + $1.duration } }
+    var duration: Double { job.assets.filter { asset in selection.ranges.contains { $0.segmentId == asset.segmentId } }.reduce(0) { $0 + $1.duration } }
     var preview: String { selection.excerpts.first ?? "" }
 }
 
@@ -25,7 +25,7 @@ enum ReaderAudioCatalog {
                   Set(job.assets.compactMap(\.segmentId)) == Set(job.segmentIds),
                   job.assets.allSatisfy({ $0.duration.isFinite && $0.duration > 0 && $0.bytes > 0 }),
                   (try? RangedAudioValidation.validate(job: job, book: book)) != nil,
-                  let selection = selection(job: job, book: book),
+                  let selection = selection(job: job, book: book, chapter: chapter),
                   selection.ranges.contains(where: { range in chapter.segments.contains { $0.id == range.segmentId } }) else { return nil }
             let chapterSelection = ReaderSourceSelection(title: chapter.title,
                 ranges: chapter.segments.map { .init(segmentId: $0.id, startOffset: 0, endOffset: $0.text.unicodeScalars.count) },
@@ -44,7 +44,7 @@ enum ReaderAudioCatalog {
         }
     }
 
-    static func selection(job: RemoteJob, book: RemoteBook) -> ReaderSourceSelection? {
+    static func selection(job: RemoteJob, book: RemoteBook, chapter: RemoteChapter? = nil) -> ReaderSourceSelection? {
         guard job.bookId == book.id, !job.segmentIds.isEmpty,
               Set(job.segmentIds).count == job.segmentIds.count else { return nil }
         var ranges: [SourceRange] = [], excerpts: [String] = []
@@ -55,6 +55,11 @@ enum ReaderAudioCatalog {
             ranges.append(range); excerpts.append(String(segment.text[indices]))
         }
         guard ranges.count == job.segmentIds.count else { return nil }
+        if let chapter {
+            let selected = ranges.indices.filter { index in chapter.segments.contains { $0.id == ranges[index].segmentId } }
+            ranges = selected.map { ranges[$0] }; excerpts = selected.map { excerpts[$0] }
+            guard !ranges.isEmpty else { return nil }
+        }
         return .init(title: "Saved recording", ranges: ranges, excerpts: excerpts)
     }
 }

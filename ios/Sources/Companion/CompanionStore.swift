@@ -485,7 +485,10 @@ enum CompanionConnectionState: Equatable {
             try player.play(parts: parts, book: book, recordingID: selection.id)
             if let savedIndex {
                 let interval = player.recordingIntervals[savedIndex]
-                player.seek(min(interval.end, interval.start + max(0, book.audioSeconds - interval.sourceStart)))
+                let resume = min(interval.end, interval.start + max(0, book.audioSeconds - interval.sourceStart))
+                // A completed take is replayed from its beginning. Seeking a
+                // newly playing item to its endpoint would immediately finish.
+                if resume < player.duration - 0.001 { player.seek(resume) }
             }
             let remoteBookID = jobs.first(where: { $0.id == first.jobID })?.bookId
             let remote = books.first(where: { $0.id == remoteBookID })
