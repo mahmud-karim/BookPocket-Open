@@ -145,7 +145,7 @@ struct ReaderPlayerView: View {
         if state.mode != .device {
             if dynamicTypeSize.isAccessibilitySize {
                 Button { chooser = .playbackScope } label: {
-                    Label(state.playbackScope == .page ? "Page" : "Chapter", systemImage: "chevron.down").frame(minHeight: 44)
+                    Label(state.playbackScope == .page ? "Page" : "Chapter", systemImage: "chevron.down").font(.system(size: 16, weight: .medium)).frame(minHeight: 44)
                 }.disabled(state.working || discovering || reader.capturingScope).accessibilityIdentifier("reader.player.scope")
             } else {
                 HStack(spacing: 0) {
@@ -175,13 +175,14 @@ struct ReaderPlayerView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "waveform")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Saved audio").font(.subheadline.weight(.medium))
-                        Text(savedSummary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        Text("Saved audio").font(dynamicTypeSize.isAccessibilitySize ? .system(size: 16, weight: .medium) : .subheadline.weight(.medium))
+                        if !dynamicTypeSize.isAccessibilitySize { Text(savedSummary).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                     }
                     Spacer(minLength: 0); Image(systemName: "chevron.right").font(.caption)
                 }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 48).contentShape(.rect)
             }.buttonStyle(.plain).background(Obsidian.surface, in: .rect(cornerRadius: 12))
                 .accessibilityIdentifier("reader.player.saved")
+                .accessibilityValue(savedSummary)
         }
     }
     private var savedSummary: String {
@@ -271,7 +272,7 @@ struct ReaderPlayerView: View {
     }
     private func transport(wide: Bool = false) -> some View {
         VStack(spacing: 8) {
-            Text(readiness).font(.caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.center)
+            Text(readiness).font(dynamicTypeSize.isAccessibilitySize ? .system(size: 16) : .caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.center)
                 .accessibilityIdentifier("reader.player.readiness")
             if active && player.duration > 0 {
                 Slider(value: Binding(get: { player.elapsed }, set: { state.invalidatePlaybackIntent(); player.seek($0) }), in: 0...max(1, player.duration)) { Text("Audio position") }
@@ -438,6 +439,9 @@ struct ReaderPlayerView: View {
         companion.play(take.firstRecord, library: library, player: player, fromBeginning: true)
         guard player.isPlaying else { state.error = player.error; return }
         state.remote = remote; state.selectedJobID = job.id; state.readyIDs.insert(job.id)
+        state.snapshot = nil; state.selection = ReaderAudioCatalog.selection(job: job, book: remote)
+        state.playbackScope = take.scope == "Full chapter" ? .chapter : .page
+        state.savedJobID = state.playbackScope == .page ? job.id : nil
         reader.connectPlayback(player); detail = nil
     }
     @ViewBuilder private var generatedControls: some View {

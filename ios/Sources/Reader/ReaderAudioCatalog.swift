@@ -23,6 +23,7 @@ enum ReaderAudioCatalog {
                   job.assets.count == job.segmentIds.count,
                   Set(job.assets.map(\.id)).count == job.assets.count,
                   Set(job.assets.compactMap(\.segmentId)) == Set(job.segmentIds),
+                  job.assets.allSatisfy({ $0.duration.isFinite && $0.duration > 0 && $0.bytes > 0 }),
                   (try? RangedAudioValidation.validate(job: job, book: book)) != nil,
                   let selection = selection(job: job, book: book),
                   selection.ranges.contains(where: { range in chapter.segments.contains { $0.id == range.segmentId } }) else { return nil }
