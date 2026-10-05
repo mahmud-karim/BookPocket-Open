@@ -346,6 +346,8 @@ final class ReaderUITests: XCTestCase {
         chooseReaderNarrator(app, "kyon")
         XCTAssertTrue(play.isEnabled); XCTAssertEqual(play.value as? String, "Paused", "Selecting a narrator must not play")
         XCTAssertEqual(app.staticTexts["reader.player.readiness"].label, "Ready offline")
+        let selectedDuration = audioSeconds(app.staticTexts["reader.player.duration"])
+        XCTAssertGreaterThan(selectedDuration, 0)
         assertReaderPlayerFits(app, name: "Obsidian reader with matching offline take")
         play.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: play)], timeout: 10), .completed)
@@ -357,7 +359,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(play.value as? String, "Paused", "Adjusting speed and timer must not resume paused audio")
         app.navigationBars["Read aloud"].buttons["Done"].tap()
         app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
-        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 90, "The actual local fixture recording must be loaded")
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), selectedDuration, accuracy: 1, "Listen must retain the complete selected page timeline")
         XCTAssertEqual(app.buttons["listen.speed"].value as? String, "1.5×")
         app.tabBars.buttons["Library"].tap(); book.tap(); XCTAssertTrue(waitForReaderContents(app))
         app.buttons["reader.speak"].tap()
@@ -386,7 +388,79 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(play.isEnabled); XCTAssertEqual(play.value as? String, "Paused", "Switching to on-device speech must not start it")
         app.navigationBars["Read aloud"].buttons["Done"].tap()
         app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
-        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 120)
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 480, "The four-passage full chapter has one total duration")
+    }
+
+    func testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages() {
+        executionTimeAllowance = 300
+        let app = XCUIApplication()
+        let arguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", "--reader-continuous-fixture", "-playbackRate", "1"]
+        app.launchArguments = arguments
+        XCUIDevice.shared.orientation = .portrait; app.launch()
+        openContinuousPage(app)
+        let play = app.buttons["reader.player.toggle"]
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 12)
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 0)
+        assertReaderTimelineFits(app, name: "Obsidian continuous page ready with full duration")
+        play.tap()
+        let crossed = NSPredicate { _, _ in self.audioSeconds(app.staticTexts["reader.player.elapsed"]) >= 5 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: crossed, object: nil)], timeout: 12), .completed, "Playback must pass the four-second asset boundary on one global clock")
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 12)
+        XCTAssertEqual(play.value as? String, "Playing")
+        play.tap(); XCTAssertEqual(play.value as? String, "Paused")
+        let slider = app.sliders["reader.player.seek"]
+        slider.adjust(toNormalizedSliderPosition: 0.8)
+        let seek = audioSeconds(app.staticTexts["reader.player.elapsed"])
+        XCTAssertGreaterThanOrEqual(seek, 8, "The slider can seek directly into a later backend passage")
+        XCTAssertEqual(Double(slider.normalizedSliderPosition) * 12, seek, accuracy: 1)
+        app.buttons["reader.player.backward"].tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 0)
+        app.buttons["reader.player.forward"].tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 12)
+        slider.adjust(toNormalizedSliderPosition: 0.55)
+        assertReaderTimelineFits(app, name: "Obsidian continuous page paused across passage boundary")
+        XCTAssertEqual(play.value as? String, "Paused")
+        XCUIDevice.shared.orientation = .landscapeRight; XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
+        assertReaderTimelineFits(app, name: "Obsidian continuous page timeline landscape")
+        XCUIDevice.shared.orientation = .portrait; XCTAssertTrue(waitForScreenshotOrientation(landscape: false))
+        app.buttons["reader.scope.chapter"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: play)], timeout: 20), .completed)
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 16, "Changing scope prepares the complete chapter, not the paused page clock")
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), 0); XCTAssertEqual(play.value as? String, "Paused")
+        play.tap(); XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 16)
+        play.tap(); assertReaderTimelineFits(app, name: "Obsidian continuous whole chapter timeline")
+        app.navigationBars["Read aloud"].buttons["Done"].tap(); app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 16)
+        XCTAssertEqual(app.buttons["player.full.toggle"].value as? String, "Paused")
+        assertDownloadedListenFits(app, name: "Obsidian continuous chapter shared Listen timeline")
+        app.terminate()
+        app.launchArguments = arguments + ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]
+        app.launch(); openContinuousPage(app)
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.duration"]), 12)
+        assertReaderTimelineFits(app, name: "Obsidian continuous page timeline largest text")
+        XCUIDevice.shared.orientation = .landscapeRight; XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
+        assertReaderTimelineFits(app, name: "Obsidian continuous page timeline largest text landscape")
+        XCUIDevice.shared.orientation = .portrait
+    }
+    private func openContinuousPage(_ app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30))
+        app.tabBars.buttons["Library"].tap()
+        let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 10)); book.tap(); XCTAssertTrue(waitForReaderContents(app))
+        app.buttons["reader.speak"].tap(); chooseReaderNarrator(app, "kyon")
+        app.buttons["reader.player.saved"].tap()
+        let page = app.buttons["reader.saved.reader-continuous-page"]
+        XCTAssertTrue(page.waitForExistence(timeout: 10)); XCTAssertTrue(page.label.contains("Ready offline")); page.tap()
+        XCTAssertTrue(app.buttons["reader.player.toggle"].waitForExistence(timeout: 10)); XCTAssertTrue(app.buttons["reader.player.toggle"].isEnabled)
+    }
+    private func assertReaderTimelineFits(_ app: XCUIApplication, name: String) {
+        assertReaderPlayerFits(app, name: name)
+        let slider = app.sliders["reader.player.seek"], elapsed = app.staticTexts["reader.player.elapsed"], duration = app.staticTexts["reader.player.duration"]
+        for text in [elapsed, duration] { XCTAssertTrue(text.exists && text.isHittable && app.frame.contains(text.frame)); XCTAssertGreaterThan(text.frame.height, 0) }
+        XCTAssertLessThanOrEqual(slider.frame.maxY, elapsed.frame.minY + 1)
+        XCTAssertLessThanOrEqual(elapsed.frame.maxY, app.buttons["reader.player.toggle"].frame.minY)
+        XCTAssertLessThanOrEqual(duration.frame.maxY, app.buttons["reader.player.toggle"].frame.minY)
+        XCTAssertLessThanOrEqual(elapsed.frame.maxX, duration.frame.minX)
+        let surface = app.otherElements["reader.player.surface"]
+        XCTAssertGreaterThanOrEqual(surface.frame.maxY, app.frame.maxY - 1, "The charcoal player extends to the display's bottom edge")
     }
 
     func testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage() {

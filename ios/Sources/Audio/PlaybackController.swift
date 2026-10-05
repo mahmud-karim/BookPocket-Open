@@ -11,7 +11,18 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     }
 }
 
-@MainActor @Observable final class PlaybackController: NSObject, PublicationSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
+struct RecordingPart {
+    var url: URL
+    var start: Double = 0
+    var end: Double? = nil
+}
+struct RecordingInterval {
+    var start: Double
+    var end: Double
+    var sourceStart: Double
+}
+
+@MainActor @Observable final class PlaybackController: NSObject, PublicationSpeechSynthesizerDelegate {
     var title = ""
     var subtitle = ""
     var bookID: String?
@@ -21,7 +32,7 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     var elapsed: Double = 0
     var sleepUntil: Date?
     var rate: Double = UserDefaults.standard.double(forKey: "playbackRate") == 0 ? 1 : UserDefaults.standard.double(forKey: "playbackRate") {
-        didSet { UserDefaults.standard.set(rate, forKey: "playbackRate"); player?.rate = Float(rate); nowPlaying() }
+        didSet { UserDefaults.standard.set(rate, forKey: "playbackRate"); if isPlaying { player?.rate = Float(rate) }; nowPlaying() }
     }
     var speechLocator: Locator?
     var speechChapters: [ReadiumShared.Link] = []
@@ -31,7 +42,21 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     var onProgress: ((Double) -> Void)?
     var onFinished: (() -> Void)?
     private var speech: PublicationSpeechSynthesizer?
-    private var player: AVAudioPlayer?
+    private var player: AVPlayer?
+    private var finishObserver: NSObjectProtocol?
+    private var seekRevision = UUID()
+    private var seeking = false
+    var recordingID: String?
+    private(set) var recordingIntervals: [RecordingInterval] = []
+
+    /// Converts the single user timeline to the immutable asset-local clock.
+    func recordingPosition(at seconds: Double) -> (index: Int, seconds: Double)? {
+        guard !recordingIntervals.isEmpty else { return nil }
+        let position = min(max(0, seconds), duration)
+        let index = recordingIntervals.firstIndex(where: { position < $0.end }) ?? recordingIntervals.count - 1
+        let interval = recordingIntervals[index]
+        return (index, interval.sourceStart + max(0, position - interval.start))
+    }
     private let rateDelegate = SpeechRateDelegate()
     private var sleepTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
@@ -86,6 +111,9 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
         return true
     }
     func play(url: URL, book: LocalBook, start: Double = 0) throws {
+        try play(parts: [RecordingPart(url: url)], book: book, start: start)
+    }
+    func play(parts: [RecordingPart], book: LocalBook, start: Double = 0, recordingID: String? = nil) throws {
         stop()
         error = nil
         do {
@@ -96,21 +124,52 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
         } catch {
             throw BookError.message("Unable to start the iPhone audio session: \(error.localizedDescription)")
         }
-        let audio: AVAudioPlayer
-        do { audio = try AVAudioPlayer(contentsOf: url) }
-        catch { throw BookError.message("Unable to open the downloaded recording: \(error.localizedDescription)") }
-        audio.delegate = self; audio.enableRate = true; audio.rate = Float(rate)
-        audio.currentTime = min(max(0, start), audio.duration)
-        player = audio; duration = audio.duration; elapsed = audio.currentTime; title = book.title; subtitle = "Downloaded narration"; bookID = book.id
-        isPlaying = audio.play(); nowPlaying()
+        guard !parts.isEmpty else { throw BookError.message("No downloaded audio is available for this selection.") }
+        // One composition, one player item, one timeline. Files stay separate on
+        // disk, but transport never reloads or resets at a passage boundary.
+        let composition = AVMutableComposition()
+        guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw BookError.message("Unable to prepare the recording.") }
+        var cursor = CMTime.zero
+        var intervals: [RecordingInterval] = []
+        for part in parts {
+            let asset = AVURLAsset(url: part.url)
+            guard let source = asset.tracks(withMediaType: .audio).first else { throw BookError.message("Unable to open a downloaded audio passage. Retry its download.") }
+            let sourceDuration = source.timeRange.duration.seconds
+            let end = part.end ?? sourceDuration
+            guard sourceDuration.isFinite, sourceDuration > 0, part.start.isFinite, end.isFinite,
+                  part.start >= 0, end > part.start, end <= sourceDuration + 0.05 else { throw BookError.message("Downloaded audio does not match its selected duration. Retry its download.") }
+            let begin = CMTime(seconds: part.start, preferredTimescale: 60_000)
+            let length = CMTime(seconds: min(end, sourceDuration) - part.start, preferredTimescale: 60_000)
+            try track.insertTimeRange(CMTimeRange(start: source.timeRange.start + begin, duration: length), of: source, at: cursor)
+            intervals.append(.init(start: cursor.seconds, end: (cursor + length).seconds, sourceStart: part.start))
+            cursor = cursor + length
+        }
+        let item = AVPlayerItem(asset: composition)
+        let audio = AVPlayer(playerItem: item)
+        audio.automaticallyWaitsToMinimizeStalling = true
+        player = audio; recordingIntervals = intervals; self.recordingID = recordingID
+        duration = cursor.seconds; elapsed = min(max(0, start), duration)
+        title = book.title; subtitle = "Downloaded narration"; bookID = book.id
+        finishObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self, weak item] _ in
+            Task { @MainActor in
+                guard let self, let item, item === self.player?.currentItem, self.isPlaying else { return }
+                self.elapsed = self.duration; self.onProgress?(self.elapsed)
+                self.isPlaying = false; self.nowPlaying(); self.onFinished?()
+            }
+        }
+        if elapsed > 0 { seek(elapsed) }
+        isPlaying = true; audio.playImmediately(atRate: Float(rate)); nowPlaying()
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
                 guard let self, let player = self.player else { return }
                 // A paused recording must not pull a manually turned page back
                 // to its old locator. Explicit seek still publishes below.
-                guard player.isPlaying else { continue }
-                self.elapsed = player.currentTime; self.onProgress?(self.elapsed); self.nowPlaying()
+                guard self.isPlaying, !self.seeking else { continue }
+                if player.currentItem?.status == .failed { self.error = "Audio playback failed. Retry the download."; self.pause(); continue }
+                let seconds = player.currentTime().seconds
+                guard seconds.isFinite else { continue }
+                self.elapsed = min(self.duration, max(0, seconds)); self.onProgress?(self.elapsed); self.nowPlaying()
             }
         }
     }
@@ -118,16 +177,23 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
     func pause() {
         speech?.pause()
         if let player {
-            let wasPlaying = player.isPlaying
-            player.pause(); elapsed = player.currentTime
+            let wasPlaying = isPlaying
+            player.pause(); if !seeking, player.currentTime().seconds.isFinite { elapsed = player.currentTime().seconds }
             if wasPlaying { onProgress?(elapsed) }
         }
         isPlaying = false; nowPlaying()
     }
-    func resume() { speech?.resume(); if let player { isPlaying = player.play() }; nowPlaying() }
-    func stop() { speech?.stop(); speech = nil; speechPublication = nil; speechChapters = []; chapterTitle = ""; player?.stop(); player = nil; tickTask?.cancel(); isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
-    func skip(_ seconds: Double) { if let player { seek(player.currentTime + seconds) } else if seconds > 0 { speech?.next() } else { speech?.previous() } }
-    func seek(_ value: Double) { guard let player else { return }; player.currentTime = min(max(0, value), player.duration); elapsed = player.currentTime; onProgress?(elapsed); nowPlaying() }
+    func resume() { speech?.resume(); if let player { if elapsed >= duration { seek(0) }; isPlaying = true; player.playImmediately(atRate: Float(rate)) }; nowPlaying() }
+    func stop() { speech?.stop(); speech = nil; speechPublication = nil; speechChapters = []; chapterTitle = ""; player?.pause(); player = nil; if let finishObserver { NotificationCenter.default.removeObserver(finishObserver) }; finishObserver = nil; tickTask?.cancel(); seekRevision = UUID(); seeking = false; recordingIntervals = []; recordingID = nil; isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
+    func skip(_ seconds: Double) { if player != nil { seek(elapsed + seconds) } else if seconds > 0 { speech?.next() } else { speech?.previous() } }
+    func seek(_ value: Double) {
+        guard let player, value.isFinite else { return }
+        let revision = UUID(); seekRevision = revision; seeking = true
+        elapsed = min(max(0, value), duration); onProgress?(elapsed); nowPlaying()
+        player.seek(to: CMTime(seconds: elapsed, preferredTimescale: 60_000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor in guard let self, self.seekRevision == revision else { return }; self.seeking = false }
+        }
+    }
     func sleep(minutes: Int?) {
         sleepTask?.cancel(); sleepUntil = minutes.map { Date().addingTimeInterval(Double($0 * 60)) }
         guard let minutes else { return }
@@ -155,5 +221,4 @@ private final class SpeechRateDelegate: AVTTSEngineDelegate {
         nowPlaying()
     }
     func publicationSpeechSynthesizer(_ synthesizer: PublicationSpeechSynthesizer, utterance: PublicationSpeechSynthesizer.Utterance, didFailWithError error: PublicationSpeechSynthesizer.Error) { guard synthesizer === speech else { return }; self.error = "Speech failed: \(error)"; pause() }
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { Task { @MainActor in guard player === self.player else { return }; self.isPlaying = false; self.nowPlaying(); if flag { self.onFinished?() } else { self.error = "Audio playback could not finish." } } }
 }

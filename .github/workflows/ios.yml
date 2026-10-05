@@ -70,6 +70,8 @@ jobs:
           if [ "$UI_TEST_SCOPE" = reader ]; then
             TEST_FILTERS=(
               -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters
               -only-testing:BookPocketOpenUITests/ReaderUITests/testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge
               -only-testing:BookPocketOpenUITests/ReaderUITests/testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate
@@ -90,7 +92,7 @@ jobs:
             done
           fi
           if [ "$UI_TEST_SCOPE" = reader ]; then
-            for TEST in testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate testLargestDynamicTypeKeepsListenAndReaderControlsUsable testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet; do
+            for TEST in testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate testLargestDynamicTypeKeepsListenAndReaderControlsUsable testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet; do
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
           fi
@@ -117,6 +119,7 @@ jobs:
             -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate \
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage \
             -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet \
@@ -133,6 +136,7 @@ jobs:
           grep -E 'Test Case.*testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testLargestDynamicTypeKeepsListenAndReaderControlsUsable.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet.*passed' artifacts/compact-tests.log

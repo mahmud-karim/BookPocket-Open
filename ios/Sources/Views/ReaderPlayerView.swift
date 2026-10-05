@@ -16,12 +16,16 @@ struct ReaderPlayerView: View {
     @State private var pendingDiscovery = false
     private enum Chooser { case narrator, scope, playbackScope, speed, sleep }
     private var job: RemoteJob? { companion.jobs.first { $0.id == state.selectedJobID } }
+    private var recording: DownloadedRecordingSelection? {
+        guard let job, let selection = state.selection, state.readyIDs.contains(job.id) else { return nil }
+        return try? DownloadedRecordingSelection.reader(job: job, selection: selection, records: companion.orderedDownloads(jobID: job.id))
+    }
+    private var preparedDuration: Double? { recording.flatMap { companion.recordingDuration($0) } }
     private var active: Bool {
         guard player.bookID == reader.bookID else { return false }
         if state.mode == .device { return player.subtitle == "On-device voice" }
-        guard let job else { return false }
-        return companion.downloads.contains { $0.jobID == job.id && $0.localBookID == reader.bookID && $0.id == reader.book?.audioAssetID }
-            && player.subtitle != "On-device voice"
+        guard let recording else { return false }
+        return player.recordingID == recording.id && player.subtitle != "On-device voice"
     }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var detail: Detail?
@@ -31,7 +35,7 @@ struct ReaderPlayerView: View {
             switch self { case .production: return "production"; case .scope: return "scope"; case .saved: return "saved"; case .chapters: return "chapters" }
         }
     }
-    private var canPlay: Bool { !discovering && (state.mode == .device || active || (job.map { state.readyIDs.contains($0.id) } ?? false)) }
+    private var canPlay: Bool { !discovering && (state.mode == .device || active || preparedDuration != nil) }
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
@@ -287,15 +291,20 @@ struct ReaderPlayerView: View {
                         readinessLabel
                     }
                     Spacer(minLength: 0)
-                    if let job, job.assets.count == 1, let asset = job.assets.first, asset.duration.isFinite {
-                        Text("\(Int(asset.duration) / 60):\(String(format: "%02d", Int(asset.duration) % 60))").font(.caption).monospacedDigit()
-                    }
                 }.padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 48)
                     .background(Obsidian.surface, in: .rect(cornerRadius: 12))
             } else { readinessLabel }
-            if active && player.duration > 0 {
-                Slider(value: Binding(get: { player.elapsed }, set: { state.invalidatePlaybackIntent(); player.seek($0) }), in: 0...max(1, player.duration)) { Text("Audio position") }
-                    .accessibilityIdentifier("reader.player.seek")
+            if state.mode != .device, let preparedDuration {
+                let total = active ? player.duration : preparedDuration
+                VStack(spacing: 0) {
+                    Slider(value: Binding(get: { active ? player.elapsed : 0 }, set: { state.invalidatePlaybackIntent(); if active { player.seek($0) } }), in: 0...max(1, total)) { Text("Audio position") }
+                        .disabled(!active).accessibilityIdentifier("reader.player.seek")
+                    HStack {
+                        Text(clock(active ? player.elapsed : 0)).accessibilityLabel("Elapsed time").accessibilityValue(clock(active ? player.elapsed : 0)).accessibilityIdentifier("reader.player.elapsed")
+                        Spacer()
+                        Text(clock(total)).accessibilityLabel("Total duration").accessibilityValue(clock(total)).accessibilityIdentifier("reader.player.duration")
+                    }.font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
+                }
             }
             HStack(spacing: 0) {
                 if !wide { speedControl; Spacer(minLength: 0) }
@@ -311,6 +320,9 @@ struct ReaderPlayerView: View {
             }
         }.frame(maxWidth: .infinity)
     }
+    private func clock(_ seconds: Double) -> String {
+        Duration.seconds(max(0, seconds)).formatted(.time(pattern: .minuteSecond))
+    }
     private var readinessLabel: some View {
         Text(readiness).font(dynamicTypeSize.isAccessibilitySize ? .system(size: 16) : .caption)
             .foregroundStyle(canPlay && !active && state.mode != .device ? .green : .secondary).lineLimit(2)
@@ -323,6 +335,7 @@ struct ReaderPlayerView: View {
         if state.showingSelection && !companion.paired { return "Pair your PC to generate · open details" }
         if state.error != nil { return "Needs attention · open details" }
         if state.mode != .device && state.requiresTakeSelection { return "Choose a matching take · Saved audio" }
+        if state.mode != .device, let job, state.readyIDs.contains(job.id), recording == nil { return "Generate page audio for these exact words" }
         let status = active ? (player.isPlaying ? "Playing" : "Paused") : state.mode == .device ? "Ready on this iPhone" : canPlay ? "Ready offline" : job?.status == "completed" ? "On PC · download to play" : state.playbackScope == .chapter ? "Chapter not generated" : "No audio for this page"
         return state.savedJobID == nil ? status : "Saved page clip · \(status)"
     }
@@ -465,7 +478,13 @@ struct ReaderPlayerView: View {
         companion.play(take.firstRecord, library: library, player: player, fromBeginning: true)
         guard player.isPlaying else { state.error = player.error; return }
         state.remote = remote; state.selectedJobID = job.id; state.readyIDs.insert(job.id)
-        state.snapshot = nil; state.selection = ReaderAudioCatalog.selection(job: job, book: remote)
+        state.snapshot = nil
+        if var selection = ReaderAudioCatalog.selection(job: job, book: remote),
+           let chapter = remote.chapters.first(where: { $0.segments.contains { $0.id == take.firstRecord.asset.segmentId } }) {
+            let indices = selection.ranges.indices.filter { index in chapter.segments.contains { $0.id == selection.ranges[index].segmentId } }
+            selection.ranges = indices.map { selection.ranges[$0] }; selection.excerpts = indices.map { selection.excerpts[$0] }
+            state.selection = selection
+        } else { state.selection = nil }
         state.playbackScope = take.scope == "Full chapter" ? .chapter : .page
         state.savedJobID = state.playbackScope == .page ? job.id : nil
         reader.connectPlayback(player); detail = nil
@@ -567,13 +586,11 @@ struct ReaderPlayerView: View {
         playDownloaded(job, selection: selection)
     }
     private func playDownloaded(_ job: RemoteJob, selection: ReaderSourceSelection) {
-        guard let first = selection.ranges.first,
-              let record = companion.orderedDownloads(jobID: job.id).first(where: { $0.asset.segmentId == first.segmentId }) else { return }
-        companion.play(record, library: library, player: player, fromBeginning: true)
+        let recording: DownloadedRecordingSelection
+        do { recording = try DownloadedRecordingSelection.reader(job: job, selection: selection, records: companion.orderedDownloads(jobID: job.id)) }
+        catch { state.error = error.localizedDescription; return }
+        companion.playRecording(recording, library: library, player: player, fromBeginning: true)
         guard player.isPlaying else { state.error = player.error; state.readyIDs.remove(job.id); return }
-        // Aligned assets can start near the first captured word. Never guess a
-        // proportional timestamp; unaligned takes start at their passage boundary.
-        if let timing = record.asset.timings.first(where: { $0.startOffset <= first.startOffset && $0.endOffset > first.startOffset }) { player.seek(timing.start) }
         reader.connectPlayback(player)
     }
     private func action(_ action: String) {

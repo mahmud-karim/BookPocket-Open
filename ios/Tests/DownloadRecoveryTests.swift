@@ -148,14 +148,10 @@ final class DownloadRecoveryTests: XCTestCase {
         let player = PlaybackController(); defer { player.stop() }
         let first = try XCTUnwrap(store.orderedDownloads(jobID: job.id).first)
         store.play(first, library: library, player: player)
-        XCTAssertTrue(player.isPlaying)
-        for _ in 0..<60 {
-            if player.error != nil { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
         XCTAssertFalse(player.isPlaying)
-        XCTAssertTrue(player.error?.contains("next passage") == true)
-        XCTAssertEqual(library.book(local.id)?.audioAssetID, first.id, "Actual end-of-file must not advance to passage three across the missing second passage")
+        XCTAssertTrue(player.error?.contains("passages are missing") == true, "One complete user recording must be available before starting")
+        XCTAssertNil(library.book(local.id)?.audioAssetID, "An incomplete recording must not save a false playback position")
+        var saved = try XCTUnwrap(library.book(local.id)); saved.audioAssetID = first.id; saved.audioSeconds = 0; library.update(saved)
         try FileManager.default.removeItem(at: store.root.appendingPathComponent(first.file))
         store.playDownloadedTake(jobID: job.id, library: library, player: player)
         XCTAssertFalse(player.isPlaying)

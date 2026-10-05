@@ -101,7 +101,7 @@ struct ReaderView: View {
                         VStack(spacing: 0) {
                             Spacer(minLength: 0)
                             ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer)
-                                .frame(height: min(560, geometry.size.height))
+                                .frame(height: min(590, geometry.size.height))
                                 .clipShape(.rect(topLeadingRadius: 24, topTrailingRadius: 24))
                                 .shadow(color: .black.opacity(0.25), radius: 14, y: -4)
                         }

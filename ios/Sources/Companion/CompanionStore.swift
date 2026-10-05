@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import Observation
 import ReadiumShared
 import UIKit
@@ -9,6 +10,26 @@ enum CompanionConnectionState: Equatable {
 }
 
 @MainActor @Observable final class CompanionStore {
+    @ObservationIgnored private var decodedDurations: [String: Double] = [:]
+
+    /// File identities were verified by orderedDownloads; decode their true
+    /// durations once so the prepared timeline is available before first Play.
+    func recordingDuration(_ selection: DownloadedRecordingSelection) -> Double? {
+        var total = 0.0
+        for (record, bound) in zip(selection.records, selection.bounds) {
+            let key = record.asset.sha256.lowercased()
+            let duration: Double
+            if let saved = decodedDurations[key] { duration = saved }
+            else {
+                guard let audio = try? AVAudioPlayer(contentsOf: root.appendingPathComponent(record.file)), audio.duration.isFinite, audio.duration > 0 else { return nil }
+                duration = audio.duration; decodedDurations[key] = duration
+            }
+            let end = bound.end ?? duration
+            guard bound.start >= 0, end > bound.start, end <= duration + 0.05 else { return nil }
+            total += min(end, duration) - bound.start
+        }
+        return total > 0 ? total : nil
+    }
     var identity: CompanionIdentity?
     var engines: [RemoteEngine] = []
     var voices: [RemoteVoice] = []
@@ -430,29 +451,60 @@ enum CompanionConnectionState: Equatable {
         } catch { self.error = error.localizedDescription; return false }
     }
     func play(_ record: DownloadRecord, library: LibraryStore, player: PlaybackController, fromBeginning: Bool = false) {
-        guard var book = library.book(record.localBookID) else {
+        guard available(record, recheck: true) else {
+            player.pause(); player.error = "This recording is missing, damaged, or no longer matches this take. Reconnect your PC and retry its download in Studio."; return
+        }
+        var selected = [record]
+        if let job = jobs.first(where: { $0.id == record.jobID }),
+           let remote = books.first(where: { $0.id == job.bookId }),
+           let chapter = remote.chapters.first(where: { $0.segments.contains { $0.id == record.asset.segmentId } }) {
+            let ids = job.segmentIds.filter { id in chapter.segments.contains { $0.id == id } }
+            let available = orderedDownloads(jobID: job.id)
+            guard ids.allSatisfy({ id in available.contains { $0.asset.segmentId == id } }) else {
+                player.pause(); player.error = "Some passages are missing. Reconnect your PC and retry its download in Studio."; return
+            }
+            selected = ids.compactMap { id in available.first { $0.asset.segmentId == id } }
+        }
+        playRecording(.init(records: selected, bounds: selected.map { _ in (0, nil) }), library: library, player: player, fromBeginning: fromBeginning)
+    }
+    func playRecording(_ selection: DownloadedRecordingSelection, library: LibraryStore, player: PlaybackController, fromBeginning: Bool = false) {
+        guard let first = selection.records.first, let book = library.book(first.localBookID) else {
             error = "Import the original book to read alongside this narration."; player.error = error; return
         }
         do {
-            guard available(record, recheck: true) else {
+            guard selection.records.count == selection.bounds.count,
+                  selection.records.allSatisfy({ $0.jobID == first.jobID && $0.localBookID == first.localBookID && available($0, recheck: true) }) else {
                 player.pause()
                 throw BookError.message("This recording is missing, damaged, or no longer matches this take. Reconnect your PC and retry its download in Studio.")
             }
-            let offset = !fromBeginning && (book.audioAssetID == record.id || book.audioAssetID == record.asset.id) ? book.audioSeconds : 0
+            let parts = zip(selection.records, selection.bounds).map { RecordingPart(url: root.appendingPathComponent($0.0.file), start: $0.1.start, end: $0.1.end) }
+            // Storage keeps an immutable asset-local position. Transport exposes
+            // one global position throughout the selected page or chapter.
+            let savedIndex = !fromBeginning ? selection.records.firstIndex(where: { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID }) : nil
             let currentFollow = player.bookID == book.id ? player.onLocator : nil
-            try player.play(url: root.appendingPathComponent(record.file), book: book, start: offset)
-            let remoteBookID = jobs.first(where: { $0.id == record.jobID })?.bookId
-            player.chapterTitle = books.first(where: { $0.id == remoteBookID })?.chapters.first(where: { chapter in chapter.segments.contains { $0.id == record.asset.segmentId } })?.title ?? ""
-            if let legacyTitle = record.legacyTitle { player.title = legacyTitle; player.subtitle = "Legacy recording · no synchronized text" }
+            try player.play(parts: parts, book: book, recordingID: selection.id)
+            if let savedIndex {
+                let interval = player.recordingIntervals[savedIndex]
+                player.seek(min(interval.end, interval.start + max(0, book.audioSeconds - interval.sourceStart)))
+            }
+            let remoteBookID = jobs.first(where: { $0.id == first.jobID })?.bookId
+            let remote = books.first(where: { $0.id == remoteBookID })
+            player.chapterTitle = remote?.chapters.first(where: { $0.segments.contains { $0.id == first.asset.segmentId } })?.title ?? ""
+            if let legacyTitle = first.legacyTitle { player.title = legacyTitle; player.subtitle = "Legacy recording · no synchronized text" }
             var locationSaved = Date.distantPast
             player.onLocator = currentFollow ?? { [weak library] locator in
-                if Date().timeIntervalSince(locationSaved) >= 3 { library?.saveLocation(record.localBookID, locator: locator); locationSaved = Date() }
+                if Date().timeIntervalSince(locationSaved) >= 3 { library?.saveLocation(first.localBookID, locator: locator); locationSaved = Date() }
             }
-            book.audioAssetID = record.id; book.audioSeconds = offset; library.update(book)
             var lastSaved = -5.0
+            var lastRecordID: String?
             player.onProgress = { [weak library, weak player] seconds in
-                guard let library, var current = library.book(record.localBookID) else { return }
-                if abs(seconds - lastSaved) >= 5 { current.audioAssetID = record.id; current.audioSeconds = seconds; library.update(current); lastSaved = seconds }
+                guard let player, let position = player.recordingPosition(at: seconds), selection.records.indices.contains(position.index),
+                      let library, var current = library.book(first.localBookID) else { return }
+                let record = selection.records[position.index], seconds = position.seconds
+                if lastRecordID != record.id || abs(seconds - lastSaved) >= 5 {
+                    current.audioAssetID = record.id; current.audioSeconds = seconds; library.update(current); lastSaved = seconds; lastRecordID = record.id
+                }
+                player.chapterTitle = remote?.chapters.first(where: { $0.segments.contains { $0.id == record.asset.segmentId } })?.title ?? player.chapterTitle
                 guard let segment = record.segment, var locator = segment.locator.locator else { return }
                 if let start = record.asset.sourceStart, let end = record.asset.sourceEnd, let range = SourceIdentity.scalarRange(start, end, in: segment.text) {
                     locator.text.highlight = String(segment.text[range]); locator.text.before = String(segment.text[..<range.lowerBound].suffix(60)); locator.text.after = String(segment.text[range.upperBound...].prefix(60))
@@ -462,22 +514,15 @@ enum CompanionConnectionState: Equatable {
                     locator.text.before = String(segment.text[..<range.lowerBound].suffix(60))
                     locator.text.after = String(segment.text[range.upperBound...].prefix(60))
                 }
-                player?.speechLocator = locator; player?.onLocator?(locator)
+                player.speechLocator = locator; player.onLocator?(locator)
             }
-            player.onFinished = { [weak self, weak library, weak player] in
-                guard let self, let library, let player else { return }
-                if var current = library.book(record.localBookID) { current.audioSeconds = 0; library.update(current) }
-                guard let job = self.jobs.first(where: { $0.id == record.jobID }),
-                      let index = job.segmentIds.firstIndex(where: { $0 == record.asset.segmentId }), index + 1 < job.segmentIds.count else { return }
-                let nextID = job.segmentIds[index + 1]
-                guard let next = self.orderedDownloads(jobID: job.id).first(where: { $0.asset.segmentId == nextID }) else {
-                    player.pause()
-                    player.error = "The next passage is not available on this device. Reconnect your PC and download this take in Studio to continue without skipping text."
-                    return
-                }
-                self.play(next, library: library, player: player)
+            player.onProgress?(player.elapsed)
+            player.onFinished = { [weak library, weak player] in
+                guard let player, let position = player.recordingPosition(at: player.duration), var current = library?.book(first.localBookID) else { return }
+                current.audioAssetID = selection.records[position.index].id; current.audioSeconds = position.seconds
+                library?.update(current)
             }
-        } catch { self.error = error.localizedDescription; player.error = error.localizedDescription }
+        } catch { self.error = error.localizedDescription; player.error = error.localizedDescription; player.pause() }
     }
     func orderedDownloads(jobID: String) -> [DownloadRecord] {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return downloads.filter { $0.jobID == jobID && available($0) } }
@@ -588,7 +633,12 @@ enum CompanionConnectionState: Equatable {
             player.error = "The passage needed to resume this take is missing or damaged. Reconnect your PC and retry its download in Studio."
             return
         }
-        play(record, library: library, player: player)
+        let all = orderedDownloads(jobID: jobID)
+        if let job = jobs.first(where: { $0.id == jobID }), all.count != job.segmentIds.count {
+            player.pause(); player.error = "Some passages are missing. Reconnect your PC and retry its download in Studio."; return
+        }
+        let selected = all.isEmpty ? [record] : all
+        playRecording(.init(records: selected, bounds: selected.map { _ in (0, nil) }), library: library, player: player)
     }
     func takeDescription(jobID: String) -> String {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return "Available offline" }
