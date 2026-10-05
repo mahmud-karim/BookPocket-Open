@@ -35,6 +35,33 @@ private final class ReaderJobProtocol: Foundation.URLProtocol {
 }
 
 final class ReaderPlayerTests: XCTestCase {
+    @MainActor func testReaderCaptureDeadlineReleasesStalledCaptureAndIgnoresLateResults() async throws {
+        let stalled = ReaderDownloadGate()
+        var busy = false, lateReturned = false
+        let expired = Task { @MainActor in
+            busy = true; defer { busy = false }
+            return try await ReaderCaptureDeadline.evaluate(timeout: .milliseconds(150)) {
+                await stalled.wait(); lateReturned = true; return "obsolete page"
+            }
+        }
+        await fulfillment(of: [stalled.started], timeout: 2)
+        do { _ = try await expired.value; XCTFail("A missing web-view callback must fail safely, not lock source capture") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("reader page stopped responding")) }
+        XCTAssertFalse(busy, "The owner must unwind its capture lock when the callback stalls")
+        let fresh = try await ReaderCaptureDeadline.evaluate { "new page" }
+        stalled.complete(); try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(lateReturned, "The actual old callback was delivered after timeout")
+        XCTAssertEqual(fresh, "new page", "A late old callback cannot replace the newer exact source result")
+        let cancelled = ReaderDownloadGate()
+        let capture = Task { @MainActor in
+            try await ReaderCaptureDeadline.evaluate(timeout: .seconds(5)) { await cancelled.wait(); return "cancelled page" }
+        }
+        await fulfillment(of: [cancelled.started], timeout: 2)
+        capture.cancel()
+        do { _ = try await capture.value; XCTFail("Cancelled capture must immediately unlock its owner") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        cancelled.complete()
+    }
     @MainActor func testSavedAudioFromWiderTakeKeepsOnlyCurrentChapterAndRestoresScopedExcerpt() throws {
         var remote = book
         let other = RemoteSegment(id: "other-source", text: "Original words from the next chapter.", kind: "paragraph", locator: .object([:]))

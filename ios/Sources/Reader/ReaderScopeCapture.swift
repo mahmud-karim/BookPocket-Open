@@ -14,7 +14,9 @@ extension ReaderModel {
         guard let scriptURL = Bundle.main.url(forResource: "ReaderScope", withExtension: "js") else { throw BookError.message("Reader source tools are unavailable. Reinstall the app.") }
         let script = try String(contentsOf: scriptURL, encoding: .utf8)
         func evaluate(_ expression: String) async throws -> SourceDocument {
-            let result = try await navigator.evaluateJavaScript(script + "\nJSON.stringify(" + expression + ")").get()
+            let result = try await ReaderCaptureDeadline.evaluate {
+                try await navigator.evaluateJavaScript(script + "\nJSON.stringify(" + expression + ")").get()
+            }
             guard let json = result as? String else { throw BookError.message("This book's page could not be captured exactly.") }
             return try JSONDecoder().decode(SourceDocument.self, from: Data(json.utf8))
         }

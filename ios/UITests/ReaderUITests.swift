@@ -354,7 +354,11 @@ final class ReaderUITests: XCTestCase {
         play.tap(); XCTAssertEqual(play.value as? String, "Paused")
         let slider = app.sliders["reader.player.seek"]
         XCTAssertTrue(slider.exists && slider.isHittable); slider.adjust(toNormalizedSliderPosition: 0.5)
-        XCTAssertGreaterThan(slider.normalizedSliderPosition, 0.3); XCTAssertLessThan(slider.normalizedSliderPosition, 0.7)
+        // XCTest's native slider gesture is best effort. Assert the real global
+        // result and clock agreement, rather than an arbitrary midpoint band.
+        let soughtSeconds = audioSeconds(app.staticTexts["reader.player.elapsed"])
+        XCTAssertGreaterThan(soughtSeconds, 0); XCTAssertLessThan(soughtSeconds, selectedDuration)
+        XCTAssertEqual(Double(slider.normalizedSliderPosition) * selectedDuration, soughtSeconds, accuracy: 1)
         assertReaderSettingsFit(app, name: "Obsidian offline playback choices")
         XCTAssertEqual(play.value as? String, "Paused", "Adjusting speed and timer must not resume paused audio")
         app.navigationBars["Read aloud"].buttons["Done"].tap()
