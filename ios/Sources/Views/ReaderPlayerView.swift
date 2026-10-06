@@ -301,7 +301,7 @@ struct ReaderPlayerView: View {
         }
     }
     private func control(_ title: String, icon: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: icon).font(.system(size: 24)).frame(minWidth: 44, minHeight: 44).contentShape(.rect) }
+        Button(action: action) { Image(systemName: icon).font(.system(size: 24)).frame(width: 44, height: 44).background(Obsidian.background).contentShape(.rect) }
             .buttonStyle(.plain).accessibilityLabel(title).accessibilityIdentifier("reader.player." + id)
     }
     private func clock(_ seconds: Double) -> String { Duration.seconds(max(0, seconds)).formatted(.time(pattern: .minuteSecond)) }
