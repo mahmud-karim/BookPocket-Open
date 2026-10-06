@@ -46,6 +46,7 @@ enum CompanionConnectionState: Equatable {
     private var deletedTakeIDs: Set<String> = []
     private(set) var listeningSession: ListeningSession?
     private(set) var voiceAuditions: [SavedVoiceAudition] = []
+    private(set) var castReviewRequests: [SavedCastReviewRequest] = []
     @ObservationIgnored private var listeningSavedAt = Date.distantPast
     var error: String?
     var status: String?
@@ -105,6 +106,7 @@ enum CompanionConnectionState: Equatable {
             deletedTakeIDs = try database?.read("deletedTakeIDs", as: Set<String>.self) ?? []
             listeningSession = try database?.read("listeningSession", as: ListeningSession.self)
             voiceAuditions = try database?.read("voiceAuditions", as: [SavedVoiceAudition].self) ?? []
+            castReviewRequests = try database?.read("castReviewRequests", as: [SavedCastReviewRequest].self) ?? []
             if let identity, let token = DeviceKeychain.read(account: identity.deviceID) { self.client = try CompanionClient(url: identity.url, fingerprint: identity.fingerprint, token: token) }
         } catch { self.error = error.localizedDescription }
         if let client { self.client = client }
@@ -129,6 +131,7 @@ enum CompanionConnectionState: Equatable {
             try database.write("deletedTakeIDs", value: deletedTakeIDs)
             try database.write("listeningSession", value: listeningSession)
             try database.write("voiceAuditions", value: voiceAuditions)
+            try database.write("castReviewRequests", value: castReviewRequests)
         }
     }
     #if DEBUG
@@ -406,6 +409,31 @@ enum CompanionConnectionState: Equatable {
     func saveCast(_ cast: BookCast, bookID: String) async throws {
         guard let client else { throw BookError.message("Connect to your companion first.") }
         let _: BookCast = try await client.send("/v1/books/\(bookID)/cast", method: "PUT", body: CompanionClient.encoder.encode(cast))
+    }
+    func castReview(_ book: RemoteBook) async throws -> CastReviewInventory {
+        try await requireCapability("casting_review", message: "Update PC Companion to review unclear dialogue, then reconnect.")
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        let response: CastReviewInventory = try await client.send("/v1/books/\(book.id)/review-issues")
+        try CastReview.validate(response, book: book)
+        return response
+    }
+    func resolveCastReview(_ issue: CastReviewIssue, book: RemoteBook, request: CastReviewRequest) async throws -> CastReviewResult {
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        let captured = castReviewRequests.first { $0.bookId == book.id && $0.issueId == issue.id }?.request ?? request
+        if !castReviewRequests.contains(where: { $0.bookId == book.id && $0.issueId == issue.id }) {
+            castReviewRequests.append(.init(bookId: book.id, issueId: issue.id, request: captured)); try persist()
+        }
+        do {
+            let response: CastReviewResult = try await client.send("/v1/books/\(book.id)/review-issues/\(issue.id)/resolve", method: "POST", body: CompanionClient.encoder.encode(captured))
+            try CastReview.validateResolution(response, issue: issue, book: book)
+            castReviewRequests.removeAll { $0.bookId == book.id && $0.issueId == issue.id }; try persist()
+            return response
+        } catch {
+            if (error as? CompanionHTTPError)?.definitivelyRejected == true {
+                castReviewRequests.removeAll { $0.bookId == book.id && $0.issueId == issue.id }; try persist()
+            }
+            throw error
+        }
     }
     func requireReliableAnalysis() async throws {
         guard let client else { throw BookError.message("Connect to your companion first.") }

@@ -53,7 +53,7 @@ enum CompanionEndpoint {
         return normalized
     }
     static func resource(_ path: String, base: URL) throws -> URL {
-        guard path.hasPrefix("/v1/"), safePath(path), var parts = components(base) else {
+        guard path.hasPrefix("/v1/"), safeResourcePath(path), var parts = components(base) else {
             throw BookError.message("The companion returned an invalid resource address.")
         }
         parts.percentEncodedPath += path
@@ -63,8 +63,11 @@ enum CompanionEndpoint {
     static func allows(_ url: URL, base: URL) -> Bool {
         guard let target = components(url), let origin = components(base),
               target.host?.lowercased() == origin.host?.lowercased(),
-              (target.port ?? 443) == (origin.port ?? 443), safePath(target.percentEncodedPath) else { return false }
+              (target.port ?? 443) == (origin.port ?? 443), safeResourcePath(target.percentEncodedPath) else { return false }
         return target.percentEncodedPath.hasPrefix(origin.percentEncodedPath + "/v1/")
+    }
+    private static func safeResourcePath(_ path: String) -> Bool {
+        safePath(path) || (path.hasSuffix("/resolve") && (path.contains("/review-issues/assignment:") || path.contains("/review-issues/review:")) && safePath(path.replacingOccurrences(of: ":", with: "-")))
     }
 }
 
@@ -114,6 +117,7 @@ final class CompanionClient {
         if configuration == nil, UITestConnectionFixture.enabled {
             UITestConnectionFixture.configure(config)
         }
+        if configuration == nil, UITestCastReviewFixture.enabled { UITestCastReviewFixture.configure(config) }
         #endif
         config.tlsMinimumSupportedProtocolVersion = .TLSv12
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 3600

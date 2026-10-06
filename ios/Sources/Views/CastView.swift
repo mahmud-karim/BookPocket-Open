@@ -4,13 +4,15 @@ import UIKit
 struct CastView: View {
     let book: RemoteBook
     var relevantRanges: [SourceRange]? = nil
+    var autoReview = false
     @Environment(CompanionStore.self) private var companion
-    var body: some View { CastDraftView(book: book, relevantRanges: relevantRanges, draft: companion.castDraft(for: book.id)) }
+    var body: some View { CastDraftView(book: book, relevantRanges: relevantRanges, autoReview: autoReview, draft: companion.castDraft(for: book.id)) }
 }
 
 private struct CastDraftView: View {
     let book: RemoteBook
     let relevantRanges: [SourceRange]?
+    let autoReview: Bool
     @Bindable var draft: CastDraft
     @Environment(CompanionStore.self) private var companion
     @Environment(\.dismiss) private var dismiss
@@ -22,6 +24,8 @@ private struct CastDraftView: View {
     @State private var chapterStatuses: [ChapterAnalysisStatus] = []
     @State private var creatingCharacter: CastCharacter?
     @State private var auditionVoice: RemoteVoice?
+    @State private var review: CastReviewInventory?
+    @State private var reviewingIssue: CastReviewIssue?
     private var relevantCharacters: Set<String>? {
         relevantRanges.map { ranges in Set(draft.value.assignments.filter { row in ranges.contains { $0.segmentId == row.segmentId && $0.startOffset < row.endOffset && row.startOffset < $0.endOffset } }.map(\.characterId) + ["narrator"]) }
     }
@@ -35,6 +39,17 @@ private struct CastDraftView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let review {
+                    Section("Review unclear dialogue") {
+                        let pending = CastReview.pending(review, ranges: relevantRanges).filter { relevantRanges != nil || $0.chapterId == chapterID }
+                        if pending.isEmpty { Text("No unclear dialogue in this selection.").font(.caption).foregroundStyle(.secondary) }
+                        ForEach(pending) { issue in
+                            Button { reviewingIssue = issue } label: {
+                                VStack(alignment: .leading, spacing: 6) { Text(issue.sourceText).font(.system(.body, design: .serif)).lineLimit(3); Text(issue.message).font(.caption).foregroundStyle(.secondary) }
+                            }.accessibilityIdentifier("cast.review.open." + issue.id)
+                        }
+                    }
+                }
                 Section {
                     Text("Build a cast for every conversation. Voices stay attached to the original words.").foregroundStyle(.secondary)
                     Toggle("Allow configured hosted analysis", isOn: $allowHosted)
@@ -120,9 +135,10 @@ private struct CastDraftView: View {
                 if chapterID.isEmpty { chapterID = book.chapters.first(where: { chapter in relevantRanges?.contains { range in chapter.segments.contains { $0.id == range.segmentId } } == true })?.id ?? book.chapters.first?.id ?? "" }
                 await draft.load(book: book, service: service)
                 do { chapterStatuses = try await companion.chapterAnalysisStatus(book.id) } catch { draft.error = error.localizedDescription }
+                await refreshReview(open: autoReview)
             }
             .onDisappear {
-                guard !showingAssignment, creatingCharacter == nil, auditionVoice == nil else { return }
+                guard !showingAssignment, creatingCharacter == nil, auditionVoice == nil, reviewingIssue == nil else { return }
                 if !draft.awaitingAnalysisConfirmation { action?.cancel() }
                 draft.cancel()
             }
@@ -137,6 +153,9 @@ private struct CastDraftView: View {
                 }
             }
             .sheet(item: $auditionVoice) { VoiceAuditionView(voice: $0) }
+            .sheet(item: $reviewingIssue, onDismiss: { Task { await refreshReview(); do { chapterStatuses = try await companion.chapterAnalysisStatus(book.id) } catch { draft.error = error.localizedDescription } } }) { issue in
+                if let review { CastReviewView(book: book, relevantRanges: relevantRanges ?? book.chapters.first { $0.id == chapterID }?.segments.map { SourceRange(segmentId: $0.id, startOffset: 0, endOffset: $0.text.unicodeScalars.count) }, draft: draft, inventory: review, issue: issue) }
+            }
         }
     }
     private func excerpt(_ assignment: CastAssignment) -> String? {
@@ -144,6 +163,7 @@ private struct CastDraftView: View {
         return String(segment.text[range])
     }
     private func save(close: Bool = false) {
+        if close && !draft.dirty && !draft.busy { dismiss(); return }
         action = Task {
             let saved = await draft.save(service: service)
             if close && saved && !Task.isCancelled { dismiss() }
@@ -153,7 +173,14 @@ private struct CastDraftView: View {
         action = Task {
             await draft.analyze(book: book, hosted: allowHosted, service: service, chapterIDs: chapters, force: force)
             do { chapterStatuses = try await companion.chapterAnalysisStatus(book.id) } catch { draft.error = error.localizedDescription }
+            await refreshReview(open: true)
         }
+    }
+    private func refreshReview(open: Bool = false) async {
+        do {
+            let fetched = try await companion.castReview(book); review = fetched
+            if open { reviewingIssue = CastReview.pending(fetched, ranges: relevantRanges).first { relevantRanges != nil || $0.chapterId == chapterID } }
+        } catch { draft.error = error.localizedDescription }
     }
 }
 
@@ -188,10 +215,14 @@ struct SpanAssignmentView: View {
 
 struct SourceSelectionView: UIViewRepresentable {
     let text: String
+    var initialSelection: (Int, Int)? = nil
     let onSelection: (Int, Int) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(onSelection: onSelection) }
     func makeUIView(context: Context) -> UITextView {
-        let view = UITextView(); view.isEditable = false; view.isSelectable = true; view.font = .preferredFont(forTextStyle: .body); view.adjustsFontForContentSizeCategory = true; view.backgroundColor = .clear; view.delegate = context.coordinator; return view
+        let view = UITextView(); view.isEditable = false; view.isSelectable = true; view.font = .preferredFont(forTextStyle: .body); view.adjustsFontForContentSizeCategory = true; view.backgroundColor = .clear
+        view.text = text
+        if let selection = initialSelection, let range = SourceIdentity.scalarRange(selection.0, selection.1, in: text) { view.selectedRange = NSRange(range, in: text) }
+        view.delegate = context.coordinator; return view
     }
     func updateUIView(_ view: UITextView, context: Context) { if view.text != text { view.text = text } }
     final class Coordinator: NSObject, UITextViewDelegate {

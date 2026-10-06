@@ -129,6 +129,19 @@ struct CastService {
         } catch is CancellationError {} catch { if operationID == id { self.error = error.localizedDescription } }
         return false
     }
+    func resolve(issue: CastReviewIssue, book: RemoteBook, request: CastReviewRequest,
+                 operation: (CastReviewRequest) async throws -> CastReviewResult) async -> CastReviewResult? {
+        guard let id = begin() else { return nil }
+        let base = saved
+        defer { finish(id) }
+        do {
+            let response = try await operation(request); try check(id)
+            value = try CastReview.mergeResolution(base: base, local: value, result: response, issue: issue, book: book)
+            saved = response.cast
+            return response
+        } catch is CancellationError {} catch { if operationID == id { self.error = error.localizedDescription } }
+        return nil
+    }
     func analyze(book: RemoteBook, hosted: Bool, service: CastService, chapterIDs: [String]? = nil, force: Bool = false) async {
         guard let id = begin() else { return }
         let base = value

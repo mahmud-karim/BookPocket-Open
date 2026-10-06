@@ -188,8 +188,10 @@ enum ReaderTakeMatch {
                     throw BookError.message("Finish reviewing and save your cast before generating. Open Set up cast to keep your latest edits.")
                 }
                 let chapters = book.chapters.filter { chapter in chapter.segments.contains { segment in selection.ranges.contains { $0.segmentId == segment.id } } }.map(\.id)
+                var review = try await companion.castReview(book)
                 let statuses = try await companion.chapterAnalysisStatus(book.id)
-                if chapters.contains(where: { id in !statuses.contains { $0.chapterId == id && $0.status == "completed" } }) {
+                let missing = CastReview.chaptersNeedingAnalysis(chapters, statuses: statuses, inventory: review)
+                if !missing.isEmpty {
                     let draft = companion.castDraft(for: book.id)
                     // Automatic analysis uses the current saved PC cast. Saving
                     // our unchanged fetch here could overwrite a desktop edit.
@@ -202,10 +204,13 @@ enum ReaderTakeMatch {
                     analysisProgress = "Analyzing chapter speakers…"
                     await draft.load(book: book, service: service)
                     guard !draft.dirty, !draft.busy, draft.error == nil else { throw BookError.message(draft.error ?? "Save your cast edits before analyzing this chapter.") }
-                    await draft.analyze(book: book, hosted: false, service: service, chapterIDs: chapters)
-                    guard draft.analysis?.status == "completed", !draft.busy, draft.error == nil else { throw BookError.message(draft.error ?? draft.analysis?.error ?? "Chapter analysis has not completed. Open Cast Studio to resume it.") }
+                    await draft.analyze(book: book, hosted: false, service: service, chapterIDs: missing)
+                    review = try await companion.castReview(book)
+                    guard !draft.busy, draft.error == nil,
+                          draft.analysis?.status == "completed" || (draft.analysis?.status == "failed" && missing.allSatisfy { chapter in review.issues.contains { $0.chapterId == chapter } }) else { throw BookError.message(draft.error ?? draft.analysis?.error ?? "Chapter analysis has not completed. Open Cast Studio to resume it.") }
                     guard !draft.dirty else { throw BookError.message("Save your cast edits before generating. Changes made during analysis have been kept in Cast Studio.") }
                 }
+                try CastReview.requireReady(review, book: book, ranges: selection.ranges)
                 let saved = try await companion.fetchCast(book.id)
                 let castPlan = try ReaderCastPlan.build(cast: saved, book: book, ranges: selection.ranges, voices: companion.voices, engines: companion.engines)
                 voice = castPlan.narrator; plan = castPlan.spans

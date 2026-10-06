@@ -11,6 +11,7 @@ struct ReaderPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showPairing = false
     @State private var showCast = false
+    @State private var showReview = false
     @State private var showPronunciation = false
     @State private var removingRecording: ReaderAudioRecording?
     @State private var deleteFromPC = false
@@ -63,6 +64,9 @@ struct ReaderPlayerView: View {
                         if chooser != nil { Button("Back") { chooser = nil }.accessibilityIdentifier("reader.player.choice.back") }
                     }
                     ToolbarItem(placement: .confirmationAction) { Button("Done") { state.invalidatePlaybackIntent(); if let onClose { onClose() } else { dismiss() } } }
+                }
+                .sheet(isPresented: $showReview, onDismiss: { refreshPreparation() }) {
+                    if let remote = state.remote { CastView(book: remote, relevantRanges: state.selection?.ranges, autoReview: true) }
                 }
                 .sheet(item: $detail) { item in
                     NavigationStack {
@@ -373,9 +377,13 @@ struct ReaderPlayerView: View {
         Duration.seconds(max(0, seconds)).formatted(.time(pattern: .minuteSecond))
     }
     private var readinessLabel: some View {
-        Text(readiness).font(dynamicTypeSize.isAccessibilitySize ? .system(size: 16) : .caption)
+        Group {
+            if state.needsCast {
+                Button("Needs attention · review dialogue", systemImage: "person.crop.circle.badge.questionmark") { showReview = true }
+                    .frame(minHeight: 44).accessibilityIdentifier("reader.player.review")
+            } else { Text(readiness).accessibilityIdentifier("reader.player.readiness") }
+        }.font(dynamicTypeSize.isAccessibilitySize ? .system(size: 16) : .caption)
             .foregroundStyle(canPlay && !active && state.mode != .device ? .green : .secondary).lineLimit(2)
-            .accessibilityIdentifier("reader.player.readiness")
     }
     private var readiness: String {
         if state.working { return state.analysisProgress ?? "Preparing narration…" }

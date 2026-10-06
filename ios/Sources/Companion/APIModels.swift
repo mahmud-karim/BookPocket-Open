@@ -173,13 +173,60 @@ struct AnalysisJob: Codable, Identifiable {
     var warnings: [String]?
     var chapterIds: [String]? = nil
     var reusedChapterIds: [String]? = nil
+    var reviewRequired: Bool? = nil
+    var pendingReviewCount: Int? = nil
 }
 struct ChapterAnalysisStatus: Codable, Identifiable {
     var chapterId: String
     var status: String
     var analysisId: String?
     var error: String?
+    var pendingReviewCount: Int? = nil
+    var reviewRequired: Bool? = nil
+    var manualReady: Bool? = nil
+    var readyForGeneration: Bool? = nil
     var id: String { chapterId }
+}
+struct CastReviewIssue: Codable, Identifiable, Equatable {
+    var id: String
+    var chapterId: String
+    var segmentId: String
+    var startOffset: Int
+    var endOffset: Int
+    var sourceText: String
+    var reason: String
+    var message: String
+    var status: String
+    var suggestedCharacterId: String? = nil
+}
+struct CastReviewInventory: Codable {
+    var bookId: String
+    var sourceSha256: String
+    var revision: Int
+    var issues: [CastReviewIssue]
+}
+struct CastReviewRange: Codable, Equatable {
+    var startOffset: Int
+    var endOffset: Int
+    var characterId: String
+}
+struct CastReviewRequest: Codable, Equatable {
+    var requestId: String
+    var expectedRevision: Int
+    var characterId: String
+    var voiceId: String? = nil
+    var newCharacter: CastCharacter? = nil
+    var ranges: [CastReviewRange]? = nil
+}
+struct CastReviewResult: Codable {
+    var revision: Int
+    var issue: CastReviewIssue
+    var cast: BookCast
+}
+struct SavedCastReviewRequest: Codable {
+    var bookId: String
+    var issueId: String
+    var request: CastReviewRequest
 }
 struct VoicePreviewRequest: Codable, Equatable {
     var requestId: String
