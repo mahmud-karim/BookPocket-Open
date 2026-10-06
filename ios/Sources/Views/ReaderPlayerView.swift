@@ -28,7 +28,7 @@ struct ReaderPlayerView: View {
     private var recordingIssue: String? {
         guard state.mode != .device, let job, job.status == "completed", let selection = state.selection else { return nil }
         let records = companion.orderedDownloads(jobID: job.id)
-        guard !records.isEmpty || state.readyIDs.contains(job.id) else { return nil }
+        guard companion.downloads.contains(where: { $0.jobID == job.id }) || state.readyIDs.contains(job.id) else { return nil }
         do {
             let selected = try DownloadedRecordingSelection.reader(job: job, selection: selection, records: records)
             if companion.recordingDuration(selected) == nil { return "This recording is damaged or its timing is invalid. Open Manage audiobook to download it again." }
@@ -70,6 +70,13 @@ struct ReaderPlayerView: View {
     }
     private var canPlay: Bool { !discovering && (state.mode == .device || active || preparedDuration != nil) }
     private var scopeName: String { state.playbackScope == .page ? "page" : "chapter" }
+    private var recordingTitle: String {
+        let scope = state.playbackScope == .page ? "page" : "chapter"
+        guard let job else { return "\(scope.capitalized) audio" }
+        let alternates = recordings.filter { $0.scope == state.playbackScope }
+        let take = alternates.count > 1 ? " · Take \((alternates.firstIndex { $0.id == job.id } ?? 0) + 1)" : ""
+        return "\(canPlay ? "Saved " : "")\(scope) audio\(take)"
+    }
     private var readiness: String {
         if discovering { return "Checking this \(scopeName)…" }
         if let error = state.attention ?? recordingIssue { return error }
@@ -161,9 +168,10 @@ struct ReaderPlayerView: View {
             Button { sheet = .source } label: {
                 HStack(spacing: 4) { Text(state.mode.title); Image(systemName: "chevron.down").font(.caption) }.frame(minHeight: 44).contentShape(.rect)
             }.buttonStyle(.plain).accessibilityLabel("Playback source").accessibilityValue(state.mode.title).accessibilityIdentifier("reader.player.narrator")
+                .disabled(state.working || discovering || reader.capturingScope)
             if state.mode != .device {
                 Text("·")
-                Button { sheet = .recordings } label: { Text("\(state.playbackScope == .page ? "Page" : "Chapter") audio").frame(minHeight: 44).contentShape(.rect) }
+                Button { sheet = .recordings } label: { Text(recordingTitle).lineLimit(2).frame(minHeight: 44).contentShape(.rect) }
                     .buttonStyle(.plain).accessibilityIdentifier("reader.player.saved")
                     .accessibilityLabel("Choose saved recording").accessibilityValue(job?.createdAt ?? "No recording selected")
             }
@@ -214,7 +222,8 @@ struct ReaderPlayerView: View {
                 Button(action: onManage) {
                     HStack { Spacer(); Text("Set up \(scopeName) audio"); Image(systemName: "chevron.right"); Spacer() }
                         .frame(minHeight: 48).background(Obsidian.accent, in: .rect(cornerRadius: 12)).foregroundStyle(Obsidian.onAccent)
-                }.buttonStyle(.plain).accessibilityIdentifier("reader.player.setup")
+                }.buttonStyle(.plain).accessibilityLabel("Set up \(scopeName) audio").accessibilityIdentifier("reader.player.setup")
+                    .disabled(discovering || reader.capturingScope)
             } else {
                 Divider()
                 Button(action: onManage) { HStack { Text("Manage audiobook"); Image(systemName: "chevron.right"); Spacer() }.frame(minHeight: 44) }
@@ -237,6 +246,7 @@ struct ReaderPlayerView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(recording.scope == .page ? "Saved page audio" : "Full chapter").font(.headline)
                             Text(recording.preview).lineLimit(2)
+                            Text(recording.job.createdAt ?? "Imported recording").font(.caption).foregroundStyle(.secondary)
                             Text("\(recording.offline ? "Ready offline" : "On PC") · \(clock(recording.duration))").font(.caption)
                         }.frame(minHeight: 44)
                     }.accessibilityIdentifier("reader.saved." + recording.id)

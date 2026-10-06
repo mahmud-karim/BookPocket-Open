@@ -96,7 +96,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
         XCTAssertFalse(toggle.isEnabled)
         XCTAssertFalse(app.navigationBars["Manage audiobook"].exists)
         fits(app, missing: true); screenshot("Read aloud missing page with explicit setup action")
-        XCTAssertEqual(app.buttons["reader.player.setup"].label, "Set up page audio, chevron.right")
+        XCTAssertEqual(app.buttons["reader.player.setup"].label, "Set up page audio")
         app.buttons["reader.player.setup"].tap()
         XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["audiobook.setup.context"].label.contains("Current page"))
