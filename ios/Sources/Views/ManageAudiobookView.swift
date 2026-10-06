@@ -60,6 +60,15 @@ struct ManageAudiobookView: View {
         guard let chapter, request.snapshot.hrefs.indices.contains(request.snapshot.current.resource) else { return false }
         return ReaderSourceMapper.href(chapter.href) == ReaderSourceMapper.href(request.snapshot.hrefs[request.snapshot.current.resource])
     }
+    private var capturedPageReady: Bool {
+        guard mode == .cast, request.scope == .page, pageAvailable,
+              summary.map({ $0.missingVoiceCount > 0 || $0.pendingReviewCount > 0 }) == true,
+              let book, let local = reader.book, let draft, let review,
+              request.bookID == local.id, !draft.dirty, !draft.busy else { return false }
+        return (try? ManageAudiobookSource.page(snapshot: request.snapshot, book: book, chapterID: chapterID,
+            localSHA256: local.sourceSHA256, cast: draft.saved, voices: companion.voices,
+            engines: companion.engines, review: review, statuses: statuses)) != nil
+    }
     private var generationJob: RemoteJob? {
         guard let chapter, let book else { return nil }
         let IDs = Set(chapter.segments.map(\.id))
@@ -92,9 +101,9 @@ struct ManageAudiobookView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Setup").font(.headline)
                             VStack(spacing: 0) {
-                                row("Characters & voices", icon: "person.2", detail: summary.map { $0.missingVoiceCount == 0 ? "Voices ready" : "\($0.missingVoiceCount) need voices" } ?? "Not checked", id: "manage.characters") { destination = .characters }
+                                row("Characters & voices", icon: "person.2", detail: summary.map { $0.needsAnalysis ? "Analyze chapter first" : $0.missingVoiceCount == 0 ? "Voices ready" : "\($0.missingVoiceCount) need voices" } ?? "Not checked", id: "manage.characters") { destination = .characters }
                                 Divider().padding(.leading, 46)
-                                row("Speaker review", icon: "text.bubble", detail: summary.map { $0.pendingReviewCount == 0 ? "No lines to check" : "\($0.pendingReviewCount) lines to check" } ?? "Not checked", id: "manage.review") { destination = .review }
+                                row("Speaker review", icon: "text.bubble", detail: summary.map { $0.needsAnalysis ? "Analyze chapter first" : $0.pendingReviewCount == 0 ? "No lines to check" : "\($0.pendingReviewCount) lines to check" } ?? "Not checked", id: "manage.review") { destination = .review }
                                 Divider().padding(.leading, 46)
                                 pronunciationRow
                             }.background(Obsidian.surface, in: .rect(cornerRadius: 14))
@@ -166,8 +175,9 @@ struct ManageAudiobookView: View {
             ForEach([ReaderVoiceMode.kyon, .cast]) { item in
                 Button { mode = item } label: {
                     Text(item.title).font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, minHeight: 44)
-                        .background(mode == item ? Obsidian.accent : .clear, in: .rect(cornerRadius: 9))
+                        .background(mode == item ? Obsidian.accent : Obsidian.surface, in: .rect(cornerRadius: 9))
                         .foregroundStyle(mode == item ? Obsidian.onAccent : .primary)
+                        .contentShape(.rect)
                 }.buttonStyle(.plain).accessibilityIdentifier("manage.narration." + item.rawValue)
                     .accessibilityAddTraits(mode == item ? .isSelected : [])
                     .disabled(state.working)
@@ -290,13 +300,16 @@ struct ManageAudiobookView: View {
             else if !companion.paired { pairing = true }
             else if mode == .cast, draft?.dirty == true { action = Task { await saveDraft() } }
             else if mode == .cast, summary?.needsAnalysis == true { consent = true }
+            else if capturedPageReady { generate(.page) }
             else if mode == .cast, summary?.missingVoiceCount ?? 0 > 0 { destination = .characters }
             else if mode == .cast, summary?.pendingReviewCount ?? 0 > 0 { destination = .review }
             else { generateScope = true }
         } label: {
             Text(mainTitle).font(.headline).frame(maxWidth: .infinity, minHeight: 48)
         }.buttonStyle(.borderedProminent).foregroundStyle(Obsidian.onAccent).accessibilityIdentifier("manage.main")
-            .disabled(loading || state.working || (mode == .cast && summary == nil && !analyzing && companion.paired))
+            .disabled(loading || state.working || (book == nil && companion.paired) ||
+                      (mode == .cast && draft?.busy == true && !analyzing) ||
+                      (mode == .cast && summary == nil && !analyzing && companion.paired))
             .padding(.top, 8)
     }
     private var mainTitle: String {
@@ -305,6 +318,7 @@ struct ManageAudiobookView: View {
         if mode == .cast {
             if draft?.dirty == true { return "Save cast changes" }
             if summary?.needsAnalysis == true { return "Analyze chapter" }
+            if capturedPageReady { return "Generate page audio" }
             if summary?.missingVoiceCount ?? 0 > 0 { return "Choose character voices" }
             if summary?.pendingReviewCount ?? 0 > 0 { return "Review speakers" }
         }
@@ -318,7 +332,7 @@ struct ManageAudiobookView: View {
             if let book, let draft, let review, let issue = CastReview.pending(review, ranges: ranges).first {
                 CastReviewView(book: book, relevantRanges: ranges, draft: draft, inventory: review, issue: issue)
             } else {
-                NavigationStack { ContentUnavailableView("No lines to check", systemImage: "checkmark.circle", description: Text("The selected chapter has no pending speaker reviews.")).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { self.destination = nil } } } }
+                NavigationStack { ContentUnavailableView(summary?.needsAnalysis == true ? "Analyze chapter first" : "No lines to check", systemImage: summary?.needsAnalysis == true ? "doc.text.magnifyingglass" : "checkmark.circle", description: Text(summary?.needsAnalysis == true ? "Return to Manage audiobook and analyze this chapter to find its speakers." : "The selected chapter has no pending speaker reviews.")).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { self.destination = nil } } } }
             }
         case .pronunciation: PronunciationEditorView(language: reader.book?.language ?? "en")
         case .generation:
@@ -340,7 +354,7 @@ struct ManageAudiobookView: View {
             if chapterID.isEmpty, let book {
                 // The new immutable reader capture is authoritative. A retained
                 // audio selection may belong to a previously played chapter.
-                chapterID = book.chapters.first { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(request.snapshot.hrefs[request.snapshot.current.resource]) }?.id
+                chapterID = book.chapters.first { request.snapshot.hrefs.indices.contains(request.snapshot.current.resource) && ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(request.snapshot.hrefs[request.snapshot.current.resource]) }?.id
                     ?? book.chapters.first?.id ?? ""
             }
             await refreshMetadata()

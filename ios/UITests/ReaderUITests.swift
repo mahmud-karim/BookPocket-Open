@@ -12,22 +12,25 @@ final class ReaderUITests: XCTestCase {
         let save = app.buttons["cast.review.save"]
         scrollReviewTo(save, app: app); XCTAssertTrue(save.isEnabled && save.isHittable); save.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: save)], timeout: 20), .completed)
-        let close = app.buttons["Save & close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 10)); close.tap()
-        XCTAssertTrue(app.buttons["reader.player.generate"].waitForExistence(timeout: 15))
-        XCTAssertFalse(app.buttons["reader.player.review"].exists, "An explicit saved review removes this scope's blocker")
+        XCTAssertTrue(app.buttons["manage.close"].waitForExistence(timeout: 10))
+        let generation = app.buttons["manage.main"]
+        toolsScrollTo(generation, app: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Generate audio"), object: generation)], timeout: 15), .completed)
+        XCTAssertEqual(app.buttons["manage.review"].value as? String, "No lines to check", "An explicit saved review removes this scope's blocker")
         XCTAssertFalse(app.buttons["reader.player.toggle"].exists, "Review does not fabricate generated audio")
-        app.buttons["reader.player.generate"].tap()
-        let queued = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "Queued")).firstMatch
+        submitManagedChapter(app)
+        let queued = app.staticTexts["manage.generation.status"]
         XCTAssertTrue(queued.waitForExistence(timeout: 20), "Only the authenticated resolved exact-source plan can queue generation")
+        XCTAssertTrue(queued.label.contains("Queued"))
         XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
         narrationToolsScreenshot(app, "Obsidian full cast queued only after original text review")
         app.terminate(); app.launch(); openCastReviewReader(app)
-        app.buttons["reader.player.generate"].tap()
+        submitManagedChapter(app)
         XCTAssertTrue(queued.waitForExistence(timeout: 20), "A restarted app prepares the persisted reviewed cast through the authenticated transport")
-        XCTAssertFalse(app.buttons["reader.player.review"].exists, "The original review survives a real app restart")
+        XCTAssertTrue(queued.label.contains("Queued"))
+        XCTAssertEqual(app.buttons["manage.review"].value as? String, "No lines to check", "The original review survives a real app restart")
         XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
-        app.buttons["audiobook.setup.close"].tap(); app.buttons["reader.player.close"].tap(); app.buttons["reader.close"].tap()
+        app.buttons["manage.close"].tap(); app.buttons["reader.player.close"].tap(); app.buttons["reader.close"].tap()
         app.tabBars.buttons["Studio"].tap()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "studio.job.cast-review-generated").firstMatch.waitForExistence(timeout: 15), "The accepted generation request remains saved without simulated audio")
     }
@@ -49,16 +52,21 @@ final class ReaderUITests: XCTestCase {
         scrollReviewTo(error, app: app)
         narrationToolsScreenshot(app, "Obsidian conflicting review save preserves speaker and voice")
         app.buttons["cast.review.cancel"].tap()
-        let close = app.buttons["Save & close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 10)); close.tap()
-        XCTAssertTrue(app.buttons["reader.player.review"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["manage.close"].waitForExistence(timeout: 10))
+        let pending = app.buttons["manage.review"]
+        toolsScrollTo(pending, app: app)
+        XCTAssertEqual(pending.value as? String, "1 lines to check")
+        XCTAssertFalse(app.staticTexts["manage.generation.status"].exists)
         XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
         app.terminate(); app.launch(); openCastReviewReader(app)
-        app.buttons["reader.player.generate"].tap()
-        XCTAssertTrue(app.buttons["reader.player.review"].waitForExistence(timeout: 15))
+        toolsScrollTo(pending, app: app)
+        XCTAssertEqual(pending.value as? String, "1 lines to check")
+        let main = app.buttons["manage.main"]; toolsScrollTo(main, app: app)
+        XCTAssertEqual(main.label, "Review speakers", "A failed save leaves setup blocked rather than offering generation")
+        XCTAssertFalse(app.staticTexts["manage.generation.status"].exists)
         XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
         narrationToolsScreenshot(app, "Obsidian unresolved review remains blocked after restart")
-        app.buttons["audiobook.setup.close"].tap(); app.buttons["reader.player.close"].tap(); app.buttons["reader.close"].tap()
+        app.buttons["manage.close"].tap(); app.buttons["reader.player.close"].tap(); app.buttons["reader.close"].tap()
         app.tabBars.buttons["Studio"].tap()
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "studio.job.cast-review-generated").firstMatch.exists, "A failed review cannot silently generate or replace a voice")
     }
@@ -79,9 +87,10 @@ final class ReaderUITests: XCTestCase {
         app.buttons["reader.scope.chapter"].tap(); openReaderSetup(app)
     }
     private func requestCastReview(_ app: XCUIApplication) {
-        app.buttons["reader.player.generate"].tap()
-        let review = app.buttons["reader.player.review"]
+        let review = app.buttons["manage.review"]
+        toolsScrollTo(review, app: app)
         XCTAssertTrue(review.waitForExistence(timeout: 20)); XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 lines to check"), object: review)], timeout: 15), .completed)
         assertMinimumHitArea(review); review.tap()
         let exact = app.staticTexts["cast.review.exact"]
         XCTAssertTrue(exact.waitForExistence(timeout: 20))
@@ -91,6 +100,14 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(scrollReviewTo(save, app: app, requireHittable: false), "The disabled Save row must be visibly materialized in the unobscured Form")
         XCTAssertTrue(save.waitForExistence(timeout: 10), "The initial disabled Save row must be materialized on a compact Form")
         XCTAssertFalse(save.isEnabled, "An unclear passage requires an explicit speaker and voice")
+    }
+    private func submitManagedChapter(_ app: XCUIApplication) {
+        let generate = app.buttons["manage.main"]
+        toolsScrollTo(generate, app: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND label == %@", "Generate audio"), object: generate)], timeout: 15), .completed)
+        assertMinimumHitArea(generate); generate.tap()
+        let chapter = app.buttons["manage.generate.chapter"]
+        XCTAssertTrue(chapter.waitForExistence(timeout: 10)); chapter.tap()
     }
     private func chooseNewReviewSpeaker(_ app: XCUIApplication) {
         let name = app.textFields["cast.review.newCharacter"]
@@ -244,14 +261,15 @@ final class ReaderUITests: XCTestCase {
         let original = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Mira opened the brass lantern")).firstMatch
         XCTAssertTrue(original.waitForExistence(timeout: 15)); XCTAssertFalse(original.label.contains("Mee rah"))
         narrationToolsScreenshot(app, "Obsidian original reader word highlight after paused seek")
-        app.buttons["reader.speak"].tap(); openReaderSetup(app)
+        app.buttons["reader.speak"].tap(); openReaderRecordingTools(app)
+        app.navigationBars["Saved audio"].buttons["Done"].tap()
         XCTAssertEqual(app.staticTexts["reader.player.timing"].label, "Word highlighting")
         XCTAssertFalse(app.buttons["reader.alignment.enable"].exists)
     }
     func testReaderRecordingRemovalKeepsOtherTakes() {
         executionTimeAllowance = 300
         let app = narrationToolsApp(); app.launch(); openContinuousPage(app)
-        openReaderSetup(app); app.buttons["reader.player.saved"].tap()
+        openReaderRecordingTools(app)
         let manage = app.buttons["reader.saved.manage.reader-continuous-page"]
         XCTAssertTrue(manage.waitForExistence(timeout: 10)); manage.tap()
         app.buttons["reader.saved.delete.reader-continuous-page"].tap()
@@ -304,7 +322,10 @@ final class ReaderUITests: XCTestCase {
         toolsScrollTo(edit, app: app)
         XCTAssertTrue(edit.exists, "Editing must not trigger the separate Remove correction action in this Form row")
         toolsScrollTo(app.buttons["pronunciation.regenerate"], app: app); app.buttons["pronunciation.regenerate"].tap()
-        XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 20)); XCTAssertTrue(app.buttons["reader.player.generate"].exists)
+        XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 20))
+        let context = managedCapturedContext(app, containing: "Mira opened the brass lantern")
+        XCTAssertTrue(context.contains("Mira opened the brass lantern")); XCTAssertFalse(context.contains("Mee rah"))
+        XCTAssertTrue(app.buttons["Connect your PC"].exists, "Offline regeneration keeps the real connection requirement")
         narrationToolsScreenshot(app, "Obsidian pronunciation regenerate exact page or chapter")
     }
     private func narrationToolsApp() -> XCUIApplication {
@@ -314,7 +335,7 @@ final class ReaderUITests: XCTestCase {
         return app
     }
     private func toolsScrollTo(_ element: XCUIElement, app: XCUIApplication) {
-        for _ in 0..<6 { if element.exists && element.isHittable { return }; app.swipeUp() }
+        XCTAssertTrue(scrollReviewTo(element, app: app), "The real setup or editor control must remain reachable")
     }
     private func scrollStudioJobTo(_ element: XCUIElement, app: XCUIApplication) {
         let scroll = app.scrollViews.firstMatch
@@ -628,13 +649,28 @@ final class ReaderUITests: XCTestCase {
         toolsScrollTo(action, app: app); XCTAssertTrue(action.isHittable); action.tap()
         XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
     }
+    private func openReaderRecordingTools(_ app: XCUIApplication) {
+        openReaderSetup(app)
+        let pages = app.buttons["manage.pages"]
+        toolsScrollTo(pages, app: app); XCTAssertTrue(pages.waitForExistence(timeout: 15)); assertMinimumHitArea(pages); pages.tap()
+        XCTAssertTrue(app.navigationBars["Saved audio"].waitForExistence(timeout: 15))
+    }
+    private func managedCapturedContext(_ app: XCUIApplication, containing original: String) -> String {
+        let metadata = app.descendants(matching: .any).matching(identifier: "manage.book").firstMatch
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value CONTAINS %@", original), object: metadata)], timeout: 20), .completed, "The actual immutable source must be available before its scope is asserted")
+        return metadata.value as? String ?? ""
+    }
     private func assertReaderScopeChoicesFit(_ app: XCUIApplication, name: String) {
         openReaderSetup(app)
-        let generate = app.buttons["reader.player.generate"]
-        XCTAssertTrue(generate.waitForExistence(timeout: 10)); assertMinimumHitArea(generate)
-        XCTAssertTrue(app.staticTexts["audiobook.setup.context"].exists)
+        let metadata = app.descendants(matching: .any).matching(identifier: "manage.book").firstMatch
+        XCTAssertTrue(metadata.waitForExistence(timeout: 10))
+        XCTAssertTrue((metadata.value as? String ?? "").contains("Current "), "Manage retains the actual immutable page or chapter context")
+        for id in ["manage.narration.kyon", "manage.narration.cast", "manage.pronunciation", "manage.close"] {
+            let control = app.buttons[id]; toolsScrollTo(control, app: app); assertMinimumHitArea(control)
+        }
+        XCTAssertFalse(app.buttons["reader.player.generate"].exists, "The player cannot retain the old setup controls")
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
-        app.buttons["audiobook.setup.close"].tap()
+        app.buttons["manage.close"].tap()
         XCTAssertTrue(app.buttons["reader.player.toggle"].waitForExistence(timeout: 10))
     }
     private func assertReaderSettingsFit(_ app: XCUIApplication, name: String) {
@@ -854,12 +890,12 @@ final class ReaderUITests: XCTestCase {
         let remoteClip = app.buttons["reader.saved.reader-page-job-1"]
         XCTAssertTrue(localClip.waitForExistence(timeout: 10)); XCTAssertTrue(localClip.label.contains("Ready offline"))
         XCTAssertTrue(remoteClip.label.contains("On PC"))
-        app.buttons["Done"].tap(); openReaderSetup(app); app.buttons["reader.player.saved"].tap()
+        app.buttons["Done"].tap(); openReaderRecordingTools(app)
         XCTAssertTrue(app.buttons["reader.saved.download.reader-page-job-1"].waitForExistence(timeout: 10))
         app.buttons["reader.saved.download.reader-page-job-1"].tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Reconnect your PC and retry the download")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(remoteClip.label.contains("On PC"), "Failed download cannot make PC-only audio ready")
-        localClip.tap(); app.buttons["audiobook.setup.close"].tap()
+        localClip.tap(); app.buttons["audiobook.setup.close"].tap(); app.buttons["manage.close"].tap()
         XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertTrue(play.isEnabled)
         XCTAssertEqual(play.value as? String, "Paused", "Selecting saved audio must not start it")
         XCTAssertEqual(app.buttons["reader.player.narrator"].value as? String, "Kyon")
@@ -1114,8 +1150,11 @@ final class ReaderUITests: XCTestCase {
     func testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet() {
         executionTimeAllowance = 180
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting", "--import-fixture"]
+        // The real EPUB and its exact canonical source are cached offline. This
+        // fixture does not establish a PC connection or fabricated Kyon audio.
+        app.launchArguments = ["--uitesting", "--offline-transport-fixture"]
         app.launch()
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.tabBars.buttons["Library"].tap()
         let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 30)); book.tap()
         // The compact cold simulator needed about 70 seconds to report its
@@ -1135,16 +1174,17 @@ final class ReaderUITests: XCTestCase {
         XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
         assertReaderPlayerFits(app, name: "Obsidian segmented narrator without generated audio")
         openReaderSetup(app)
-        XCTAssertTrue(app.staticTexts["audiobook.setup.context"].label.contains("Current page"))
-        app.buttons["reader.player.generate"].tap()
-        let preview = app.staticTexts["reader.generation.preview"]
+        let preview = app.descendants(matching: .any).matching(identifier: "manage.book").firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 20), app.debugDescription)
-        XCTAssertTrue(preview.label.contains("Mira opened the brass lantern"))
-        XCTAssertFalse(preview.label.contains("Across the Bridge"), "Current page must not include the next chapter")
-        XCTAssertTrue(app.buttons["Pair your PC"].exists)
+        let context = managedCapturedContext(app, containing: "Mira opened the brass lantern")
+        XCTAssertTrue(context.contains("Current page"))
+        XCTAssertTrue(context.contains("Mira opened the brass lantern"))
+        XCTAssertFalse(context.contains("Across the Bridge"), "Current page must not include the next chapter")
+        XCTAssertTrue(app.buttons["Connect your PC"].exists)
+        XCTAssertFalse(app.staticTexts["manage.generation.status"].exists, "Offline setup cannot fabricate accepted generation")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Obsidian exact current page narration preview"; screenshot.lifetime = .keepAlways; add(screenshot)
-        app.buttons["audiobook.setup.close"].tap()
+        app.buttons["manage.close"].tap()
         app.buttons["reader.player.close"].tap()
         XCTAssertTrue(app.buttons["reader.speak"].waitForExistence(timeout: 10))
         assertVisibleInk(in: paragraph)

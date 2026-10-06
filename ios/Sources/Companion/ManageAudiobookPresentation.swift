@@ -1,6 +1,37 @@
 import Foundation
 
 enum ManageAudiobookSource {
+    /// Page readiness uses only its immutable captured words. Setup still
+    /// requires processed chapter coverage; unrelated page issues and voices do
+    /// not become requirements for this exact selection.
+    static func page(snapshot: ReaderScopeSnapshot, book: RemoteBook, chapterID: String, localSHA256: String,
+                     cast: BookCast, voices: [RemoteVoice], engines: [RemoteEngine],
+                     review: CastReviewInventory, statuses: [ChapterAnalysisStatus]) throws -> ReaderSourceSelection {
+        let invalid = BookError.message("The captured page doesn't match the selected chapter's original source. Reopen this page and refresh its setup.")
+        _ = try chapter(book: book, chapterID: chapterID, localSHA256: localSHA256)
+        guard snapshot.hrefs.indices.contains(snapshot.current.resource),
+              Set(snapshot.hrefs.map { ReaderSourceMapper.href($0) }).count == snapshot.hrefs.count,
+              let selected = book.chapters.first(where: { $0.id == chapterID }) else { throw invalid }
+        let capturedHref = snapshot.hrefs[snapshot.current.resource]
+        guard ReaderSourceMapper.href(selected.href) == ReaderSourceMapper.href(capturedHref),
+              book.chapters.filter({ ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(capturedHref) }).count == 1,
+              let document = snapshot.documents[capturedHref], document.blocks.indices.contains(snapshot.current.block),
+              document.blocks[snapshot.current.block].visible.contains(where: {
+                  $0.start <= snapshot.current.offset && snapshot.current.offset < $0.end
+              }) else { throw invalid }
+        var page = snapshot
+        page.scope = .page
+        let selection = try ReaderSourceMapper.resolve(page, book: book)
+        let owners = Set(selected.segments.map(\.id))
+        guard !selection.ranges.isEmpty, selection.ranges.allSatisfy({ owners.contains($0.segmentId) }) else { throw invalid }
+        try CastReview.validate(review, book: book)
+        guard CastReview.chaptersNeedingAnalysis([chapterID], statuses: statuses, inventory: review).isEmpty else {
+            throw BookError.message("Analyze this chapter before generating full cast audio.")
+        }
+        try CastReview.requireReady(review, book: book, ranges: selection.ranges)
+        _ = try ReaderCastPlan.build(cast: cast, book: book, ranges: selection.ranges, voices: voices, engines: engines)
+        return selection
+    }
     static func chapter(book: RemoteBook, chapterID: String, localSHA256: String) throws -> ReaderSourceSelection {
         guard book.sourceSha256.lowercased() == localSHA256.lowercased(),
               book.chapters.filter({ $0.id == chapterID }).count == 1,

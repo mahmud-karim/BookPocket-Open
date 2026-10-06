@@ -37,6 +37,7 @@ jobs:
       - run: xcodegen generate
         working-directory: ios
       - name: Compile simulator app and tests
+        id: compile
         run: |
           set -euo pipefail
           mkdir -p artifacts
@@ -132,6 +133,14 @@ jobs:
               -only-testing:BookPocketOpenTests
               -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests
               -only-testing:BookPocketOpenUITests/ManageAudiobookUITests
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable
             )
           fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
@@ -160,6 +169,9 @@ jobs:
             for TEST in testManageAudiobookAnalysisProgressAndChapterSetupRemainScoped testManageAudiobookLostAnalysisResponseRecoversWithoutDuplicateSubmission; do
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
+            for TEST in testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording testReaderRecordingRemovalKeepsOtherTakes testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet testLargestDynamicTypeKeepsListenAndReaderControlsUsable; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
+            done
           fi
           if [ "$UI_TEST_SCOPE" = playback ]; then
             for TEST in testMiniPlayerDismissalAndListeningSelectionSurviveRestart testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow; do
@@ -184,11 +196,13 @@ jobs:
           xcrun xcresulttool export attachments --path artifacts/Tests.xcresult --output-path artifacts/screenshots || true
           xcrun xcresulttool export diagnostics --path artifacts/Tests.xcresult --output-path artifacts/diagnostics || true
       - name: Boot compact iPhone
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         timeout-minutes: 10
         run: |
           xcrun simctl shutdown '${{ steps.device.outputs.id }}' || true
           python3 scripts/boot_simulator.py '${{ steps.compact.outputs.id }}'
       - name: Verify reader and Listen controls on compact iPhone
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         timeout-minutes: 30
         run: |
           set -euo pipefail
@@ -247,6 +261,14 @@ jobs:
             COMPACT_FILTERS=(
               -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests
               -only-testing:BookPocketOpenUITests/ManageAudiobookUITests
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet
+                -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable
             )
           fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
@@ -296,6 +318,9 @@ jobs:
           fi
           if [ "$UI_TEST_SCOPE" = manage ]; then
             for TEST in testManageAudiobookAnalysisProgressAndChapterSetupRemainScoped testManageAudiobookLostAnalysisResponseRecoversWithoutDuplicateSubmission; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
+            done
+            for TEST in testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording testReaderRecordingRemovalKeepsOtherTakes testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet testLargestDynamicTypeKeepsListenAndReaderControlsUsable; do
               grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
             done
           fi

@@ -8,6 +8,8 @@ final class ManageAudiobookUITests: XCTestCase {
         executionTimeAllowance = 300
         let app = makeApp(); app.launch(); openManage(app)
         chooseCast(app)
+        XCTAssertEqual(app.buttons["manage.characters"].value as? String, "Analyze chapter first")
+        XCTAssertEqual(app.buttons["manage.review"].value as? String, "Analyze chapter first")
         shot(app, "Manage audiobook — original public chapter before analysis")
         let start = app.buttons["manage.analysis.start"]
         reveal(start, app: app); assertTouchTarget(start); start.tap()
@@ -15,7 +17,7 @@ final class ManageAudiobookUITests: XCTestCase {
         XCTAssertTrue(app.alerts.firstMatch.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Only this selected chapter")).firstMatch.exists)
         app.alerts.firstMatch.buttons["Cancel"].tap()
         XCTAssertFalse(app.staticTexts["manage.analysis.stage"].exists, "Cancelling consent must not submit analysis")
-        start.tap(); app.buttons["manage.analysis.consent.accept"].tap()
+        start.tap(); acceptGoogleAnalysis(app)
         waitText(app.staticTexts["manage.analysis.count"], equals: "0 of 4 passages analyzed", seconds: 15)
         waitText(app.staticTexts["manage.analysis.percent"], equals: "0%", seconds: 10)
         XCTAssertFalse(app.buttons["reader.player.generate"].exists, "Unfinished cast analysis must not expose generation")
@@ -89,7 +91,7 @@ final class ManageAudiobookUITests: XCTestCase {
         executionTimeAllowance = 300
         let app = makeApp(extra: ["--manage-analysis-lost-response"]); app.launch(); openManage(app); chooseCast(app)
         let start = app.buttons["manage.analysis.start"]; reveal(start, app: app); start.tap()
-        XCTAssertTrue(app.buttons["manage.analysis.consent.accept"].waitForExistence(timeout: 10)); app.buttons["manage.analysis.consent.accept"].tap()
+        acceptGoogleAnalysis(app)
         let resume = app.buttons["manage.analysis.resume"]
         XCTAssertTrue(resume.waitForExistence(timeout: 20), "A lost acknowledgement must retain an actionable uncertain request")
         reveal(resume, app: app); XCTAssertTrue(resume.isHittable)
@@ -116,6 +118,15 @@ final class ManageAudiobookUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--manage-audiobook-fixture", "--manage-persistence-id=" + UUID().uuidString] + extra
         return app
+    }
+    private func acceptGoogleAnalysis(_ app: XCUIApplication) {
+        let alert = app.alerts["Analyze with Google?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 10))
+        // iOS exposes the alert action and its labelled child with the same
+        // identifier. Scope to this real consent alert and its first action.
+        let accept = alert.buttons.matching(identifier: "manage.analysis.consent.accept").firstMatch
+        XCTAssertTrue(accept.waitForExistence(timeout: 10)); XCTAssertTrue(accept.isEnabled && accept.isHittable)
+        accept.tap()
     }
     private func openManage(_ app: XCUIApplication) {
         let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
@@ -173,8 +184,9 @@ final class ManageAudiobookUITests: XCTestCase {
     }
     private func assertTouchTarget(_ element: XCUIElement) {
         XCTAssertTrue(element.exists && element.isHittable)
-        XCTAssertGreaterThanOrEqual(element.frame.height, 44)
-        XCTAssertGreaterThanOrEqual(element.frame.width, 44)
+        let frame = element.frame
+        XCTAssertGreaterThanOrEqual(frame.height, 44)
+        XCTAssertGreaterThanOrEqual(frame.width, 44)
     }
     private func reveal(_ element: XCUIElement, app: XCUIApplication, seekEarlier: Bool = false) {
         for _ in 0..<8 {

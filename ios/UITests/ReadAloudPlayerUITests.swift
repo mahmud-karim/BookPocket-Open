@@ -46,8 +46,17 @@ final class ReadAloudPlayerUITests: XCTestCase {
         XCTAssertFalse(context.contains(unrelated), "The player cannot substitute another chapter's source")
     }
     private func seconds(_ element: XCUIElement) -> Double {
-        let parts = element.label.split(separator: ":").compactMap { Double($0) }
+        // Listen describes the time through its accessibility value; reader
+        // timeline labels expose the same clock directly as visible text.
+        let value = element.value as? String
+        let clock = value?.contains(":") == true ? value! : element.label
+        let parts = clock.split(separator: ":").compactMap { Double($0) }
         return parts.count == 2 ? parts[0] * 60 + parts[1] : -1
+    }
+    private func waitForClock(_ element: XCUIElement, seconds expected: Double, accuracy: Double = 1) {
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            element.exists && abs(self.seconds(element) - expected) <= accuracy
+        }, object: nil)], timeout: 10), .completed, "The native transport must settle at the requested continuous position")
     }
     private func fits(_ app: XCUIApplication, missing: Bool = false) {
         let surface = app.otherElements["reader.player.surface"]
@@ -61,7 +70,16 @@ final class ReadAloudPlayerUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(element.frame.height + 0.1, 44, id)
             if element.isEnabled { XCTAssertTrue(element.isHittable, id) }
         }
-        XCTAssertFalse(app.tabBars.firstMatch.exists, "Immersive reader has no application tabs underneath")
+        // A full-screen reader can retain the underlying TabView in the AX tree
+        // even though the inspected screen covers it. No tab may be actionable.
+        let backgroundTabs = app.tabBars.firstMatch
+        if backgroundTabs.exists {
+            XCTAssertFalse(backgroundTabs.isHittable, "Immersive reader must cover the application tab bar")
+            for name in ["Library", "Listen", "Studio", "Connection"] {
+                let tab = backgroundTabs.buttons[name]
+                if tab.exists { XCTAssertFalse(tab.isHittable, "A covered application tab must not receive reader touches") }
+            }
+        }
         XCTAssertFalse(app.buttons["reader.player.generate"].exists)
         XCTAssertFalse(app.buttons["reader.player.pronunciation"].exists)
         XCTAssertFalse(app.buttons["reader.player.cast"].exists)
@@ -75,14 +93,18 @@ final class ReadAloudPlayerUITests: XCTestCase {
         XCTAssertEqual(seconds(app.staticTexts["reader.player.duration"]), 124)
         fits(app); screenshot("Read aloud ready page — paper top and charcoal bottom")
         app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0.8)
+        waitForClock(app.staticTexts["reader.player.elapsed"], seconds: 124 * 0.8, accuracy: 2)
         let sought = seconds(app.staticTexts["reader.player.elapsed"])
         XCTAssertGreaterThan(sought, 64, "Seeking before Play crosses backend assets without starting narration")
         XCTAssertEqual(toggle.value as? String, "Paused")
         app.buttons["reader.player.backward"].tap()
+        waitForClock(app.staticTexts["reader.player.elapsed"], seconds: sought - 15)
         XCTAssertEqual(seconds(app.staticTexts["reader.player.elapsed"]), sought - 15, accuracy: 1)
         app.buttons["reader.player.forward"].tap()
+        waitForClock(app.staticTexts["reader.player.elapsed"], seconds: sought)
         XCTAssertEqual(seconds(app.staticTexts["reader.player.elapsed"]), sought, accuracy: 1)
         app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0)
+        waitForClock(app.staticTexts["reader.player.elapsed"], seconds: 0)
         toggle.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.seconds(app.staticTexts["reader.player.elapsed"]) >= 5 }, object: nil)], timeout: 35), .completed)
         XCTAssertEqual(seconds(app.staticTexts["reader.player.duration"]), 124)
@@ -97,6 +119,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
         app.buttons["reader.player.close"].tap()
         XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
         app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
+        waitForClock(app.staticTexts["listen.duration"], seconds: 184)
         XCTAssertEqual(seconds(app.staticTexts["listen.duration"]), 184)
         XCTAssertEqual(app.buttons["player.full.toggle"].value as? String, "Paused")
     }

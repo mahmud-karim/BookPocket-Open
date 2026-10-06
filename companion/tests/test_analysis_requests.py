@@ -102,8 +102,16 @@ def test_legacy_submissions_remain_fresh_and_invalid_uuid_rejected(analysis):
     client, route, _, release, calls = analysis
     assert client.post(route, json={"request_id": "not-a-uuid"}).status_code == 422
     release.set()
-    first = terminal(client, client.post(route, json={}).json())
-    second = terminal(client, client.post(route, json={"request_id": None}).json())
+    response = client.post(route, json={})
+    assert response.status_code == 202, response.text
+    first = terminal(client, response.json())
+    # Completion commits atomically with the cast before the model worker's
+    # actual lease release. This test submits fresh work after that release;
+    # accepting a terminal snapshot does not bypass heavy-work serialization.
+    client.app.state.scheduler.join()
+    response = client.post(route, json={"request_id": None})
+    assert response.status_code == 202, response.text
+    second = terminal(client, response.json())
     assert first["status"] == second["status"] == "completed"
     assert first["id"] != second["id"] and len(calls) == 2
 

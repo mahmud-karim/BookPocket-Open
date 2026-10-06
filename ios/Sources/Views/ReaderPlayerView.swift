@@ -29,6 +29,10 @@ struct ReaderPlayerView: View {
         guard state.mode != .device, let job, job.status == "completed", let selection = state.selection else { return nil }
         let records = companion.orderedDownloads(jobID: job.id)
         guard companion.downloads.contains(where: { $0.jobID == job.id }) || state.readyIDs.contains(job.id) else { return nil }
+        if let book = state.remote {
+            do { try RangedAudioValidation.validate(job: job, book: book) }
+            catch { return error.localizedDescription }
+        }
         do {
             let selected = try DownloadedRecordingSelection.reader(job: job, selection: selection, records: records)
             if companion.recordingDuration(selected) == nil { return "This recording is damaged or its timing is invalid. Open Manage audiobook to download it again." }
