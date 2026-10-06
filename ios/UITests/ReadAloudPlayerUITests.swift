@@ -97,19 +97,38 @@ final class ReadAloudPlayerUITests: XCTestCase {
     }
     private func seek(_ app: XCUIApplication, normalized target: Double, duration: Double) {
         let slider = app.sliders["reader.player.seek"]
-        var gesture = target
-        // Apple's native adjustment is best effort. iOS 26's drag landed at
-        // 105.67/124 for an 80% request, stably; exact 15-second skips passed.
-        // Correct the physical gesture using the real observed slider value.
-        // The final clock assertion remains strict at 99.2 seconds, not 106.
-        for _ in 0..<4 {
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: slider)], timeout: 20), .completed)
-            slider.adjust(toNormalizedSliderPosition: CGFloat(gesture))
-            let clock = seconds(app.staticTexts["reader.player.elapsed"])
-            if abs(clock - duration * target) <= 1 { return }
-            let measured = Double(slider.value as? String ?? "") ?? clock
+        // Native adjust(toNormalizedSliderPosition:) uses a fast, best-effort
+        // drag. Its four corrections oscillated 103 -> 87 -> 115 -> 84 seconds.
+        // Grab the thumb inside its current frame, drag slowly, then let go.
+        // Keep the 99.2-second clock assertion strict; never set app state.
+        var destination = target
+        for attempt in 0..<4 {
+            var previousReading: Double?
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard slider.isEnabled, slider.isHittable, !app.staticTexts["reader.player.readiness"].exists else { previousReading = nil; return false }
+                let reading = Double(slider.value as? String ?? "") ?? self.seconds(app.staticTexts["reader.player.elapsed"])
+                defer { previousReading = reading }
+                return previousReading.map { abs($0 - reading) < 0.05 } ?? false
+            }, object: nil)
+            let result = XCTWaiter.wait(for: [ready], timeout: 20)
+            XCTAssertEqual(result, .completed, "Paused position and transport must settle before correction")
+            guard result == .completed else { return }
+            let measured = Double(slider.value as? String ?? "") ?? seconds(app.staticTexts["reader.player.elapsed"])
+            if abs(measured - duration * target) <= 1 { return }
             guard measured.isFinite, measured >= 0, measured <= duration else { return }
-            gesture = max(0, min(1, gesture + target - measured / duration))
+            if attempt > 0 { destination = max(0, min(1, destination + 0.5 * (target - measured / duration))) }
+            let frame = slider.frame
+            let inset = min(frame.height / 2, frame.width / 4)
+            let track = frame.width - 2 * inset
+            let origin = slider.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: inset + track * CGFloat(measured / duration), dy: frame.height / 2))
+            let end = origin.withOffset(CGVector(dx: inset + track * CGFloat(destination), dy: frame.height / 2))
+            XCTContext.runActivity(named: "Slow physical seek attempt \(attempt + 1)") { activity in
+                start.press(forDuration: 0.3, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+                let attachment = XCTAttachment(string: "frame=\(frame), requested=\(target * duration), value=\(slider.value ?? "nil"), clock=\(seconds(app.staticTexts["reader.player.elapsed"]))")
+                attachment.lifetime = .keepAlways
+                activity.add(attachment)
+            }
         }
     }
     private func fits(_ app: XCUIApplication, missing: Bool = false) {
