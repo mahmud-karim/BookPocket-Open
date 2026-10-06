@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from bookpocket_companion.app import create_app
 from bookpocket_companion.models import Config
+from bookpocket_companion.phone_gateway import PhoneGateway
 from bookpocket_companion.store import canonical
 from test_incremental_cast_contract import wait_analysis
 from test_ranged_cast import RoutingEngine, render
@@ -272,3 +273,52 @@ def test_legacy_failed_quote_analysis_retries_fixed_parser_and_keeps_review_iden
     assert response.status_code == 200, response.text
     assert response.json()["issue"]["status"] == "resolved"
     assert client.get(route + "/source").content == source.encode()
+
+
+def test_paired_phone_gateway_reviews_colon_ids_and_rejects_admin_origin_and_revoked_token(review_book):
+    app, admin, engine, _, _, route, _ = review_book
+    ticket = admin.post("/v1/admin/pairing-tickets").json()
+    with TestClient(PhoneGateway(app), client=("127.0.0.1", 8785)) as phone:
+        pending = phone.post("/v1/pairings", json={"code": ticket["code"], "device_name": "Original public review phone"}).json()
+        assert admin.post("/v1/admin/pairings/" + pending["id"] + "/approve").status_code == 200
+        exchange = phone.get("/v1/pairings/" + pending["id"], headers={"Authorization": "Bearer " + pending["poll_token"]})
+        assert exchange.status_code == 200
+        phone.headers["Authorization"] = "Bearer " + exchange.json()["device_token"]
+        original = "🧭 Mira said, “Carry the lantern.”"
+        book = admin.post("/v1/books", files={"file": ("Original phone suggestion.txt", original.encode())}).json()
+        second_route = "/v1/books/" + book["id"]
+        segment = book["chapters"][0]["segments"][0]
+        saved = {"characters": [{"id": "narrator", "name": "Narrator", "aliases": [], "voice_id": engine.id + ":narrator"},
+                                {"id": "mira", "name": "Mira", "aliases": [], "voice_id": engine.id + ":mira"}],
+                 "assignments": [{"id": "phone-suggestion", "segment_id": segment["id"], "start_offset": original.index("“"),
+                                  "end_offset": len(original), "character_id": "mira", "confidence": .8, "reviewed": False}]}
+        assert admin.put(second_route + "/cast", json=saved).status_code == 200
+        routes = []
+        for book_route, prefix in [(route, "review:"), (second_route, "assignment:")]:
+            response = phone.get(book_route + "/review-issues")
+            assert response.status_code == 200, response.text
+            inventory = response.json(); issue = inventory["issues"][0]
+            assert issue["id"].startswith(prefix)
+            body = resolve_body(inventory, new=prefix == "review:")
+            endpoint = book_route + "/review-issues/" + issue["id"] + "/resolve"
+            before = admin.get(book_route + "/cast").json()
+            for token in ["", "Bearer manual-review-tests-only", "Bearer unknown-review-device"]:
+                assert phone.get(book_route + "/review-issues", headers={"Authorization": token}).status_code == 401
+                assert phone.post(endpoint, json=body, headers={"Authorization": token}).status_code == 401
+            assert phone.get(book_route + "/review-issues", headers={"Origin": "https://public-review.invalid"}).status_code == 403
+            assert phone.post(endpoint, json=body, headers={"Origin": "null"}).status_code == 403
+            assert phone.post(endpoint.replace(":", "%3A"), json=body).status_code == 404
+            assert phone.post(endpoint + "/", json=body).status_code == 404
+            assert admin.get(book_route + "/cast").json() == before
+            response = phone.post(endpoint, json=body)
+            assert response.status_code == 200, response.text
+            assert response.json()["issue"]["status"] == "resolved"
+            assert admin.get(book_route + "/cast").json() == response.json()["cast"]
+            routes.append((book_route, endpoint, body))
+        assert phone.delete("/v1/devices/current").status_code == 200
+        for book_route, endpoint, body in routes:
+            before = admin.get(book_route + "/cast").json()
+            assert phone.get(book_route + "/review-issues").status_code == 401
+            assert phone.post(endpoint, json=body).status_code == 401
+            assert admin.get(book_route + "/cast").json() == before
+        assert admin.get(second_route + "/source").content == original.encode()
