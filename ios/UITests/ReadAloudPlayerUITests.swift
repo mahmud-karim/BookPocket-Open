@@ -4,6 +4,10 @@ import UIKit
 final class ReadAloudPlayerUITests: XCTestCase {
     private var paperViewport: CGRect?
     private var paperViewportTheme: String?
+    private var paperSampleWindow: CGRect?
+    private var paperSamplePoints: [(String, CGPoint)] = []
+    private var paperExpected: [Int] = []
+    private var paperPanelTop: CGFloat?
     private var paperDiagnostics = "No paper sample captured"
     private func app(_ fixture: String = "--reader-continuous-fixture", extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
@@ -48,51 +52,65 @@ final class ReadAloudPlayerUITests: XCTestCase {
         XCTAssertTrue(context.contains(original), "The original captured source must be verifiable offline")
         XCTAssertFalse(context.contains(unrelated), "The player cannot substitute another chapter's source")
     }
-    private func paperMatches(_ name: String) -> Bool {
-        let app = XCUIApplication()
+    private func preparePaperSamples(_ name: String, app: XCUIApplication, playerOpen: Bool) -> Bool {
         let window = app.frame
-        let panel = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
-        let open = app.buttons["reader.player.close"].exists
-        paperDiagnostics = "theme=\(name), playerOpen=\(open), window=\(window)"
+        paperDiagnostics = "theme=\(name), playerOpen=\(playerOpen), window=\(window)"
         guard window.width > 0, window.height > 0 else { return false }
         // Measure the actual EPUB viewport while uncovered. A presented player
         // can change the covered WebView's accessibility frame on compact iOS.
-        if !open {
+        if !playerOpen {
             let page = app.webViews.firstMatch
             guard page.exists, !page.frame.isEmpty else { return false }
             paperViewport = page.frame.intersection(window)
             paperViewportTheme = name
         }
         guard paperViewportTheme == name, let viewport = paperViewport, !viewport.isEmpty else { return false }
+        // Collect every accessibility frame before the polling waiter starts.
+        // Re-querying buttons inside its predicate can interrupt XCTest's
+        // remote accessibility snapshot on compact simulators.
         let toolbarBottom = max(app.buttons["reader.close"].frame.maxY, app.buttons["reader.options"].frame.maxY)
         let x = window.minX + window.width * 0.3
         let statusPoint = CGPoint(x: x, y: window.minY + window.height * 0.02)
         let paperPoint = CGPoint(x: x, y: max(viewport.minY + 8, toolbarBottom + 16))
-        let panelFrame = open && panel.exists ? panel.frame : .zero
-        paperDiagnostics += ", closedEPUBViewport=\(viewport), toolbarBottom=\(toolbarBottom), panel=\(panelFrame), status=\(statusPoint), paper=\(paperPoint)"
-        // Native glass toolbar shadows contaminate the right-hand status area.
-        // The same blank paper point must also stay above the player's shadow;
-        // never sample a covered page or accept the charcoal panel as paper.
+        let panel = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
+        let panelFrame = playerOpen && panel.exists ? panel.frame : .zero
         guard viewport.contains(paperPoint), window.contains(statusPoint),
-              !open || (!panelFrame.isEmpty && paperPoint.y < panelFrame.minY - 35),
-              let image = XCUIScreen.main.screenshot().image.cgImage else { return false }
-        let expected = name == "Obsidian" ? [0, 0, 0] : name == "White" ? [255, 255, 255] : [250, 244, 232]
+              !playerOpen || (!panelFrame.isEmpty && paperPoint.y < panelFrame.minY - 35) else { return false }
+        paperSampleWindow = window
+        paperSamplePoints = [("status", statusPoint), ("paper", paperPoint)]
+        paperExpected = name == "Obsidian" ? [0, 0, 0] : name == "White" ? [255, 255, 255] : [250, 244, 232]
+        paperPanelTop = playerOpen ? panelFrame.minY : nil
+        paperDiagnostics += ", closedEPUBViewport=\(viewport), toolbarBottom=\(toolbarBottom), panel=\(panelFrame), status=\(statusPoint), paper=\(paperPoint)"
+        return true
+    }
+    private func paperPixelsMatch() -> Bool {
+        // This waiter deliberately reads pixels only; all XCTest accessibility
+        // queries were completed synchronously in preparePaperSamples.
+        guard let window = paperSampleWindow, let image = XCUIScreen.main.screenshot().image.cgImage else { return false }
         var matched = true
-        for (label, point) in [("status", statusPoint), ("paper", paperPoint)] {
+        var readings: [String] = []
+        for (label, point) in paperSamplePoints {
             let pixelPoint = CGPoint(x: floor((point.x - window.minX) * CGFloat(image.width) / window.width),
                                      y: floor((point.y - window.minY) * CGFloat(image.height) / window.height))
-            guard let pixel = image.cropping(to: CGRect(origin: pixelPoint, size: CGSize(width: 1, height: 1))),
+            guard image.width > 0, image.height > 0, pixelPoint.x >= 0, pixelPoint.x < CGFloat(image.width),
+                  pixelPoint.y >= 0, pixelPoint.y < CGFloat(image.height),
+                  let pixel = image.cropping(to: CGRect(origin: pixelPoint, size: CGSize(width: 1, height: 1))),
                   let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
             context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
             guard let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return false }
             let rgb = (0..<3).map { Int(bytes[$0]) }
-            paperDiagnostics += "; \(label) pixel=\(pixelPoint), RGB=\(rgb), expected=\(expected), tolerance=3"
-            if (0..<3).contains(where: { abs(rgb[$0] - expected[$0]) > 3 }) { matched = false }
+            readings.append("\(label) pixel=\(pixelPoint), RGB=\(rgb)")
+            if (0..<3).contains(where: { abs(rgb[$0] - paperExpected[$0]) > 3 }) { matched = false }
         }
+        paperDiagnostics += "; \(readings.joined(separator: "; ")), expected=\(paperExpected), tolerance=3, panelTop=\(String(describing: paperPanelTop))"
         return matched
     }
-    private func waitForPaper(_ name: String) {
-        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.paperMatches(name) }, object: nil)], timeout: 15)
+    private func waitForPaper(_ name: String, app: XCUIApplication, playerOpen: Bool) {
+        guard preparePaperSamples(name, app: app, playerOpen: playerOpen) else {
+            XCTFail("Cannot measure the actual unobscured EPUB and reader bars: \(paperDiagnostics)")
+            return
+        }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.paperPixelsMatch() }, object: nil)], timeout: 15)
         let attachment = XCTAttachment(string: paperDiagnostics)
         attachment.name = "\(name) actual paper and status pixel samples"
         attachment.lifetime = .keepAlways; add(attachment)
@@ -142,7 +160,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
         // Grab the thumb inside its current frame, drag slowly, then let go.
         // Keep the 99.2-second clock assertion strict; never set app state.
         var destination = target
-        for attempt in 0..<4 {
+        for attempt in 0..<8 {
             var previousReading: Double?
             let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 guard slider.isEnabled, slider.isHittable, !app.staticTexts["reader.player.readiness"].exists else { previousReading = nil; return false }
@@ -165,7 +183,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
             let end = origin.withOffset(CGVector(dx: inset + track * CGFloat(destination), dy: frame.height / 2))
             XCTContext.runActivity(named: "Slow physical seek attempt \(attempt + 1)") { activity in
                 start.press(forDuration: 0.3, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
-                let attachment = XCTAttachment(string: "frame=\(frame), requested=\(target * duration), value=\(slider.value ?? "nil"), clock=\(seconds(app.staticTexts["reader.player.elapsed"]))")
+                let attachment = XCTAttachment(string: "frame=\(frame), request=\(destination), before=\(measured), target=\(duration * target), value=\(slider.value ?? "nil"), clock=\(seconds(app.staticTexts["reader.player.elapsed"]))")
                 attachment.lifetime = .keepAlways
                 activity.add(attachment)
             }
@@ -300,11 +318,11 @@ final class ReadAloudPlayerUITests: XCTestCase {
         chooseRecording(app, "reader-continuous-page")
         app.buttons["reader.player.close"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["reader.player.close"])], timeout: 10), .completed)
-        waitForPaper("Cream")
+        waitForPaper("Cream", app: app, playerOpen: false)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: app.buttons["reader.speak"])], timeout: 20), .completed)
         app.buttons["reader.speak"].tap()
         XCTAssertTrue(app.buttons["reader.player.close"].waitForExistence(timeout: 10))
-        waitForPaper("Cream")
+        waitForPaper("Cream", app: app, playerOpen: true)
         screenshot("Reader cream top with Read aloud open")
         app.buttons["reader.player.close"].tap(); screenshot("Reader cream top after X close")
         app.buttons["reader.options"].tap(); app.buttons["reader.manageAudiobook"].tap()
@@ -313,12 +331,12 @@ final class ReadAloudPlayerUITests: XCTestCase {
         for theme in ["Obsidian", "White", "Cream"] {
             app.buttons["reader.options"].tap(); app.buttons["Reading appearance"].tap()
             app.segmentedControls.buttons[theme].tap(); app.buttons["Done"].tap()
-            waitForPaper(theme)
+            waitForPaper(theme, app: app, playerOpen: false)
             screenshot("Reader \(theme) top and page after theme change")
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["reader.speak"])], timeout: 20), .completed)
             app.buttons["reader.speak"].tap()
             XCTAssertTrue(app.buttons["reader.player.close"].waitForExistence(timeout: 10))
-            waitForPaper(theme); screenshot("Reader \(theme) top with charcoal Read aloud")
+            waitForPaper(theme, app: app, playerOpen: true); screenshot("Reader \(theme) top with charcoal Read aloud")
             app.buttons["reader.player.close"].tap()
         }
     }
