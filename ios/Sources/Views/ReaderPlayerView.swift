@@ -179,7 +179,7 @@ struct ReaderPlayerView: View {
         }.font(.subheadline).foregroundStyle(.secondary)
     }
     private var status: some View {
-        Text(readiness).font(.subheadline).multilineTextAlignment(.center).foregroundStyle(state.attention == nil ? .primary : .red)
+        Text(readiness).font(.subheadline).multilineTextAlignment(.center).foregroundStyle(state.attention == nil ? SwiftUI.Color.primary : SwiftUI.Color.red)
             .accessibilityIdentifier("reader.player.readiness")
     }
     private var timeline: some View {
