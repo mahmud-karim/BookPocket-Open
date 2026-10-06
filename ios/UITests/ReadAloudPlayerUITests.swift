@@ -35,6 +35,16 @@ final class ReadAloudPlayerUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
+    private func assertManageContext(_ app: XCUIApplication, scope: String, chapter: String, contains original: String, excludes unrelated: String) {
+        let picker = app.buttons["manage.chapter"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", chapter), object: picker)], timeout: 20), .completed)
+        let metadata = app.descendants(matching: .any).matching(identifier: "manage.book").firstMatch
+        XCTAssertTrue(metadata.waitForExistence(timeout: 10))
+        let context = metadata.value as? String ?? ""
+        XCTAssertTrue(context.contains(scope), "Overview retains the actual immutable requested scope")
+        XCTAssertTrue(context.contains(original), "The original captured source must be verifiable offline")
+        XCTAssertFalse(context.contains(unrelated), "The player cannot substitute another chapter's source")
+    }
     private func seconds(_ element: XCUIElement) -> Double {
         let parts = element.label.split(separator: ":").compactMap { Double($0) }
         return parts.count == 2 ? parts[0] * 60 + parts[1] : -1
@@ -100,12 +110,9 @@ final class ReadAloudPlayerUITests: XCTestCase {
         XCTAssertEqual(app.buttons["reader.player.setup"].label, "Set up page audio")
         app.buttons["reader.player.setup"].tap()
         XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["audiobook.setup.context"].label.contains("Current page"))
-        let pagePreview = app.staticTexts["reader.generation.preview"]
-        XCTAssertTrue(pagePreview.waitForExistence(timeout: 10))
-        XCTAssertTrue(pagePreview.label.contains("Mira opened")); XCTAssertFalse(pagePreview.label.contains("Across the Bridge"))
+        assertManageContext(app, scope: "Current page", chapter: "The Lantern", contains: "Mira opened", excludes: "Across the Bridge")
         screenshot("Manage audiobook receives exact page snapshot")
-        app.buttons["audiobook.setup.close"].tap()
+        app.buttons["manage.close"].tap()
         app.buttons["reader.scope.chapter"].tap()
         let setup = app.buttons["reader.player.setup"]
         XCTAssertTrue(setup.waitForExistence(timeout: 10))
@@ -114,14 +121,12 @@ final class ReadAloudPlayerUITests: XCTestCase {
         XCTAssertFalse(toggle.isEnabled); XCTAssertFalse(app.sliders["reader.player.seek"].isEnabled)
         screenshot("Read aloud missing chapter with explicit setup action")
         setup.tap(); XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["audiobook.setup.context"].label.contains("Current chapter"))
-        XCTAssertFalse(app.staticTexts["reader.generation.preview"].label.contains("Across the Bridge"))
-        app.buttons["audiobook.setup.close"].tap()
+        assertManageContext(app, scope: "Current chapter", chapter: "The Lantern", contains: "Mira opened", excludes: "Across the Bridge")
+        app.buttons["manage.close"].tap()
         app.buttons["reader.player.chapters"].tap(); app.buttons["reader.player.chapter.1"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Across the Bridge"), object: app.buttons["reader.player.chapters"])], timeout: 20), .completed)
         setup.tap(); XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["Across the Bridge"].exists)
-        XCTAssertTrue(app.staticTexts["audiobook.setup.context"].label.contains("Current chapter"))
+        assertManageContext(app, scope: "Current chapter", chapter: "Across the Bridge", contains: "At dawn, Mira", excludes: "Mira opened")
         screenshot("Manage audiobook receives exact second chapter context")
     }
     func testAlternateRecordingsAndPlaybackSourcesRemainExplicit() {
@@ -155,7 +160,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
         app.buttons["reader.player.close"].tap(); screenshot("Reader cream top after X close")
         app.buttons["reader.options"].tap(); app.buttons["reader.manageAudiobook"].tap()
         XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
-        app.buttons["audiobook.setup.close"].tap()
+        app.buttons["manage.close"].tap()
         for theme in ["Obsidian", "White", "Cream"] {
             app.buttons["reader.options"].tap(); app.buttons["Reading appearance"].tap()
             app.segmentedControls.buttons[theme].tap(); app.buttons["Done"].tap()
@@ -178,8 +183,8 @@ final class ReadAloudPlayerUITests: XCTestCase {
         }
         app.buttons["reader.player.manage"].tap()
         XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["audiobook.setup.context"].label.contains("Current page"))
-        app.buttons["audiobook.setup.close"].tap()
+        assertManageContext(app, scope: "Current page", chapter: "The Lantern", contains: "Mira opened", excludes: "Across the Bridge")
+        app.buttons["manage.close"].tap()
         XCUIDevice.shared.orientation = .landscapeRight
         screenshot("Read aloud largest text landscape")
         app.buttons["reader.player.close"].tap()

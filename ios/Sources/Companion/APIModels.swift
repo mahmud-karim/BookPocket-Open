@@ -175,6 +175,13 @@ struct AnalysisJob: Codable, Identifiable {
     var reusedChapterIds: [String]? = nil
     var reviewRequired: Bool? = nil
     var pendingReviewCount: Int? = nil
+    var stage: String? = nil
+    var currentChapterId: String? = nil
+    var currentChapterTitle: String? = nil
+    var currentChapterIndex: Int? = nil
+    var totalChapters: Int? = nil
+    var completedBatches: Int? = nil
+    var totalBatches: Int? = nil
 }
 struct ChapterAnalysisStatus: Codable, Identifiable {
     var chapterId: String

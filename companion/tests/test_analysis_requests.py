@@ -135,12 +135,14 @@ raise SystemExit("Fixture analysis did not reach the crash boundary")
         mapping = db.execute("SELECT analysis_id FROM analysis_requests WHERE request_id=?", (request["request_id"],)).fetchone()
         crashed = json.loads(db.execute("SELECT data FROM analyses WHERE id=?", (mapping[0],)).fetchone()[0])
     assert crashed["status"] == "running"
+    assert crashed["stage"] == "analyzing" and crashed["completed_segments"] == 0
     (tmp_path / "analyzer.json").unlink()
     with open_client(tmp_path) as reconstructed:
         replay = reconstructed.post(route, json=request)
         assert replay.status_code == 202
         assert replay.json()["id"] == crashed["id"]
         assert replay.json()["status"] == "failed" and "restart" in replay.json()["error"]
+        assert replay.json()["stage"] == "failed" and replay.json()["completed_segments"] == 0
         assert reconstructed.post(route, json=request).json() == replay.json()
     assert not calls
 

@@ -118,6 +118,7 @@ final class CompanionClient {
             UITestConnectionFixture.configure(config)
         }
         if configuration == nil, UITestCastReviewFixture.enabled { UITestCastReviewFixture.configure(config) }
+        if configuration == nil, UITestManageAudiobookFixture.enabled { UITestManageAudiobookFixture.configure(config) }
         #endif
         config.tlsMinimumSupportedProtocolVersion = .TLSv12
         config.timeoutIntervalForRequest = 30; config.timeoutIntervalForResource = 3600

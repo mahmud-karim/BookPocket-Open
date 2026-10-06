@@ -1,18 +1,22 @@
 import SwiftUI
 import UIKit
 
+enum CastEditorSection { case all, characters }
+
 struct CastView: View {
     let book: RemoteBook
     var relevantRanges: [SourceRange]? = nil
     var autoReview = false
+    var section: CastEditorSection = .all
     @Environment(CompanionStore.self) private var companion
-    var body: some View { CastDraftView(book: book, relevantRanges: relevantRanges, autoReview: autoReview, draft: companion.castDraft(for: book.id)) }
+    var body: some View { CastDraftView(book: book, relevantRanges: relevantRanges, autoReview: autoReview, section: section, draft: companion.castDraft(for: book.id)) }
 }
 
 private struct CastDraftView: View {
     let book: RemoteBook
     let relevantRanges: [SourceRange]?
     let autoReview: Bool
+    let section: CastEditorSection
     @Bindable var draft: CastDraft
     @Environment(CompanionStore.self) private var companion
     @Environment(\.dismiss) private var dismiss
@@ -27,7 +31,11 @@ private struct CastDraftView: View {
     @State private var review: CastReviewInventory?
     @State private var reviewingIssue: CastReviewIssue?
     private var relevantCharacters: Set<String>? {
-        relevantRanges.map { ranges in Set(draft.value.assignments.filter { row in ranges.contains { $0.segmentId == row.segmentId && $0.startOffset < row.endOffset && row.startOffset < $0.endOffset } }.map(\.characterId) + ["narrator"]) }
+        relevantRanges.map { ranges in
+            let assigned = draft.value.assignments.filter { row in ranges.contains { $0.segmentId == row.segmentId && $0.startOffset < row.endOffset && row.startOffset < $0.endOffset } }.map(\.characterId)
+            let suggested = review.map { CastReview.pending($0, ranges: ranges).compactMap(\.suggestedCharacterId) } ?? []
+            return Set(assigned + suggested + ["narrator"])
+        }
     }
     private var service: CastService {
         CastService(fetch: { try await companion.fetchCast(book.id) },
@@ -39,7 +47,7 @@ private struct CastDraftView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let review {
+                if section == .all, let review {
                     Section("Review unclear dialogue") {
                         let pending = CastReview.pending(review, ranges: relevantRanges).filter { relevantRanges != nil || $0.chapterId == chapterID }
                         if pending.isEmpty { Text("No unclear dialogue in this selection.").font(.caption).foregroundStyle(.secondary) }
@@ -50,10 +58,10 @@ private struct CastDraftView: View {
                         }
                     }
                 }
-                Section {
+                if section == .all { Section {
                     Text("Build a cast for every conversation. Voices stay attached to the original words.").foregroundStyle(.secondary)
                     Toggle("Allow configured hosted analysis", isOn: $allowHosted)
-                    Text(allowHosted ? "Analysis will send book text to the hosted API configured on your PC." : "Analysis uses your PC's local model. Hosted APIs are blocked.").font(.caption).foregroundStyle(.secondary)
+                    Text(allowHosted ? "Analysis will send the selected book text to the hosted analyzer configured on your PC." : "Hosted analysis is blocked. Enable this only when you want to send book text to your configured analyzer.").font(.caption).foregroundStyle(.secondary)
                     Picker("Chapter", selection: $chapterID) { ForEach(book.chapters) { Text($0.title).tag($0.id) } }.accessibilityIdentifier("cast.chapter")
                     if let status = chapterStatuses.first(where: { $0.chapterId == chapterID }) { Text(status.status.replacingOccurrences(of: "_", with: " ").capitalized).accessibilityIdentifier("cast.chapter.status"); if let error = status.error { Text(error).foregroundStyle(.red) } }
                     Button("Analyze chapter", systemImage: "person.2.wave.2") { startAnalysis(chapters: [chapterID]) }.disabled(draft.busy || chapterID.isEmpty).accessibilityIdentifier("cast.analyze.chapter")
@@ -68,6 +76,7 @@ private struct CastDraftView: View {
                             Label(warning, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                }
                 }
                 Section("Characters") {
                     if !draft.value.characters.contains(where: { $0.id == "narrator" }) {
@@ -100,7 +109,7 @@ private struct CastDraftView: View {
                     }
                     HStack { TextField("New character", text: $name); Button("Add") { draft.value.characters.append(CastCharacter(id: UUID().uuidString, name: name, aliases: [], voiceId: nil)); name = "" }.disabled(name.isEmpty) }
                 }
-                Section {
+                if section == .all { Section {
                     ForEach($draft.value.assignments) { $assignment in
                         if relevantRanges == nil || relevantRanges!.contains(where: { $0.segmentId == assignment.segmentId && $0.startOffset < assignment.endOffset && assignment.startOffset < $0.endOffset }) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -115,7 +124,7 @@ private struct CastDraftView: View {
                         }
                     }.onDelete { if relevantRanges == nil { draft.value.assignments.remove(atOffsets: $0) } }
                     Button("Assign selected words", systemImage: "text.cursor") { showingAssignment = true }.disabled(draft.value.characters.isEmpty)
-                } header: { Text("Dialogue & narration") } footer: { Text("Delete an incorrect range and select its exact replacement. Unassigned words use the narrator.") }
+                } header: { Text("Dialogue & narration") } footer: { Text("Delete an incorrect range and select its exact replacement. Unassigned words use the narrator.") } }
                 if let error = draft.error { Text(error).foregroundStyle(.red) }
                 if draft.canResumeAnalysis {
                     Button(draft.analysis == nil ? "Recover analysis request" : "Refresh analysis results", systemImage: "arrow.clockwise") {
@@ -129,7 +138,7 @@ private struct CastDraftView: View {
                 if draft.dirty { Text("Unsaved edits are kept while this app stays open.").font(.caption).foregroundStyle(.secondary) }
                 Button("Save cast") { save() }.disabled(draft.busy)
             }
-            .navigationTitle("Cast studio").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(section == .characters ? "Characters & voices" : "Cast studio").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save & close") { save(close: true) }.disabled(draft.busy) } }
             .task {
                 if chapterID.isEmpty { chapterID = book.chapters.first(where: { chapter in relevantRanges?.contains { range in chapter.segments.contains { $0.id == range.segmentId } } == true })?.id ?? book.chapters.first?.id ?? "" }

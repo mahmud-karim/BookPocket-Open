@@ -103,11 +103,11 @@ struct ReaderView: View {
             .sheet(isPresented: Binding(get: { showPlayer && dynamicTypeSize.isAccessibilitySize }, set: { if !$0 { closePlayer() } }), onDismiss: { companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent() }) {
                 ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer, onManage: openAudiobookSetup)
                     .sheet(item: $audiobookSetup, onDismiss: { openPlayer() }) { request in
-                        AudiobookSetupView(request: request, reader: model, state: companion.readerPlayer(for: model.bookID))
+                        ManageAudiobookView(request: request, reader: model, state: companion.readerPlayer(for: model.bookID))
                     }
             }
             .sheet(item: Binding(get: { dynamicTypeSize.isAccessibilitySize && showPlayer ? nil : audiobookSetup }, set: { audiobookSetup = $0 }), onDismiss: { if showPlayer { openPlayer() } }) { request in
-                AudiobookSetupView(request: request, reader: model, state: companion.readerPlayer(for: model.bookID))
+                ManageAudiobookView(request: request, reader: model, state: companion.readerPlayer(for: model.bookID))
             }
             .sheet(item: $pronunciationSelection) { selection in
                 PronunciationEditorView(selectedText: selection.text, language: model.book?.language ?? "en", onRegenerate: {

@@ -188,7 +188,7 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
         for row in db.execute("SELECT id,data FROM analyses").fetchall():
             data = json.loads(row["data"])
             if data["status"] in {"running", "queued"}:
-                data.update(status="failed", error="Analysis interrupted by companion restart; run analysis again")
+                data.update(status="failed", stage="failed", error="Analysis interrupted by companion restart; run analysis again")
                 for state in data.get('chapter_statuses', []):
                     if state['status'] in {'queued', 'running'}: state.update(status='failed', error=data['error'])
                 db.execute("UPDATE analyses SET data=? WHERE id=?", (canonical(data), row["id"]))
@@ -307,8 +307,25 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                     if state:
                         value.update(status=state['status'], analysis_id=job['id'])
                         if state.get('error'): value['error'] = state['error']
+                else:
+                    # Settings may change after accepting work. Its captured
+                    # source/consent remain authoritative; discover only the
+                    # actual active job, never reuse unrelated old coverage.
+                    active = db.execute("""SELECT data FROM analyses
+                        WHERE json_extract(data,'$.book_id')=?
+                          AND json_extract(data,'$.source_sha256')=?
+                          AND json_extract(data,'$.status') IN ('queued','running')
+                          AND EXISTS (SELECT 1 FROM json_each(analyses.data,'$.chapter_ids') WHERE value=?)
+                        ORDER BY json_extract(data,'$.created_at') DESC LIMIT 1""",
+                        (identity, book['source_sha256'], chapter['id'])).fetchone()
+                    if active:
+                        job = json.loads(active[0])
+                        state = next((state for state in job.get('chapter_statuses', []) if state['chapter_id'] == chapter['id']), None)
+                        if state and state['status'] in {'queued', 'running'}:
+                            value.update(status=state['status'], analysis_id=job['id'])
                 value.update(review.chapter_status(db, book, chapter['id'], cast))
-                if value['manual_ready']: value.update(status='completed', error=None)
+                if value['manual_ready'] and value['status'] not in {'queued', 'running'}:
+                    value.update(status='completed', error=None)
                 chapters.append(value)
         return {'chapters': chapters}
 
@@ -365,14 +382,15 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                 if missing:
                     if not analysis_lock.acquire(blocking=False): raise HTTPException(409, "Another casting analysis is running; wait before analyzing additional chapters")
                     acquired = True
-                job = {"id": str(uuid.uuid4()), "book_id": identity, "status": "queued", "completed_segments": 0,
+                job = {"id": str(uuid.uuid4()), "book_id": identity, "status": "queued", 'stage': 'queued', "completed_segments": 0,
                        "total_segments": sum(len(c["segments"]) for c in selected), "created_at": now(), "error": None,
                        'source_sha256': book['source_sha256'], 'chapter_ids': [c['id'] for c in selected], 'reused_chapter_ids': reused,
+                       'total_chapters': len(selected),
                        'prompt_version': PROMPT_VERSION, 'analyzer_fingerprint': digest(canonical(cfg)) if cfg else None,
                        'chapter_statuses': [{'chapter_id': c['id'], 'status': 'completed' if c['id'] in reused else 'queued'} for c in selected],
                        "warnings": ["Automatic casting keeps original outer quote ranges. Unclear quotation or speaker choices require explicit review before full cast generation."]}
                 job['completed_segments'] = sum(len(c['segments']) for c in selected if c['id'] in reused)
-                if not missing: job.update(status='completed', finished_at=now())
+                if not missing: job.update(status='completed', stage='completed', finished_at=now())
                 db.execute("INSERT INTO analyses VALUES(?,?)", (job["id"], canonical(job)))
                 for chapter in selected:
                     if chapter['id'] not in reused:
@@ -387,12 +405,13 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
             with store.db() as db: db.execute("UPDATE analyses SET data=? WHERE id=?", (canonical(job), job["id"]))
         def finish():
             if job['status'] == 'failed':
+                job['stage'] = 'failed'
                 for state in job['chapter_statuses']:
                     if state['status'] in {'queued', 'running'}: state.update(status='failed', error=job.get('error'))
             try:
                 persist()
             except Exception:
-                job.update(status="failed", error="Unable to save analysis status. Check available disk space; start a new analysis after resolving storage errors", finished_at=now())
+                job.update(status="failed", stage="failed", error="Unable to save analysis status. Check available disk space; start a new analysis after resolving storage errors", finished_at=now())
                 failed_persistence[job["id"]] = dict(job)
                 try: persist()
                 except Exception: pass  # Repaired by read_analysis or startup recovery.
@@ -402,12 +421,12 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
             try:
                 with scheduler.lease("analysis"): run_admitted()
             except Exception as exc:
-                job.update(status="failed", error=str(exc)[:1500], finished_at=now())
+                job.update(status="failed", stage="failed", error=str(exc)[:1500], finished_at=now())
             finally:
                 finish()
         def run_admitted():
             try:
-                job["status"] = "running"
+                job.update(status='running', stage='reading')
                 persist()
                 segments = [s for c in book["chapters"] for s in c["segments"]]
                 segment_order = {s["id"]: index for index, s in enumerate(segments)}
@@ -416,11 +435,14 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                         if scheduler.stopped.is_set(): raise WorkCancelled("Analysis stopped during companion shutdown")
                         state = next(value for value in job['chapter_statuses'] if value['chapter_id'] == chapter['id'])
                         state['status'] = 'running'
+                        job.update(stage='reading', current_chapter_id=chapter['id'], current_chapter_title=chapter.get('title'),
+                                   current_chapter_index=next(i+1 for i,c in enumerate(selected) if c['id'] == chapter['id']),
+                                   completed_batches=0, total_batches=None)
                         persist()
                         all_units, structural = scan_dialogue([{'segment_id': s['id'], 'text': s['text']} for s in chapter['segments'] if s.get('kind') != 'heading'])
                         current_saved = Cast.model_validate(get_cast(identity))
                         characters = {c.id: c for c in current_saved.characters}
-                        assignments, batches, batch, count = [], [], [], 0
+                        assignments, batches, batch, count, review_segments = [], [], [], 0, 0
                         batch_limit = min(12000, max(256, (cfg or {}).get('max_output_tokens', 4096) * 2 - 2000))
                         for segment in chapter['segments']:
                             quote_count = sum(segment['text'].count(mark) for mark in ('“', '"', '«', '„'))
@@ -428,14 +450,19 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                             if all_units and estimate > batch_limit:
                                 structural.append({'segment_id': segment['id'], 'start_offset': 0, 'end_offset': len(segment['text']),
                                                    'reason': 'analysis_budget', 'message': 'This paragraph exceeds the model budget; assign its speakers explicitly.'})
+                                review_segments += 1
                                 continue
                             if batch and count + estimate > batch_limit: batches.append(batch); batch, count = [], 0
                             batch.append({'segment_id': segment['id'], 'text': segment['text']})
                             count += estimate
                         if batch: batches.append(batch)
+                        job.update(total_batches=len(batches), completed_segments=job['completed_segments']+review_segments)
+                        persist()
                         for batch in batches:
                             if scheduler.stopped.is_set(): raise WorkCancelled('Analysis stopped during companion shutdown')
                             units = [unit for unit in all_units if unit['segment_id'] in {value['segment_id'] for value in batch}]
+                            job['stage'] = 'analyzing' if units else 'reading'
+                            persist()
                             if units:
                                 first_index = segment_order[batch[0]['segment_id']]
                                 context = '\n'.join(s['text'] for s in segments[max(0, first_index - 2):first_index])[-4000:]
@@ -464,9 +491,12 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                                 assignments.extend(resolve_utterances(result, units, characters))
                                 validate_cast(Cast(characters=list(characters.values()), assignments=assignments), book)
                             job['completed_segments'] += len(batch)
+                            job['completed_batches'] += 1
                             persist()
                         if scheduler.stopped.is_set(): raise WorkCancelled('Analysis stopped during companion shutdown')
                         result = Cast(characters=list(characters.values()), assignments=assignments)
+                        job['stage'] = 'saving'
+                        persist()
                         with store.db() as db:
                             db.execute('BEGIN IMMEDIATE')
                             if not db.execute('SELECT 1 FROM books WHERE id=?', (identity,)).fetchone(): raise ValueError('The book was deleted during analysis')
@@ -478,19 +508,26 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                             review.changed(db, identity)
                             review.publish(db, book, chapter['id'], result, structural)
                             status = review.chapter_status(db, book, chapter['id'], result)
-                            state.update(status)
-                            state['status'] = 'completed'
-                            job['review_required'] = any(s.get('review_required', False) for s in job['chapter_statuses'])
-                            job['pending_review_count'] = sum(s.get('pending_review_count', 0) for s in job['chapter_statuses'])
+                            committed = {**job, 'chapter_statuses': [dict(s) for s in job['chapter_statuses']]}
+                            committed_state = next(s for s in committed['chapter_statuses'] if s['chapter_id'] == chapter['id'])
+                            committed_state.update(status)
+                            committed_state['status'] = 'completed'
+                            committed['review_required'] = any(s.get('review_required', False) for s in committed['chapter_statuses'])
+                            committed['pending_review_count'] = sum(s.get('pending_review_count', 0) for s in committed['chapter_statuses'])
+                            if chapter['id'] == missing[-1]['id']:
+                                committed.update(status='completed', stage='completed', finished_at=now())
                             # Coverage and chapter suggestions become visible in
                             # one commit; later chapter failure keeps earlier work.
-                            db.execute('UPDATE analyses SET data=? WHERE id=?', (canonical(job), job['id']))
-                job.update(status="completed", finished_at=now())
+                            db.execute('UPDATE analyses SET data=? WHERE id=?', (canonical(committed), job['id']))
+                        # Never publish a terminal/chapter-complete memory state
+                        # until SQLite commits its matching cast suggestions.
+                        job.clear()
+                        job.update(committed)
             except Exception as exc:
-                job.update(status="failed", error=str(exc)[:1500], finished_at=now())
+                job.update(status="failed", stage="failed", error=str(exc)[:1500], finished_at=now())
         try:
             scheduler.start_thread(run, "casting-analysis")
         except Exception:
-            job.update(status="failed", error="Unable to start analysis worker; start a new analysis to retry", finished_at=now())
+            job.update(status="failed", stage="failed", error="Unable to start analysis worker; start a new analysis to retry", finished_at=now())
             finish()
         return get_analysis(job["id"])
