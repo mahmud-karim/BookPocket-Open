@@ -4,8 +4,10 @@ The routing fixture tests saved speaker choices and exact source spans, not voic
 quality. No private books, recordings, analyzer models or credentials are used.
 """
 import copy
+import json
 import uuid
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -223,4 +225,50 @@ def test_manual_review_recovers_real_failed_analysis_without_rewriting_failure_h
     job = render(app, client, {**request, "request_id": str(uuid.uuid4())})
     assert job["status"] == "completed", job.get("error")
     assert engine.calls[before:] == [(issue["source_text"], "mira")]
+    assert client.get(route + "/source").content == source.encode()
+
+
+def test_legacy_failed_quote_analysis_retries_fixed_parser_and_keeps_review_identity(review_book, monkeypatch):
+    app, client, engine, _, _, _, _ = review_book
+    source = "🧭 Mira said, “’Twas the guide who said ‘keep going’.”"
+    book = client.post("/v1/books", files={"file": ("Original nested lantern.txt", source.encode())}).json()
+    route = "/v1/books/" + book["id"]
+    cast = {"characters": [{"id": "narrator", "name": "Narrator", "aliases": [], "voice_id": engine.id + ":narrator"},
+                            {"id": "mira", "name": "Mira", "aliases": ["Lantern keeper"], "voice_id": engine.id + ":mira"}], "assignments": []}
+    assert client.put(route + "/cast", json=cast).status_code == 200
+    chapter = book["chapters"][0]
+    # Persist an actual old-release schema at the upgrade boundary; only the
+    # new analyzer response is explicit transport, never a production model.
+    old = {"id": "legacy-nested-parser-failure", "book_id": book["id"], "source_sha256": book["source_sha256"],
+           "prompt_version": 3, "status": "failed", "chapter_ids": [chapter["id"]], "error": "Unsupported nested quotation needs review",
+           "chapter_statuses": [{"chapter_id": chapter["id"], "status": "failed", "error": "Unsupported nested quotation needs review"}]}
+    with app.state.store.db() as db:
+        db.execute("INSERT INTO analyses VALUES(?,?)", (old["id"], canonical(old)))
+    initial = client.get(route + "/review-issues").json()
+    assert len(initial["issues"]) == 1 and initial["issues"][0]["reason"] == "missing_assignment"
+    issue = initial["issues"][0]; calls = []
+    original_post = httpx.Client.post
+    def reply(transport, url, **kwargs):
+        if not str(url).endswith("/chat/completions"):
+            return original_post(transport, url, **kwargs)
+        prompt = json.loads(kwargs["json"]["messages"][1]["content"])
+        calls.append(prompt)
+        result = {"characters": [{"id": "mira", "name": "Mira", "aliases": ["Lantern keeper"]}],
+                  "assignments": [{"utterance_id": unit["utterance_id"], "source_text": unit["source_text"], "character_id": "mira", "confidence": .9} for unit in prompt["utterances"]]}
+        return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(result)}}]})
+    monkeypatch.setattr(httpx.Client, "post", reply)
+    response = client.post(route + "/analyze", json={"request_id": str(uuid.uuid4()), "chapter_ids": [chapter["id"]]})
+    assert response.status_code == 202, response.text
+    completed = wait_analysis(client, response.json()["id"])
+    assert completed["status"] == "completed" and len(calls) == 1
+    current = client.get(route + "/review-issues").json()
+    assert len(current["issues"]) == 1
+    upgraded = current["issues"][0]
+    assert upgraded["id"] == issue["id"] and upgraded["source_text"] == issue["source_text"]
+    assert upgraded["reason"] == "unreviewed_assignment" and upgraded["suggested_character_id"] == "mira" and upgraded["status"] == "pending"
+    assert client.get(route + "/cast").json()["characters"] == cast["characters"]
+    assert client.get("/v1/analyses/" + old["id"]).json() == old
+    response = client.post(route + "/review-issues/" + issue["id"] + "/resolve", json=resolve_body(current, new=False))
+    assert response.status_code == 200, response.text
+    assert response.json()["issue"]["status"] == "resolved"
     assert client.get(route + "/source").content == source.encode()
