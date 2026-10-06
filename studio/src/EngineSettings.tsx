@@ -131,6 +131,8 @@ export function EngineList({ engines }: { engines: Engine[] }) {
 }
 
 export function AnalyzerSettings() {
+  const [provider, setProvider] = useState("openai");
+  const [cliPath, setCLIPath] = useState("");
   const [url, setURL] = useState("");
   const [model, setModel] = useState("");
   const [outputLimit, setOutputLimit] = useState(4096);
@@ -140,6 +142,7 @@ export function AnalyzerSettings() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [readinessError, setReadinessError] = useState("");
   useEffect(() => {
     void api<{
       configured: boolean;
@@ -147,12 +150,18 @@ export function AnalyzerSettings() {
       model?: string;
       has_api_key?: boolean;
       max_output_tokens?: number;
+      provider?: string;
+      cli_path?: string;
+      readiness_error?: string;
     }>("/v1/admin/analyzer")
       .then((s) => {
+        setProvider(s.provider ?? "openai");
+        setCLIPath(s.cli_path ?? "");
         setURL(s.url ?? "");
         setModel(s.model ?? "");
         setHasKey(!!s.has_api_key);
         setOutputLimit(s.max_output_tokens ?? 4096);
+        setReadinessError(s.readiness_error ?? "");
       })
       .catch((e) => setError(e.message));
   }, []);
@@ -162,19 +171,31 @@ export function AnalyzerSettings() {
     setError("");
     setMessage("");
     try {
-      const value = await api<{ has_api_key: boolean }>("/v1/admin/analyzer", {
+      const value = await api<{
+        has_api_key: boolean;
+        readiness_error?: string;
+      }>("/v1/admin/analyzer", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url,
+          provider,
+          url: provider === "antigravity" ? "" : url,
           model,
+          ...(provider === "antigravity" ? { cli_path: cliPath || null } : {}),
           max_output_tokens: outputLimit,
-          ...(clearKey ? { api_key: "" } : key ? { api_key: key } : {}),
+          ...(provider === "antigravity"
+            ? { api_key: "" }
+            : clearKey
+              ? { api_key: "" }
+              : key
+                ? { api_key: key }
+                : {}),
         }),
       });
       setHasKey(value.has_api_key);
       setKey("");
       setClearKey(false);
+      setReadinessError(value.readiness_error ?? "");
       setMessage(
         "Analysis model saved. You can now suggest a cast from a book’s studio.",
       );
@@ -188,46 +209,91 @@ export function AnalyzerSettings() {
     <section className="panel">
       <h2>Cast analysis model</h2>
       <p className="muted">
-        Connect an OpenAI-compatible local model server. A hosted service
-        requires your explicit approval before a book is sent.
+        Choose who identifies the speakers. Google analysis uses your PC’s
+        Antigravity sign-in; OmniVoice still creates the audio on your PC.
       </p>
       <form className="form-stack analyzer-form" onSubmit={(e) => void save(e)}>
         <label>
-          API base URL
-          <input
-            type="url"
-            required
-            value={url}
-            onChange={(e) => setURL(e.target.value)}
-            placeholder="http://127.0.0.1:1234/v1"
-          />
+          Analysis provider
+          <select
+            value={provider}
+            onChange={(e) => {
+              const next = e.target.value;
+              setProvider(next);
+              setMessage("");
+              if (next === "antigravity" && provider !== next)
+                setModel("gemini-3.1-pro-high");
+            }}
+          >
+            <option value="antigravity">Google · Antigravity CLI</option>
+            <option value="openai">OpenAI-compatible server</option>
+          </select>
         </label>
+        {provider === "antigravity" ? (
+          <p className="field-help">
+            Install Antigravity CLI and sign in with your Google AI Pro account
+            once on this PC. No API key is used. Chapter text goes to Google
+            only when you allow hosted analysis. Your plan’s usage limits apply.
+          </p>
+        ) : (
+          <label>
+            API base URL
+            <input
+              type="url"
+              required
+              value={url}
+              onChange={(e) => setURL(e.target.value)}
+              placeholder="http://127.0.0.1:1234/v1"
+            />
+          </label>
+        )}
         <label>
           Model ID
           <input
             required
+            readOnly={provider === "antigravity"}
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder="Model loaded in your local server"
+            placeholder={
+              provider === "antigravity"
+                ? "gemini-3.1-pro-high"
+                : "Model loaded in your server"
+            }
           />
         </label>
-        <label>
-          API key{" "}
-          <span className="field-help">
-            {hasKey
-              ? "A key is saved. Leave blank to keep it for this server."
-              : "Optional for local servers."}
-          </span>
-          <input
-            type="password"
-            autoComplete="off"
-            value={key}
-            disabled={clearKey}
-            onChange={(e) => setKey(e.target.value)}
-          />
-        </label>
+        {provider !== "antigravity" && (
+          <label>
+            API key{" "}
+            <span className="field-help">
+              {hasKey
+                ? "A key is saved. Leave blank to keep it for this server."
+                : "Optional for local servers."}
+            </span>
+            <input
+              type="password"
+              autoComplete="off"
+              value={key}
+              disabled={clearKey}
+              onChange={(e) => setKey(e.target.value)}
+            />
+          </label>
+        )}
         <details>
           <summary>Advanced model settings</summary>
+          {provider === "antigravity" && (
+            <label>
+              Antigravity executable
+              <input
+                value={cliPath}
+                onChange={(e) => setCLIPath(e.target.value)}
+                placeholder="Automatic · agy"
+              />
+              <span className="field-help">
+                Leave blank to find the installed CLI. Use an absolute
+                executable path for a custom installation.
+              </span>
+            </label>
+          )}
           <label>
             Maximum response tokens
             <input
@@ -245,7 +311,7 @@ export function AnalyzerSettings() {
             </span>
           </label>
         </details>
-        {hasKey && (
+        {hasKey && provider !== "antigravity" && (
           <label className="checkbox">
             <input
               type="checkbox"
@@ -262,6 +328,11 @@ export function AnalyzerSettings() {
         {message && (
           <p className="muted" role="status">
             {message}
+          </p>
+        )}
+        {provider === "antigravity" && readinessError && (
+          <p className="job-error" role="alert">
+            {readinessError}
           </p>
         )}
         {error && (

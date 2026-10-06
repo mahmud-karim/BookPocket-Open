@@ -17,6 +17,7 @@ import type { Book, Voice } from "./types";
 const drafts = new Map<string, CastDraft>();
 type Analyzer = {
   configured: boolean;
+  provider?: string;
   url?: string;
   model?: string;
   hosted?: boolean;
@@ -334,7 +335,11 @@ export function CastEditor({
                 checked={allowHosted}
                 onChange={(e) => setAllowHosted(e.target.checked)}
               />
-              Send this book’s text to {analyzer.url} for this analysis.
+              Send this book’s text to{" "}
+              {analyzer.provider === "antigravity"
+                ? "Google through Antigravity CLI"
+                : analyzer.url}{" "}
+              for this analysis.
             </label>
           )}
         </div>
