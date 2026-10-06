@@ -2,9 +2,11 @@ import SwiftUI
 import ReadiumShared
 
 struct AudiobookSetupView: View {
+    enum Destination { case generation, saved, pronunciation }
     let request: AudiobookSetupRequest
     let reader: ReaderModel
     @Bindable var state: ReaderPlayerState
+    var initialDestination: Destination = .generation
     @Environment(CompanionStore.self) private var companion
     @Environment(LibraryStore.self) private var library
     @Environment(PlaybackController.self) private var player
@@ -65,7 +67,11 @@ struct AudiobookSetupView: View {
                     }
                 }
         }.tint(Obsidian.accent).preferredColorScheme(.dark)
-            .onAppear { state.requestGenerationChoice = false }
+            .onAppear {
+                state.requestGenerationChoice = false
+                if initialDestination == .saved { detail = .saved }
+                if initialDestination == .pronunciation { showPronunciation = true }
+            }
             .onDisappear { state.invalidatePlaybackIntent() }
     }
     private var currentChapter: String {

@@ -15,7 +15,7 @@ on:
       ui_scope:
         description: 'UI coverage (cast_review checks guided speaker review on both phones)'
         type: choice
-        options: [full, connection, reader, narration, playback, cast_review]
+        options: [full, connection, reader, narration, playback, cast_review, player]
         default: full
 permissions:
   contents: read
@@ -113,6 +113,16 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
             )
           fi
+          if [ "$UI_TEST_SCOPE" = player ]; then
+            TEST_FILTERS=(
+              -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testMissingPageAndChapterOpenExplicitExactScopeSetup
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testAlternateRecordingsAndPlaybackSourcesRemainExplicit
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testLargestTextAndLandscapeKeepPlaybackAndSetupReachable
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.device.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
@@ -142,6 +152,11 @@ jobs:
           fi
           if [ "$UI_TEST_SCOPE" = cast_review ]; then
             for TEST in testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
+            done
+          fi
+          if [ "$UI_TEST_SCOPE" = player ]; then
+            for TEST in testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress testMissingPageAndChapterOpenExplicitExactScopeSetup testAlternateRecordingsAndPlaybackSourcesRemainExplicit testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes testLargestTextAndLandscapeKeepPlaybackAndSetupReachable; do
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
           fi
@@ -203,6 +218,15 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
             )
           fi
+          if [ "$UI_TEST_SCOPE" = player ]; then
+            COMPACT_FILTERS=(
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testMissingPageAndChapterOpenExplicitExactScopeSetup
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testAlternateRecordingsAndPlaybackSourcesRemainExplicit
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testLargestTextAndLandscapeKeepPlaybackAndSetupReachable
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.compact.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
@@ -216,6 +240,10 @@ jobs:
             done
           elif [ "$UI_TEST_SCOPE" = cast_review ]; then
             for TEST in testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
+            done
+          elif [ "$UI_TEST_SCOPE" = player ]; then
+            for TEST in testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress testMissingPageAndChapterOpenExplicitExactScopeSetup testAlternateRecordingsAndPlaybackSourcesRemainExplicit testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes testLargestTextAndLandscapeKeepPlaybackAndSetupReachable; do
               grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
             done
           elif [ "$UI_TEST_SCOPE" = narration ]; then
