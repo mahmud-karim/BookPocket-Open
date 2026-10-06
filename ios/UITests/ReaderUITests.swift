@@ -40,8 +40,10 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(app.buttons["listen.speed"].value as? String, "1.5×"); XCTAssertFalse(close.exists)
         narrationToolsScreenshot(app, "Obsidian exact offline page restored paused after app restart")
         play.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: play)], timeout: 10), .completed)
+        app.tabBars.buttons["Library"].tap()
         XCTAssertTrue(close.waitForExistence(timeout: 10), "Explicit playback reopens the dismissed mini player")
-        close.tap(); XCTAssertEqual(play.value as? String, "Paused")
+        close.tap(); app.tabBars.buttons["Listen"].tap(); XCTAssertEqual(play.value as? String, "Paused")
         XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 124)
     }
 
