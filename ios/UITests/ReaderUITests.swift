@@ -53,7 +53,7 @@ final class ReaderUITests: XCTestCase {
         app.launchArguments += ["--studio-failed-jobs-fixture", "--transport-persistence-id=" + UUID().uuidString]
         app.launch(); XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.tabBars.buttons["Studio"].tap()
         let delete = app.buttons["studio.job.delete.studio-failed-fixture"]
-        toolsScrollTo(delete, app: app); XCTAssertTrue(delete.waitForExistence(timeout: 10)); XCTAssertTrue(delete.isHittable); delete.tap()
+        scrollStudioJobTo(delete, app: app); XCTAssertTrue(delete.waitForExistence(timeout: 10)); XCTAssertTrue(delete.isHittable); delete.tap()
         let alert = app.alerts.firstMatch
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
         let cancel = alert.buttons.matching(identifier: "studio.job.delete.cancel").firstMatch
@@ -66,9 +66,9 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(delete.exists, "Offline deletion keeps its queue entry")
         narrationToolsScreenshot(app, "Obsidian offline failed job deletion preserves queue")
         app.terminate(); app.launch(); XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.tabBars.buttons["Studio"].tap()
-        toolsScrollTo(delete, app: app); XCTAssertTrue(delete.waitForExistence(timeout: 10))
+        scrollStudioJobTo(delete, app: app); XCTAssertTrue(delete.waitForExistence(timeout: 10))
         let cancelled = app.buttons["studio.job.delete.studio-cancelled-fixture"]
-        toolsScrollTo(cancelled, app: app); XCTAssertTrue(cancelled.exists, "The cancelled job remains separately manageable")
+        scrollStudioJobTo(cancelled, app: app); XCTAssertTrue(cancelled.exists, "The cancelled job remains separately manageable")
         app.tabBars.buttons["Listen"].tap(); app.buttons["listen.downloads"].tap()
         XCTAssertTrue(app.buttons["listen.download.reader-continuous-page"].waitForExistence(timeout: 10), "Unrelated completed recordings survive failed deletion")
     }
@@ -173,6 +173,19 @@ final class ReaderUITests: XCTestCase {
     }
     private func toolsScrollTo(_ element: XCUIElement, app: XCUIApplication) {
         for _ in 0..<6 { if element.exists && element.isHittable { return }; app.swipeUp() }
+    }
+    private func scrollStudioJobTo(_ element: XCUIElement, app: XCUIApplication) {
+        let scroll = app.scrollViews.firstMatch
+        for _ in 0..<12 {
+            if element.exists && element.isHittable { return }
+            let top = app.navigationBars.firstMatch.frame.maxY + 8
+            // A compact phone can move the target above the navigation bar.
+            // Use its current frame to reverse direction instead of overshooting.
+            let moveDown = element.exists && element.frame.minY < top
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: moveDown ? 0.42 : 0.72))
+            let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: moveDown ? 0.72 : 0.42))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
     }
     private func narrationToolsScreenshot(_ app: XCUIApplication, _ name: String) {
         let image = XCTAttachment(screenshot: app.screenshot()); image.name = name; image.lifetime = .keepAlways; add(image)
