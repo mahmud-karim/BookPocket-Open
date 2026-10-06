@@ -91,7 +91,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(exact.label, "🧭 Café bells rang. Mira said, “Keep the lantern steady.")
         narrationToolsScreenshot(app, "Obsidian original Unicode passage before assigning its speaker")
         let save = app.buttons["cast.review.save"]
-        scrollReviewTo(save, app: app, requireHittable: false)
+        XCTAssertTrue(scrollReviewTo(save, app: app, requireHittable: false), "The disabled Save row must be visibly materialized in the unobscured Form")
         XCTAssertTrue(save.waitForExistence(timeout: 10), "The initial disabled Save row must be materialized on a compact Form")
         XCTAssertFalse(save.isEnabled, "An unclear passage requires an explicit speaker and voice")
     }
@@ -110,7 +110,8 @@ final class ReaderUITests: XCTestCase {
         let speaker = app.descendants(matching: .any).matching(identifier: "cast.review.speaker").firstMatch
         scrollReviewTo(speaker, app: app, seekEarlier: true)
     }
-    private func scrollReviewTo(_ element: XCUIElement, app: XCUIApplication, seekEarlier: Bool = false, requireHittable: Bool = true) {
+    @discardableResult
+    private func scrollReviewTo(_ element: XCUIElement, app: XCUIApplication, seekEarlier: Bool = false, requireHittable: Bool = true) -> Bool {
         for _ in 0..<12 {
             // The reader beneath this sheet contains a 44-point horizontal
             // scroll view. Select the visible vertical Form instead of that
@@ -120,20 +121,30 @@ final class ReaderUITests: XCTestCase {
                 .max { $0.frame.height < $1.frame.height }
             let surface = form ?? app
             let navigation = app.navigationBars["Review dialogue"]
-            let top = max(surface.frame.minY, navigation.exists ? navigation.frame.maxY + 8 : app.frame.minY + 100)
             let keyboard = app.keyboards.firstMatch
-            let bottom = min(surface.frame.maxY, keyboard.exists ? keyboard.frame.minY - 8 : app.frame.maxY - 30)
-            guard bottom - top >= 100 else { return }
+            let visibleTop = max(surface.frame.minY, navigation.exists ? navigation.frame.maxY : app.frame.minY)
+            let visibleBottom = min(surface.frame.maxY, keyboard.exists ? keyboard.frame.minY : app.frame.maxY)
+            let viewport = CGRect(x: surface.frame.minX, y: visibleTop, width: surface.frame.width, height: max(0, visibleBottom - visibleTop))
             let materialized = element.exists && !element.frame.isEmpty
-            if materialized && element.frame.minY >= top && element.frame.maxY <= bottom && (!requireHittable || element.isHittable) { return }
+            if materialized {
+                if requireHittable && element.isHittable { return true }
+                let visible = element.frame.intersection(viewport)
+                if !requireHittable && !visible.isNull && visible.height >= min(44, element.frame.height) && visible.width >= min(44, element.frame.width) { return true }
+            }
+            // Drag safety insets do not define visibility. A disabled row at
+            // the bottom of a compact Form can already be fully visible.
+            let top = visibleTop + 8
+            let bottom = visibleBottom - (keyboard.exists ? 8 : 30)
+            guard bottom - top >= 100 else { return false }
             // SwiftUI's compact Form virtualizes offscreen rows. Their absence
             // carries no direction, so callers explicitly seek earlier rows.
-            let down = materialized ? element.frame.minY < top : seekEarlier
+            let down = materialized ? element.frame.minY < visibleTop : seekEarlier
             let origin = app.coordinate(withNormalizedOffset: .zero)
             let start = origin.withOffset(CGVector(dx: app.frame.width * 0.5, dy: top + (bottom - top) * (down ? 0.35 : 0.75)))
             let end = origin.withOffset(CGVector(dx: app.frame.width * 0.5, dy: top + (bottom - top) * (down ? 0.75 : 0.35)))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
+        return false
     }
 
     func testMiniPlayerDismissalAndListeningSelectionSurviveRestart() {
