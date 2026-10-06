@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import uuid
+import shutil
 from fastapi.testclient import TestClient
 import pytest
 from bookpocket_companion.app import create_app
@@ -113,3 +114,66 @@ def test_malformed_manifest_returns_actionable_client_error(api, manifest):
     response = client.post("/v1/books", files={"file": ("lantern.epub", raw, "application/epub+zip")}, data={"manifest": manifest}, headers=ADMIN)
     assert response.status_code in {400, 409, 422}
     assert response.json().get("detail")
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled"])
+def test_phone_deletes_terminal_queue_without_audio_and_cannot_retry_after_restart(api, status):
+    app, client = api
+    raw = b"Original queue test.\n\nThe book remains available."
+    book = client.post("/v1/books", files={"file": ("original.txt", raw)}, headers=ADMIN).json()
+    request = {"request_id": str(uuid.uuid4()), "book_id": book["id"],
+               "segment_ids": [book["chapters"][0]["segments"][0]["id"]],
+               "engine": "fixture", "voice_id": "fixture:preset", "language": "en"}
+    job = client.post("/v1/jobs", json=request, headers=ADMIN).json()
+    other = client.post("/v1/jobs", json={**request, "request_id": str(uuid.uuid4())}, headers=ADMIN).json()
+    if status == "failed":
+        app.state.worker.run(job["id"])
+    else:
+        assert client.post(f'/v1/jobs/{job["id"]}/cancel', headers=ADMIN).status_code == 200
+    terminal = client.get(f'/v1/jobs/{job["id"]}', headers=ADMIN).json()
+    assert terminal["status"] == status and terminal["assets"] == []
+    approved, _, _ = pair(client)
+    phone = {"Authorization": "Bearer " + approved["device_token"]}
+    assert client.delete(f'/v1/jobs/{job["id"]}').status_code == 401
+    assert client.delete(f'/v1/jobs/{job["id"]}', headers=phone).status_code == 204
+    restarted = create_app(app.state.config, engines={"fixture": FixtureEngine()}, start_worker=False)
+    with TestClient(restarted, base_url="http://localhost:8783", client=("127.0.0.1", 1234)) as fresh:
+        assert fresh.delete(f'/v1/jobs/{job["id"]}', headers=phone).status_code == 204
+        assert job["id"] not in {j["id"] for j in fresh.get("/v1/jobs", headers=phone).json()["jobs"]}
+        assert fresh.post(f'/v1/jobs/{job["id"]}/retry', headers=phone).status_code == 404
+        assert fresh.post("/v1/jobs", json=request, headers=phone).status_code == 410
+        assert fresh.get(f'/v1/jobs/{other["id"]}', headers=phone).json()["status"] == "queued"
+        assert fresh.get(f'/v1/books/{book["id"]}/source', headers=phone).content == raw
+
+
+def test_deleting_partly_generated_failed_queue_retains_audio_used_by_completed_take(api):
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg validates actual published test-tone audio")
+    app, client = api
+    class PartialToneEngine(FixtureEngine):
+        version = "queue-deletion-test-only"
+        def synthesize(self, text, voice, output, language="en"):
+            if text.startswith("Second"):
+                raise RuntimeError("Explicit test-only second-passage failure")
+            output.write_bytes((FIXTURES / "test-tone.wav").read_bytes())
+    app.state.worker.engines["fixture"] = PartialToneEngine()
+    raw = b"First original passage.\n\nSecond original passage."
+    book = client.post("/v1/books", files={"file": ("original.txt", raw)}, headers=ADMIN).json()
+    segments = [s["id"] for s in book["chapters"][0]["segments"]]
+    request = {"request_id": str(uuid.uuid4()), "book_id": book["id"], "segment_ids": segments,
+               "engine": "fixture", "voice_id": "fixture:preset", "language": "en"}
+    failed = client.post("/v1/jobs", json=request, headers=ADMIN).json()
+    app.state.worker.run(failed["id"])
+    failed = client.get(f'/v1/jobs/{failed["id"]}', headers=ADMIN).json()
+    assert failed["status"] == "failed" and failed["completed_segments"] == 1
+    assert len(failed["assets"]) == 1
+    complete = client.post("/v1/jobs", json={**request, "request_id": str(uuid.uuid4()), "segment_ids": segments[:1]}, headers=ADMIN).json()
+    app.state.worker.run(complete["id"])
+    complete = client.get(f'/v1/jobs/{complete["id"]}', headers=ADMIN).json()
+    assert complete["status"] == "completed" and complete["assets"][0]["id"] == failed["assets"][0]["id"]
+    asset = complete["assets"][0]
+    before = client.get(asset["url"], headers=ADMIN).content
+    assert client.delete(f'/v1/jobs/{failed["id"]}', headers=ADMIN).status_code == 204
+    assert client.get(asset["url"], headers=ADMIN).content == before
+    assert client.get(f'/v1/jobs/{complete["id"]}', headers=ADMIN).json() == complete
+    assert client.get(f'/v1/books/{book["id"]}/source', headers=ADMIN).content == raw

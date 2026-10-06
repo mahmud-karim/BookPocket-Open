@@ -15,7 +15,7 @@ on:
       ui_scope:
         description: 'UI coverage (narration focuses both phones on the three narration tools)'
         type: choice
-        options: [full, connection, reader, narration]
+        options: [full, connection, reader, narration, playback]
         default: full
 permissions:
   contents: read
@@ -84,6 +84,8 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate
               -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable
               -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testMiniPlayerDismissalAndListeningSelectionSurviveRestart
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
@@ -95,6 +97,13 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
+            )
+          fi
+          if [ "$UI_TEST_SCOPE" = playback ]; then
+            TEST_FILTERS=(
+              -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testMiniPlayerDismissalAndListeningSelectionSurviveRestart
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow
             )
           fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
@@ -116,6 +125,11 @@ jobs:
           fi
           if [ "$UI_TEST_SCOPE" = narration ]; then
             for TEST in testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording testReaderRecordingRemovalKeepsOtherTakes testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
+            done
+          fi
+          if [ "$UI_TEST_SCOPE" = playback ]; then
+            for TEST in testMiniPlayerDismissalAndListeningSelectionSurviveRestart testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow; do
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
           fi
@@ -148,6 +162,8 @@ jobs:
             -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
             -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
             -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testMiniPlayerDismissalAndListeningSelectionSurviveRestart
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionTabShowsVerifiedStatusAndKeepsPairing
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize
@@ -161,6 +177,12 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
             )
           fi
+          if [ "$UI_TEST_SCOPE" = playback ]; then
+            COMPACT_FILTERS=(
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testMiniPlayerDismissalAndListeningSelectionSurviveRestart
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.compact.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
@@ -168,7 +190,11 @@ jobs:
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/CompactListen.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
-          if [ "$UI_TEST_SCOPE" = narration ]; then
+          if [ "$UI_TEST_SCOPE" = playback ]; then
+            for TEST in testMiniPlayerDismissalAndListeningSelectionSurviveRestart testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
+            done
+          elif [ "$UI_TEST_SCOPE" = narration ]; then
             for TEST in testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording testReaderRecordingRemovalKeepsOtherTakes testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged; do
               grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
             done
@@ -191,6 +217,8 @@ jobs:
           grep -E 'Test Case.*testConnectionSettingsRemainReachableAtLargestTextSize.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testStartCompanionVerifiesReadinessAndFitsScreen.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testStartCompanionFailureKeepsUnavailableAndPairing.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testMiniPlayerDismissalAndListeningSelectionSurviveRestart.*passed' artifacts/compact-tests.log
+          grep -E 'Test Case.*testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow.*passed' artifacts/compact-tests.log
           fi
       - name: Capture compact Listen evidence
         if: always()
@@ -206,7 +234,8 @@ jobs:
           path: artifacts/
           retention-days: 3
   device:
-    needs: simulator
+    # Build the separate device product while tests run. Publication remains a
+    # root-owned gate requiring successful simulator and device jobs together.
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
     timeout-minutes: 35
     steps:
