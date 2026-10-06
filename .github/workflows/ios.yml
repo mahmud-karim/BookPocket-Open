@@ -15,7 +15,7 @@ on:
       ui_scope:
         description: 'UI coverage (cast_review checks guided speaker review on both phones)'
         type: choice
-        options: [full, connection, reader, narration, playback, cast_review]
+        options: [full, connection, reader, narration, playback, cast_review, player]
         default: full
 permissions:
   contents: read
@@ -27,9 +27,11 @@ jobs:
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
     timeout-minutes: 90
     env:
-      UI_TEST_SCOPE: ${{ inputs.ui_scope || 'full' }}
+      UI_TEST_SCOPE: ${{ inputs.ui_scope || (github.head_ref == 'codex/read-aloud-player' && 'reader') || 'full' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: python3 scripts/select_xcode.py
       - run: brew install xcodegen
       - run: xcodegen generate
@@ -38,6 +40,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
+          git rev-parse HEAD > artifacts/source-commit.txt
+          test "$(cat artifacts/source-commit.txt)" = '${{ github.event.pull_request.head.sha || github.sha }}'
           # Select both phones; boot each only when its tests are ready.
           DEVICE=$(python3 scripts/select_simulator.py --report artifacts/primary-device.json)
           echo "$DEVICE" > artifacts/primary-device-id.txt
@@ -76,6 +80,7 @@ jobs:
           if [ "$UI_TEST_SCOPE" = reader ]; then
             TEST_FILTERS=(
               -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests
               -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages
               -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousRecordingTimelineFitsLargestTextSizes
               -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters
@@ -113,6 +118,16 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
             )
           fi
+          if [ "$UI_TEST_SCOPE" = player ]; then
+            TEST_FILTERS=(
+              -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testMissingPageAndChapterOpenExplicitExactScopeSetup
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testAlternateRecordingsAndPlaybackSourcesRemainExplicit
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testLargestTextAndLandscapeKeepPlaybackAndSetupReachable
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.device.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
@@ -145,10 +160,17 @@ jobs:
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
           fi
+          if [ "$UI_TEST_SCOPE" = player ]; then
+            for TEST in testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress testMissingPageAndChapterOpenExplicitExactScopeSetup testAlternateRecordingsAndPlaybackSourcesRemainExplicit testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes testLargestTextAndLandscapeKeepPlaybackAndSetupReachable; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
+            done
+          fi
       - name: Capture test evidence
         if: always()
         run: |
           mkdir -p artifacts
+          git rev-parse HEAD > artifacts/source-commit.txt
+          test "$(cat artifacts/source-commit.txt)" = '${{ github.event.pull_request.head.sha || github.sha }}'
           xcrun simctl io '${{ steps.device.outputs.id }}' screenshot artifacts/final-screen.png || true
           xcrun xcresulttool export attachments --path artifacts/Tests.xcresult --output-path artifacts/screenshots || true
           xcrun xcresulttool export diagnostics --path artifacts/Tests.xcresult --output-path artifacts/diagnostics || true
@@ -162,6 +184,7 @@ jobs:
         run: |
           set -euo pipefail
           COMPACT_FILTERS=(
+            -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests
             -only-testing:BookPocketOpenUITests/ReaderUITests/testListenFitsOneScreenAndSelectsChapters
             -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters
             -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable
@@ -203,6 +226,15 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
             )
           fi
+          if [ "$UI_TEST_SCOPE" = player ]; then
+            COMPACT_FILTERS=(
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testMissingPageAndChapterOpenExplicitExactScopeSetup
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testAlternateRecordingsAndPlaybackSourcesRemainExplicit
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests/testLargestTextAndLandscapeKeepPlaybackAndSetupReachable
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.compact.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
@@ -216,6 +248,10 @@ jobs:
             done
           elif [ "$UI_TEST_SCOPE" = cast_review ]; then
             for TEST in testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
+            done
+          elif [ "$UI_TEST_SCOPE" = player ]; then
+            for TEST in testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress testMissingPageAndChapterOpenExplicitExactScopeSetup testAlternateRecordingsAndPlaybackSourcesRemainExplicit testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes testLargestTextAndLandscapeKeepPlaybackAndSetupReachable; do
               grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
             done
           elif [ "$UI_TEST_SCOPE" = narration ]; then
@@ -248,6 +284,8 @@ jobs:
         if: always()
         run: |
           mkdir -p artifacts
+          git rev-parse HEAD > artifacts/source-commit.txt
+          test "$(cat artifacts/source-commit.txt)" = '${{ github.event.pull_request.head.sha || github.sha }}'
           xcrun simctl io '${{ steps.compact.outputs.id }}' screenshot artifacts/compact-final-screen.png || true
           xcrun xcresulttool export attachments --path artifacts/CompactListen.xcresult --output-path artifacts/compact-screenshots || true
           xcrun xcresulttool export diagnostics --path artifacts/CompactListen.xcresult --output-path artifacts/compact-diagnostics || true
@@ -264,6 +302,8 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: python3 scripts/select_xcode.py
       - run: brew install xcodegen
       - run: xcodegen generate
@@ -272,6 +312,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
+          git rev-parse HEAD > artifacts/source-commit.txt
+          test "$(cat artifacts/source-commit.txt)" = '${{ github.event.pull_request.head.sha || github.sha }}'
           xcodebuild -version
           xcodebuild build -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
