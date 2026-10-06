@@ -103,14 +103,24 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(app.buttons["cast.review.save"].isEnabled)
     }
     private func scrollReviewTo(_ element: XCUIElement, app: XCUIApplication) {
-        let form = app.scrollViews.firstMatch.exists ? app.scrollViews.firstMatch : app.collectionViews.firstMatch
         for _ in 0..<12 {
             if element.exists && element.isHittable { return }
-            let top = app.navigationBars.firstMatch.frame.maxY + 8
+            // The reader beneath this sheet contains a 44-point horizontal
+            // scroll view. Select the visible vertical Form instead of that
+            // first unrelated ScrollView, and keep drags above the keyboard.
+            let containers = app.collectionViews.allElementsBoundByIndex + app.tables.allElementsBoundByIndex + app.scrollViews.allElementsBoundByIndex
+            let form = containers.filter { $0.exists && $0.isHittable && $0.frame.height >= 200 && $0.frame.width >= app.frame.width * 0.7 }
+                .max { $0.frame.height < $1.frame.height }
+            let surface = form ?? app
+            let navigation = app.navigationBars["Review dialogue"]
+            let top = max(surface.frame.minY, navigation.exists ? navigation.frame.maxY + 8 : app.frame.minY + 100)
+            let keyboard = app.keyboards.firstMatch
+            let bottom = min(surface.frame.maxY, keyboard.exists ? keyboard.frame.minY - 8 : app.frame.maxY - 30)
+            guard bottom - top >= 100 else { return }
             let down = element.exists && element.frame.minY < top
-            let surface = form.exists ? form : app
-            let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.42 : 0.72))
-            let end = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.72 : 0.42))
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: app.frame.width * 0.5, dy: top + (bottom - top) * (down ? 0.35 : 0.75)))
+            let end = origin.withOffset(CGVector(dx: app.frame.width * 0.5, dy: top + (bottom - top) * (down ? 0.75 : 0.35)))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
     }
