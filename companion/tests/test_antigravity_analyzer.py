@@ -21,7 +21,7 @@ SCRIPT = '''import json,sys,time,pathlib,re,base64
 mode=sys.argv[1]
 assert 'PRIVATE_SOURCE_SENTINEL' not in str(sys.argv)
 tools=None if mode=='badtools' else ['view_file','run_command']
-print(json.dumps({'event':'init','init':{'tools':tools,'model':'wrong' if mode=='badmodel' else 'gemini-3.1-pro-high','agent':'bookpocket-casting'}}),flush=True)
+print(json.dumps({'event':'init','init':{'tools':tools,'model':'wrong' if mode=='badmodel' else 'gemini-3.8-flash-high','agent':'bookpocket-casting'}}),flush=True)
 if mode=='hang':
  time.sleep(60)
 data=json.loads(sys.stdin.readline())

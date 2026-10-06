@@ -222,7 +222,7 @@ export function AnalyzerSettings() {
               setProvider(next);
               setMessage("");
               if (next === "antigravity" && provider !== next)
-                setModel("gemini-3.1-pro-high");
+                setModel("gemini-3.8-flash-high");
             }}
           >
             <option value="antigravity">Google · Antigravity CLI</option>
@@ -256,7 +256,7 @@ export function AnalyzerSettings() {
             onChange={(e) => setModel(e.target.value)}
             placeholder={
               provider === "antigravity"
-                ? "gemini-3.1-pro-high"
+                ? "gemini-3.8-flash-high"
                 : "Model loaded in your server"
             }
           />

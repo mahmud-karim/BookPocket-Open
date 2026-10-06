@@ -240,7 +240,7 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
         if body.provider == 'antigravity':
             from .antigravity_analyzer import MODEL
             if body.url or body.api_key: raise HTTPException(400, 'Antigravity uses the official signed-in CLI; leave API URL and API key empty')
-            if body.model != MODEL: raise HTTPException(400, 'Select the pinned Gemini Pro analysis model')
+            if body.model != MODEL: raise HTTPException(400, 'Select the pinned Gemini 3.8 Flash analysis model')
             if body.cli_path:
                 from pathlib import Path
                 if not Path(body.cli_path).is_absolute(): raise HTTPException(400, 'Choose an absolute native Antigravity CLI executable path')

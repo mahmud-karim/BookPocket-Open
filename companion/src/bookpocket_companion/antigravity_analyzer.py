@@ -15,7 +15,7 @@ import time
 import uuid
 from .scheduler import WorkCancelled, WorkOwnershipUncertain
 
-MODEL = 'gemini-3.1-pro-high'
+MODEL = 'gemini-3.8-flash-high'
 AGENT = 'bookpocket-casting'
 PROFILE = '''---
 name: bookpocket-casting
@@ -23,7 +23,7 @@ description: Exact-source speaker classification without tools
 tools: []
 mainAgent: true
 subagent: false
-model: pro
+model: flash
 commandExecutionPolicy: off
 mcpServers: []
 skills: []
@@ -167,7 +167,7 @@ def _hook_manifest(root, nonce):
 def classify(settings, instruction, prompt, schema, cancel_event=None, timeout=600):
     policy_check()
     executable = cli_path(settings.get('cli_path'))
-    if settings.get('model') != MODEL: raise ValueError('Select the supported pinned Gemini Pro analysis model')
+    if settings.get('model') != MODEL: raise ValueError('Select the supported pinned Gemini 3.8 Flash analysis model')
     with tempfile.TemporaryDirectory(prefix='bookpocket-agy-') as directory, contextlib.ExitStack() as stack:
         root = Path(directory)
         # The companion writes only public profile configuration here. Source

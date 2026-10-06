@@ -4,7 +4,7 @@ The Windows companion can use the official Antigravity CLI and its signed-in Goo
 
 Install [Antigravity CLI](https://antigravity.google/docs/cli/install/) separately and run `agy` once on the same Windows account as the companion to sign in. Use `agy models` to check model availability. Google AI Pro includes access subject to model and weekly usage limits; this integration does not use a Gemini API key or require API billing. The adapter rejects enabled `useG1Credits`; an absent setting uses the CLI's documented false default, preventing subscription exhaustion from automatically using AI credits.
 
-In the Windows studio, open **Settings → Cast analysis model**, choose **Google · Antigravity CLI**, and save. This preview pins `gemini-3.1-pro-high`, the tested Pro model. An empty executable field finds the installed `agy` automatically. A custom installation requires an absolute native executable path.
+In the Windows studio, open **Settings → Cast analysis model**, choose **Google · Antigravity CLI**, and save. This preview pins `gemini-3.8-flash-high`, the tested Flash model. An empty executable field finds the installed `agy` automatically. A custom installation requires an absolute native executable path.
 
 On the iPhone, open the book's cast editor, enable **Allow configured hosted analysis**, and choose **Analyze chapter**. Use **Reanalyze chapter** to replace old model suggestions after changing provider; saved human corrections and voice assignments remain authoritative. Analysis sends the requested chapters and nearby context, along with the accumulated character names and aliases, to Google. It does not send audio, reference recordings or the entire library. The current iPhone build already supports these controls.
 
