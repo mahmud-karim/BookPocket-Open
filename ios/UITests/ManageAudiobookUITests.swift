@@ -77,7 +77,21 @@ final class ManageAudiobookUITests: XCTestCase {
         // Return to the blocked chapter: single narrator remains usable without
         // assigning Mira's missing cast voice or silently reviewing her lines.
         selectChapter("The Lantern", app: app)
-        app.buttons["manage.narration.kyon"].tap()
+        // Selecting a chapter can leave the compact screen scrolled below its
+        // narration picker. Reveal the real button before sending the tap.
+        let kyon = app.buttons["manage.narration.kyon"]
+        reveal(kyon, app: app, seekEarlier: true); assertTouchTarget(kyon)
+        XCTAssertTrue(kyon.isEnabled)
+        shot(app, "Manage audiobook — visible Kyon control before changing narration")
+        kyon.tap()
+        let switched = [
+            XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["manage.analysis.start"]),
+            XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["manage.characters"]),
+            XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", "Generate audio"), object: app.buttons["manage.main"])
+        ]
+        let switchResult = XCTWaiter.wait(for: switched, timeout: 10)
+        let companionError = app.staticTexts["manage.error"]
+        XCTAssertEqual(switchResult, .completed, "Kyon must remove cast blockers; companion error: \(companionError.exists ? companionError.label : "none")")
         XCTAssertFalse(app.buttons["manage.analysis.start"].exists)
         XCTAssertFalse(app.buttons["manage.characters"].exists)
         reveal(app.buttons["manage.main"], app: app); XCTAssertEqual(app.buttons["manage.main"].label, "Generate audio")
