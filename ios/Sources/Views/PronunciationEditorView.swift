@@ -12,6 +12,7 @@ struct PronunciationEditorView: View {
     @State private var sample = ""
     @State private var enabled = true
     @State private var editingTerm: String?
+    @State private var editRevision = 0
     @State private var error: String?
     @State private var notice: String?
     @State private var busy = false
@@ -22,9 +23,10 @@ struct PronunciationEditorView: View {
     private var valid: Bool { (try? PronunciationCorrections.validate([proposed])) != nil }
     var body: some View {
         NavigationStack {
+            ScrollViewReader { scroll in
             Form {
                 Section {
-                    Text("Change how a name or word is spoken. The text in your book stays exactly as written.")
+                    Text("Change how a name or word is spoken. The text in your book stays exactly as written.").id("pronunciation.draft")
                     TextField("Written word or phrase", text: $term).textInputAutocapitalization(.never).autocorrectionDisabled().focused($editing).accessibilityIdentifier("pronunciation.term")
                     TextField("Speak as", text: $replacement).textInputAutocapitalization(.never).autocorrectionDisabled().focused($editing).accessibilityIdentifier("pronunciation.replacement")
                     Toggle("Enabled", isOn: $enabled).accessibilityIdentifier("pronunciation.enabled")
@@ -42,7 +44,7 @@ struct PronunciationEditorView: View {
                 Section("Saved corrections") {
                     ForEach(companion.narrationPronunciations) { rule in
                         VStack(alignment: .leading) {
-                            Button { term = rule.term; replacement = rule.replacement; enabled = rule.enabled; editingTerm = rule.term } label: { Label("\(rule.term) → \(rule.replacement)", systemImage: "pencil") }
+                            Button { term = rule.term; replacement = rule.replacement; enabled = rule.enabled; editingTerm = rule.term; editRevision += 1 } label: { Label("\(rule.term) → \(rule.replacement)", systemImage: "pencil") }
                                 .buttonStyle(.borderless).frame(minHeight: 44)
                                 .accessibilityIdentifier("pronunciation.edit." + rule.term)
                             Toggle("Enabled", isOn: Binding(get: { companion.narrationPronunciations.first { $0.term == rule.term }?.enabled ?? false }, set: { value in update(rule, enabled: value) }))
@@ -68,11 +70,17 @@ struct PronunciationEditorView: View {
                     ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Done typing") { editing = false }.accessibilityIdentifier("pronunciation.keyboard.done") }
                 }
                 .onAppear { if term.isEmpty { term = selectedText } }
+                .onChange(of: editRevision) {
+                    // Editing a saved row brings its populated fields into view
+                    // on smaller phones, without unexpectedly opening a keyboard.
+                    withAnimation(.easeInOut(duration: 0.2)) { scroll.scrollTo("pronunciation.draft", anchor: .top) }
+                }
                 .onDisappear { preview.stop() }
                 .confirmationDialog("The PC corrections changed. Your phone draft is kept.", isPresented: $conflict, titleVisibility: .visible) {
                     Button("Load PC corrections", role: .destructive) { Task { do { try await companion.reloadPronunciationsFromPC(); notice = "PC corrections loaded." } catch { self.error = error.localizedDescription } } }
                     Button("Keep phone draft", role: .cancel) {}
                 } message: { Text("Loading the PC list replaces your phone draft. Review both lists before saving again.") }
+            }
         }.tint(Obsidian.accent)
     }
     private func reset() { term = ""; replacement = ""; sample = ""; editingTerm = nil; enabled = true }
