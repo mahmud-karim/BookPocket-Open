@@ -37,6 +37,7 @@ struct ReaderView: View {
     @State private var query = ""
     @State private var contentsError: String?
     @State private var showPlayer = false
+    @State private var audiobookSetup: AudiobookSetupRequest?
     @State private var pronunciationSelection: PronunciationSelection?
     private struct PronunciationSelection: Identifiable { var id = UUID(); var text: String }
     @AppStorage("readerFontSize") private var fontSize = 110.0
@@ -62,11 +63,16 @@ struct ReaderView: View {
                         Button("Add bookmark", systemImage: "bookmark") { model.addAnnotation(highlight: false) }
                         Button("Highlight selection", systemImage: "highlighter") { model.addAnnotation(highlight: true) }
                         Button("Bookmarks & highlights", systemImage: "bookmark.square") { panel = .annotations }
+                        Button("Manage audiobook", systemImage: "waveform") { openAudiobookSetup() }.accessibilityIdentifier("reader.manageAudiobook")
                         Button("Reading appearance", systemImage: "textformat.size") { panel = .appearance }
                         Button("Pronunciation", systemImage: "text.bubble") { openPronunciation() }.accessibilityIdentifier("reader.pronunciation")
                     } label: { Label("Reader options", systemImage: "ellipsis.circle") }.accessibilityIdentifier("reader.options")
                 }
             }
+            .toolbarBackground(readerPaper, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(theme == "dark" ? .dark : .light, for: .navigationBar)
+            .background(readerPaper.ignoresSafeArea())
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 HStack {
                     Button { Task { await model.navigator?.goBackward() } } label: {
@@ -95,17 +101,23 @@ struct ReaderView: View {
                 }.presentationDetents([.medium, .large])
             }
             .sheet(isPresented: Binding(get: { showPlayer && dynamicTypeSize.isAccessibilitySize }, set: { if !$0 { closePlayer() } }), onDismiss: { companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent() }) {
-                ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID))
+                ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer, onManage: openAudiobookSetup)
+                    .sheet(item: $audiobookSetup, onDismiss: { openPlayer() }) { request in
+                        AudiobookSetupView(request: request, reader: model, state: companion.readerPlayer(for: model.bookID))
+                    }
+            }
+            .sheet(item: Binding(get: { dynamicTypeSize.isAccessibilitySize && showPlayer ? nil : audiobookSetup }, set: { audiobookSetup = $0 }), onDismiss: { if showPlayer { openPlayer() } }) { request in
+                AudiobookSetupView(request: request, reader: model, state: companion.readerPlayer(for: model.bookID))
             }
             .sheet(item: $pronunciationSelection) { selection in
                 PronunciationEditorView(selectedText: selection.text, language: model.book?.language ?? "en", onRegenerate: {
                     let state = companion.readerPlayer(for: model.bookID)
                     if state.mode == .device { state.mode = .kyon }
-                    state.requestGenerationChoice = true; openPlayer()
+                    state.requestGenerationChoice = true; openAudiobookSetup()
                 })
             }
             .alert("Reader", isPresented: Binding(get: { model.error != nil && !model.loading && model.navigator != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
-        }.tint(Obsidian.accent).preferredColorScheme(.dark)
+        }.tint(theme == "dark" ? .white : .black).preferredColorScheme(theme == "dark" ? .dark : .light)
             .overlay(alignment: .bottom) {
                 if showPlayer && !dynamicTypeSize.isAccessibilitySize {
                     // An overlay preserves the Readium viewport and exact page
@@ -113,14 +125,28 @@ struct ReaderView: View {
                     GeometryReader { geometry in
                         VStack(spacing: 0) {
                             Spacer(minLength: 0)
-                            ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer)
-                                .frame(height: min(590, geometry.size.height))
+                            ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer, onManage: openAudiobookSetup)
+                                .frame(height: min(530, geometry.size.height))
+                                .environment(\.colorScheme, .dark)
                                 .clipShape(.rect(topLeadingRadius: 24, topTrailingRadius: 24))
                                 .shadow(color: .black.opacity(0.25), radius: 14, y: -4)
                         }
                     }.ignoresSafeArea(.container, edges: .bottom)
                 }
             }
+    }
+    private var readerPaper: Color { Color(uiColor: ReaderPaperTheme.background(theme)) }
+    private func openAudiobookSetup() {
+        let state = companion.readerPlayer(for: model.bookID)
+        Task {
+            do {
+                let snapshot = try await model.captureScope(state.playbackScope)
+                let title = flatten(model.chapters).first { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(snapshot.hrefs[snapshot.current.resource]) }?.title ?? model.location?.title ?? "Current chapter"
+                if state.mode == .device { state.mode = .kyon }
+                if let local = model.book, !state.working && !state.showingSelection { state.discover(snapshot: snapshot, local: local, companion: companion) }
+                audiobookSetup = .init(bookID: model.bookID, chapterTitle: title, scope: state.playbackScope, mode: state.mode, snapshot: snapshot)
+            } catch { state.captureError = error.localizedDescription; model.error = error.localizedDescription }
+        }
     }
     private func closePlayer() {
         companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent()
