@@ -10,8 +10,17 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: toggle)], timeout: 10), .completed)
         toggle.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Paused"), object: toggle)], timeout: 10), .completed)
-        app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0.2)
+        // XCTest's normalized slider gesture may settle at 34 seconds on the
+        // compact phone, outside Mira's [4, 34) interval. Use the precise skip
+        // control here, then exercise the slider across the next word boundary.
+        let pausedPosition = audioSeconds(app.staticTexts["reader.player.elapsed"])
+        app.buttons["reader.player.forward"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Mira"), object: surface)], timeout: 10), .completed)
+        let miraPosition = audioSeconds(app.staticTexts["reader.player.elapsed"])
+        XCTAssertEqual(miraPosition, pausedPosition + 15, accuracy: 1)
+        XCTAssertGreaterThan(miraPosition, 4); XCTAssertLessThan(miraPosition, 34, "The observed joined clock must lie inside Mira's actual fixture interval")
+        XCTAssertEqual(toggle.value as? String, "Paused")
+        narrationToolsScreenshot(app, "Obsidian original word highlighting after 15 second skip")
         app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0.4)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "opened"), object: surface)], timeout: 10), .completed)
         let position = audioSeconds(app.staticTexts["reader.player.elapsed"])
