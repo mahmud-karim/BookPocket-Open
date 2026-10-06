@@ -595,6 +595,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: choice)], timeout: 20), .completed)
         XCTAssertTrue(choice.waitForExistence(timeout: 5)); assertMinimumHitArea(choice); choice.tap()
         XCTAssertTrue(app.buttons["reader.player.toggle"].waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["reader.player.narrator"])], timeout: 20), .completed)
     }
 
     private func assertReaderPlayerFits(_ app: XCUIApplication, name: String) {
@@ -623,6 +624,7 @@ final class ReaderUITests: XCTestCase {
     }
     private func openReaderSetup(_ app: XCUIApplication) {
         let action = app.buttons["reader.player.setup"].exists ? app.buttons["reader.player.setup"] : app.buttons["reader.player.manage"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: action)], timeout: 20), .completed)
         toolsScrollTo(action, app: app); XCTAssertTrue(action.isHittable); action.tap()
         XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
     }
