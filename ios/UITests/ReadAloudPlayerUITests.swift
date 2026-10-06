@@ -49,9 +49,16 @@ final class ReadAloudPlayerUITests: XCTestCase {
         // Sample blank status-safe-area and actual EPUB pixels, rather than
         // trusting a selected segment or the native toolbar's preference.
         guard let image = XCUIScreen.main.screenshot().image.cgImage else { return false }
+        let app = XCUIApplication()
+        let page = app.webViews.firstMatch
+        guard page.exists, app.frame.height > 0 else { return false }
         let expected = name == "Obsidian" ? [0, 0, 0] : name == "White" ? [255, 255, 255] : [250, 244, 232]
-        for y in [0.02, 0.20] {
-            guard let pixel = image.cropping(to: CGRect(x: Double(image.width) * 0.8, y: Double(image.height) * y, width: 1, height: 1)),
+        // The compact player's top shadow reaches 20% of the screen. Sample
+        // inside the actual EPUB viewport instead of mistaking that shadow for
+        // a stale reading palette.
+        let paperY = Double(page.frame.minY + 8 - app.frame.minY) * Double(image.height) / Double(app.frame.height)
+        for y in [Double(image.height) * 0.02, paperY] {
+            guard let pixel = image.cropping(to: CGRect(x: Double(image.width) * 0.8, y: y, width: 1, height: 1)),
                   let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
             context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
             guard let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return false }

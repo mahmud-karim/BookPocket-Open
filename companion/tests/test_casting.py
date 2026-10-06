@@ -214,20 +214,27 @@ def test_analysis_preserves_reviewed_edits_and_reports_unsupported(tmp_path, mon
             return httpx.Response(200, request=httpx.Request("POST", url), json={"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(result)}}]})
         return original(self, url, **kwargs)
     monkeypatch.setattr(httpx.Client, "post", respond)
-    job = c.post(f"/v1/books/{book['id']}/analyze", json={}).json()
+    response = c.post(f"/v1/books/{book['id']}/analyze", json={})
+    assert response.status_code == 202, response.text
+    job = response.json()
     for _ in range(100):
         job = c.get('/v1/analyses/'+job['id']).json()
         if job["status"] not in {"queued", "running"}: break
         time.sleep(.02)
     assert job["status"] == "completed", job
     assert job["warnings"]
+    # A terminal snapshot is durable before the worker's lease is released.
+    # This test intentionally submits another book after that release.
+    c.app.state.scheduler.join()
     cast = c.get(f"/v1/books/{book['id']}/cast").json()
     assert reviewed in cast["assignments"]
     assert next(c for c in cast["characters"] if c["id"] == "corrected")["voice_id"] == "my-voice"
     assert len(cast["assignments"]) == 2
     assert next(a for a in cast["assignments"] if not a["reviewed"])["character_id"] == "leo"
     unquoted = c.post("/v1/books", files={"file": ("script.txt", "MIA: Hello there.")}).json()
-    job = c.post(f"/v1/books/{unquoted['id']}/analyze", json={}).json()
+    response = c.post(f"/v1/books/{unquoted['id']}/analyze", json={})
+    assert response.status_code == 202, response.text
+    job = response.json()
     for _ in range(100):
         job = c.get('/v1/analyses/'+job['id']).json()
         if job["status"] not in {"queued", "running"}: break

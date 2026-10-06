@@ -328,12 +328,19 @@ def test_mixed_cached_chapters_count_actual_source_and_current_chapter_batches(t
         chapters = [c for c in book["chapters"] if any("\u201c" in s["text"] for s in c["segments"])][:2]
         assert len(chapters) == 2
         route = f"/v1/books/{book['id']}/analyze"
-        first = terminal(client, client.post(route, json=request(chapters[0]["id"])).json())
+        response = client.post(route, json=request(chapters[0]["id"]))
+        assert response.status_code == 202, response.text
+        first = terminal(client, response.json())
         assert first["stage"] == "completed"
         assert first["completed_segments"] == len(chapters[0]["segments"])
+        # The next request includes uncached work, so wait for the previous
+        # worker's lease release rather than only its committed snapshot.
+        client.app.state.scheduler.join()
         try:
             body = {**request(chapters[0]["id"]), "chapter_ids": [c["id"] for c in reversed(chapters)]}
-            job = client.post(route, json=body).json()
+            response = client.post(route, json=body)
+            assert response.status_code == 202, response.text
+            job = response.json()
             assert entered.wait(5)
             active = client.get("/v1/analyses/" + job["id"]).json()
             assert active["chapter_ids"] == [c["id"] for c in chapters], "Progress follows publication order"

@@ -83,6 +83,9 @@ def test_simultaneous_duplicates_conflicts_terminal_and_restart(analysis, tmp_pa
     completed = terminal(client, job)
     assert completed["status"] == "completed"
     assert client.post(route, json=request).json() == completed
+    # Reconstruct only after the original process has released its worker
+    # lease; retrying a known UUID above still remains nonblocking.
+    client.app.state.scheduler.join()
     # Identity uses normalized UUID and captured consent, never mutable settings.
     client.put("/v1/admin/analyzer", json={"url": "https://different.example/v1", "model": "changed"})
     assert client.post(route, json={**request, "request_id": request["request_id"].upper()}).json() == completed
