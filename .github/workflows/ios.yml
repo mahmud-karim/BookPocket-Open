@@ -13,9 +13,9 @@ on:
         options: [macos-15, macos-15-intel]
         default: macos-15
       ui_scope:
-        description: 'Primary iPhone UI coverage (compact coverage is always complete)'
+        description: 'UI coverage (narration focuses both phones on the three narration tools)'
         type: choice
-        options: [full, connection, reader]
+        options: [full, connection, reader, narration]
         default: full
 permissions:
   contents: read
@@ -89,6 +89,14 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
             )
           fi
+          if [ "$UI_TEST_SCOPE" = narration ]; then
+            TEST_FILTERS=(
+              -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.device.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
@@ -103,6 +111,11 @@ jobs:
           fi
           if [ "$UI_TEST_SCOPE" = reader ]; then
             for TEST in testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages testContinuousRecordingTimelineFitsLargestTextSizes testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate testLargestDynamicTypeKeepsListenAndReaderControlsUsable testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording testReaderRecordingRemovalKeepsOtherTakes testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
+            done
+          fi
+          if [ "$UI_TEST_SCOPE" = narration ]; then
+            for TEST in testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording testReaderRecordingRemovalKeepsOtherTakes testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged; do
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
           fi
@@ -122,29 +135,44 @@ jobs:
         timeout-minutes: 30
         run: |
           set -euo pipefail
+          COMPACT_FILTERS=(
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testListenFitsOneScreenAndSelectsChapters
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousRecordingTimelineFitsLargestTextSizes
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionTabShowsVerifiedStatusAndKeepsPairing
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionVerifiesReadinessAndFitsScreen
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionFailureKeepsUnavailableAndPairing
+          )
+          if [ "$UI_TEST_SCOPE" = narration ]; then
+            COMPACT_FILTERS=(
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.compact.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testListenFitsOneScreenAndSelectsChapters \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPlayerKeepsNarratorsAndOfflineTakesSeparate \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousRecordingTimelineFitsLargestTextSizes \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testSavedPageClipsPlayWithoutChapterAndPlayerReachesBottomEdge \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testMatchingAudioRequiresExplicitAlternateTakeInsteadOfMissingMessage \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testCurrentPageNarrationCapturesRealEPUBBeforePresentingSheet \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderRecordingRemovalKeepsOtherTakes \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionTabShowsVerifiedStatusAndKeepsPairing \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionVerifiesReadinessAndFitsScreen \
-            -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionFailureKeepsUnavailableAndPairing \
+            "${COMPACT_FILTERS[@]}" \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/CompactListen.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
+          if [ "$UI_TEST_SCOPE" = narration ]; then
+            for TEST in testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording testReaderRecordingRemovalKeepsOtherTakes testReaderPronunciationCorrectionsPersistAndLeaveBookUnchanged; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
+            done
+          else
           # A typo in a filtered test name must never pass without exercising the UI.
           grep -E 'Test Case.*testListenFitsOneScreenAndSelectsChapters.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters.*passed' artifacts/compact-tests.log
@@ -163,6 +191,7 @@ jobs:
           grep -E 'Test Case.*testConnectionSettingsRemainReachableAtLargestTextSize.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testStartCompanionVerifiesReadinessAndFitsScreen.*passed' artifacts/compact-tests.log
           grep -E 'Test Case.*testStartCompanionFailureKeepsUnavailableAndPairing.*passed' artifacts/compact-tests.log
+          fi
       - name: Capture compact Listen evidence
         if: always()
         run: |
