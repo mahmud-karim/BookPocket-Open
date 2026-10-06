@@ -34,19 +34,24 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(manage.waitForExistence(timeout: 10)); manage.tap()
         app.buttons["reader.saved.delete.reader-continuous-page"].tap()
         let confirmation = app.alerts.firstMatch
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); XCTAssertTrue(confirmation.buttons["Cancel"].exists)
-        XCTAssertTrue(confirmation.buttons["Delete generated take"].exists)
+        // SwiftUI's alert bridge exposes a button and its identically labelled
+        // child on this OS. Select that specific action's first matching node.
+        let cancel = confirmation.buttons.matching(identifier: "reader.recording.cancel").firstMatch
+        let confirm = confirmation.buttons.matching(identifier: "reader.recording.confirm").firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); XCTAssertTrue(cancel.isHittable)
+        XCTAssertEqual(cancel.label, "Cancel"); XCTAssertEqual(confirm.label, "Delete generated take")
         narrationToolsScreenshot(app, "Obsidian confirmed whole take deletion")
-        confirmation.buttons["Cancel"].tap()
+        cancel.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: confirmation)], timeout: 5), .completed)
         XCTAssertTrue(app.buttons["reader.saved.reader-continuous-page"].label.contains("Ready offline"))
         manage.tap(); app.buttons["reader.saved.remove.reader-continuous-page"].tap()
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); confirmation.buttons["Remove download"].tap()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); XCTAssertEqual(confirm.label, "Remove download"); confirm.tap()
         let page = app.buttons["reader.saved.reader-continuous-page"], chapter = app.buttons["reader.saved.reader-continuous-chapter"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "On PC"), object: page)], timeout: 10), .completed)
         XCTAssertTrue(chapter.label.contains("Ready offline"), "Another take retains shared audio files after phone-only removal")
         narrationToolsScreenshot(app, "Obsidian removed phone download with other take retained")
         manage.tap(); app.buttons["reader.saved.delete.reader-continuous-page"].tap()
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); confirmation.buttons["Delete generated take"].tap()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5)); XCTAssertEqual(confirm.label, "Delete generated take"); confirm.tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Pair your PC")).firstMatch.waitForExistence(timeout: 10))
         XCTAssertTrue(page.exists); XCTAssertTrue(chapter.label.contains("Ready offline"), "Offline PC deletion cannot remove other recordings")
     }
