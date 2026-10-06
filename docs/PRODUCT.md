@@ -35,6 +35,8 @@ The approved reader concept keeps the cream publication visible above a compact 
 
 ## Delivery gates
 
+Full-cast quotation ambiguity opens **Review dialogue** from **Needs attention**. Show the exact original words in context and ask **Who is speaking?**, with a saved character, new character, existing voice or **Create voice**. **Save & next** persists the explicit assignment and advances through the relevant page or chapter. Multiple speakers use exact word selections; any remaining narrator prose requires an explicit choice. Preserve choices after an unavailable PC or revision conflict. Valid contractions and leading elisions must not trigger quotation errors. Unclear passages stay unavailable for full cast until reviewed; unrelated pages and single-narrator generation remain usable. Saving a review must unblock readiness without repeating successful analysis or replacing other saved casting.
+
 The Connection screen offers **Start companion** when paired PC access is unavailable. An optional lightweight receiver under Pocket Hub stays up independently of narration, validates the existing phone credential, and sends only the fixed companion Start command. Starting is separate from verified Connected status. The receiver shares the existing HTTPS mount and streams ordinary phone requests to the companion; no phone VPN or separate reading account is introduced. It can launch a stopped companion while Windows is awake, not power on an asleep or switched-off PC.
 
 

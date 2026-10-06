@@ -20,7 +20,21 @@ Beside a character, choose an existing voice, **Create voice**, or explicitly **
 
 The PC needs a configured analysis model and narration engine. The personal installation uses an existing local loopback model with CPU inference; this may take time for dialogue-heavy chapters. Book text stays local unless hosted analysis is explicitly enabled. The PC must remain awake and online.
 
-## Physical iPhone check
+## Review unclear dialogue
+
+In the reader, select **Full cast** and **Page** or **Chapter**. Tap **Needs attention** to open the first passage needing review. The highlighted words and surrounding text are the original publication. Choose who is speaking, then choose their voice or **Create voice**. A new character can be added directly from the review.
+
+Use **Save & next** to save that assignment on the PC and continue. If different speakers share the passage, select their exact words and assign each speaker explicitly. **Use narrator for remaining words** is optional; turn it on only when the rest is narrator prose. No quotation edit or book rewrite is needed. The app keeps your choices if the connection fails or another cast edit creates a conflict.
+
+After all relevant passages have saved speakers and voices, generation becomes available. Reviews elsewhere in the chapter do not block a page that excludes those words. Successful analysis is reused while reviewing. Kyon single narration remains available independently of full-cast review.
+
+The parser supports ordinary contractions, leading elisions such as **’Course**, and balanced nested quotations. Truly malformed or ambiguous passages require your explicit speaker choice. Model suggestions also require review; quotation syntax alone cannot establish the correct character.
+
+## Physical iPhone review check
+
+Open a passage needing attention, confirm that its exact words match the book, choose a speaker and voice, and save. Verify the next unclear passage opens and that completing all relevant reviews enables generation. Test a failed connection while saving: the choices must remain. Confirm a page outside the unclear words can generate without reviewing unrelated passages. These checks exercise the physical device and your actual book separately from Simulator fixtures.
+
+## Physical iPhone playback check
 
 Update the existing LiveContainer app while retaining its data. Play an expendable downloaded page, change speed and seek into a later passage. Close the mini-player, restart, and confirm Listen restores the same Page/Chapter selection paused at the saved position. Test offline, then explicitly play and verify the mini-player reappears.
 

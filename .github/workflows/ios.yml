@@ -13,9 +13,9 @@ on:
         options: [macos-15, macos-15-intel]
         default: macos-15
       ui_scope:
-        description: 'UI coverage (playback checks restart and queue deletion on both phones)'
+        description: 'UI coverage (cast_review checks guided speaker review on both phones)'
         type: choice
-        options: [full, connection, reader, narration, playback]
+        options: [full, connection, reader, narration, playback, cast_review]
         default: full
 permissions:
   contents: read
@@ -106,6 +106,13 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow
             )
           fi
+          if [ "$UI_TEST_SCOPE" = cast_review ]; then
+            TEST_FILTERS=(
+              -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.device.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
@@ -130,6 +137,11 @@ jobs:
           fi
           if [ "$UI_TEST_SCOPE" = playback ]; then
             for TEST in testMiniPlayerDismissalAndListeningSelectionSurviveRestart testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
+            done
+          fi
+          if [ "$UI_TEST_SCOPE" = cast_review ]; then
+            for TEST in testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate; do
               grep -E "Test Case.*$TEST.*passed" artifacts/simulator-tests.log
             done
           fi
@@ -165,6 +177,8 @@ jobs:
             -only-testing:BookPocketOpenUITests/ReaderUITests/testMiniPlayerDismissalAndListeningSelectionSurviveRestart
             -only-testing:BookPocketOpenUITests/ReaderUITests/testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionTabShowsVerifiedStatusAndKeepsPairing
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration
+            -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionOfflineForgetAndPairingEntry
             -only-testing:BookPocketOpenUITests/ReaderUITests/testConnectionSettingsRemainReachableAtLargestTextSize
             -only-testing:BookPocketOpenUITests/ReaderUITests/testStartCompanionVerifiesReadinessAndFitsScreen
@@ -183,6 +197,12 @@ jobs:
               -only-testing:BookPocketOpenUITests/ReaderUITests/testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow
             )
           fi
+          if [ "$UI_TEST_SCOPE" = cast_review ]; then
+            COMPACT_FILTERS=(
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration
+              -only-testing:BookPocketOpenUITests/ReaderUITests/testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate
+            )
+          fi
           xcodebuild test-without-building -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'platform=iOS Simulator,id=${{ steps.compact.outputs.id }}' \
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
@@ -192,6 +212,10 @@ jobs:
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
           if [ "$UI_TEST_SCOPE" = playback ]; then
             for TEST in testMiniPlayerDismissalAndListeningSelectionSurviveRestart testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow; do
+              grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
+            done
+          elif [ "$UI_TEST_SCOPE" = cast_review ]; then
+            for TEST in testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate; do
               grep -E "Test Case.*$TEST.*passed" artifacts/compact-tests.log
             done
           elif [ "$UI_TEST_SCOPE" = narration ]; then
