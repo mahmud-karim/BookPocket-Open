@@ -332,6 +332,21 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
     @app.post("/v1/books/{identity}/analyze", dependencies=[Depends(auth)], status_code=202)
     def analyze(identity: str, body: AnalysisRequest):
         request_id = str(body.request_id) if body.request_id is not None else None
+        def known_request(db):
+            previous = db.execute("SELECT fingerprint,analysis_id FROM analysis_requests WHERE request_id=?", (request_id,)).fetchone()
+            if not previous: return None
+            existing = read_analysis(db, previous['analysis_id'])
+            fingerprint = request_fingerprint(identity, body, existing.get('source_sha256'))
+            if previous["fingerprint"] != fingerprint:
+                raise HTTPException(409, "This analysis request ID was already used with a different book, chapter scope, reanalysis setting or hosted consent")
+            return existing
+        if request_id:
+            # Known identities are immutable. WAL readers can return the last
+            # committed progress while the worker saves its final cast; a retry
+            # must not need that worker's write lease or launch another model.
+            with store.db() as db:
+                existing = known_request(db)
+                if existing is not None: return existing
         acquired = False
         try:
             with store.db() as db:
@@ -339,13 +354,8 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                 # simultaneous retries cannot race the first mapping commit.
                 db.execute("BEGIN IMMEDIATE")
                 if request_id:
-                    previous = db.execute("SELECT fingerprint,analysis_id FROM analysis_requests WHERE request_id=?", (request_id,)).fetchone()
-                    if previous:
-                        existing = read_analysis(db, previous['analysis_id'])
-                        fingerprint = request_fingerprint(identity, body, existing.get('source_sha256'))
-                        if previous["fingerprint"] != fingerprint:
-                            raise HTTPException(409, "This analysis request ID was already used with a different book, chapter scope, reanalysis setting or hosted consent")
-                        return existing
+                    existing = known_request(db)
+                    if existing is not None: return existing
                 if scheduler.stopped.is_set(): raise HTTPException(503, scheduler.stop_reason)
                 book = get_book(identity)
                 available = {chapter['id'] for chapter in book['chapters']}

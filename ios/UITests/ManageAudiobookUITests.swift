@@ -31,6 +31,15 @@ final class ManageAudiobookUITests: XCTestCase {
         // the fixture rejects any duplicate/new analysis submission identity.
         app.terminate(); app.launch(); openManage(app); chooseCast(app)
         XCTAssertTrue(app.staticTexts["manage.analysis.stage"].waitForExistence(timeout: 20))
+        let recoveredKeepReading = app.buttons["manage.main"]
+        reveal(recoveredKeepReading, app: app)
+        XCTAssertEqual(recoveredKeepReading.label, "Keep reading", "The accepted analysis must still be active after reopening")
+        XCTAssertTrue(recoveredKeepReading.isEnabled, "Resuming server polling must not hold the screen's loading gate")
+        assertTouchTarget(recoveredKeepReading); recoveredKeepReading.tap()
+        XCTAssertTrue(app.buttons["reader.speak"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["manage.close"].exists)
+        openManageFromReader(app); chooseCast(app)
+        XCTAssertTrue(app.staticTexts["manage.analysis.stage"].waitForExistence(timeout: 20))
         waitText(app.staticTexts["manage.analysis.stage"], equals: "Saving cast suggestions", seconds: 65)
         XCTAssertEqual(app.staticTexts["manage.analysis.count"].label, "4 of 4 passages analyzed")
         XCTAssertNotEqual(app.staticTexts["manage.analysis.stage"].label, "Analysis complete", "Processing every passage is not a committed result")
@@ -114,6 +123,9 @@ final class ManageAudiobookUITests: XCTestCase {
         let speak = app.buttons["reader.speak"]
         XCTAssertTrue(speak.waitForExistence(timeout: 30))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: speak)], timeout: 20), .completed)
+        openManageFromReader(app)
+    }
+    private func openManageFromReader(_ app: XCUIApplication) {
         app.buttons["reader.options"].tap()
         let manage = app.buttons["reader.manageAudiobook"]; XCTAssertTrue(manage.waitForExistence(timeout: 10)); manage.tap()
         XCTAssertTrue(app.buttons["manage.close"].waitForExistence(timeout: 20))

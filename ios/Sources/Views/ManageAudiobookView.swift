@@ -123,7 +123,7 @@ struct ManageAudiobookView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button { dismiss() } label: { Image(systemName: "chevron.left") }.accessibilityLabel("Back to book").accessibilityIdentifier("manage.close") }
                 }
-                .sheet(item: $destination, onDismiss: { Task { await refreshMetadata() } }) { destination in
+                .sheet(item: $destination, onDismiss: { Task { await refreshMetadata(); beginRecovery() } }) { destination in
                     child(destination)
                 }
                 .sheet(isPresented: $pairing, onDismiss: { Task { await load() } }) { PairingView() }
@@ -141,7 +141,7 @@ struct ManageAudiobookView: View {
                     Text(pageAvailable ? "The page uses the exact words captured when you opened setup. The chapter includes the selected chapter's original text." : "Open this chapter in the reader to select a page. You can generate the complete selected chapter here.")
                 }
                 .task { mode = request.mode == .cast ? .cast : .kyon; await load() }
-                .onChange(of: chapterID) { Task { await recoverSelectedAnalysis() } }
+                .onChange(of: chapterID) { beginRecovery() }
                 .onDisappear {
                     // Cancelling phone polling never cancels the accepted PC job.
                     // Its per-book draft or chapter-status ID resumes on return.
@@ -227,7 +227,7 @@ struct ManageAudiobookView: View {
                 Text("Your saved voice choices are kept.").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
             }
             if draft?.canResumeAnalysis == true {
-                Button("Refresh analysis progress", systemImage: "arrow.clockwise") { action = Task { await recoverSelectedAnalysis() } }.accessibilityIdentifier("manage.analysis.resume")
+                Button("Refresh analysis progress", systemImage: "arrow.clockwise") { beginRecovery() }.accessibilityIdentifier("manage.analysis.resume")
             }
             if let message = draft?.error { Text(message).font(.callout).foregroundStyle(.red) }
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
@@ -266,7 +266,7 @@ struct ManageAudiobookView: View {
                 while !Task.isCancelled {
                     guard let current = companion.jobs.first(where: { $0.id == job.id }), ["queued", "running"].contains(current.status) else { return }
                     do { _ = try await companion.refreshJob(job.id); try await Task.sleep(for: .seconds(3)) }
-                    catch { if !Task.isCancelled { error = CompanionClient.narrationMessage(for: error) }; return }
+                    catch { if !Task.isCancelled { self.error = CompanionClient.narrationMessage(for: error) }; return }
                 }
             }
     }
@@ -344,8 +344,12 @@ struct ManageAudiobookView: View {
                     ?? book.chapters.first?.id ?? ""
             }
             await refreshMetadata()
-            await recoverSelectedAnalysis()
-        } catch { self.error = CompanionClient.narrationMessage(for: error) }
+            guard !Task.isCancelled else { return }
+            // Loading describes only initial inventory. Long-lived server
+            // polling must leave Keep reading available on a reopened screen.
+            loading = false
+            beginRecovery()
+        } catch { if !Task.isCancelled { self.error = CompanionClient.narrationMessage(for: error) } }
     }
     private func refreshMetadata() async {
         guard let book, companion.paired else { return }
@@ -355,18 +359,26 @@ struct ManageAudiobookView: View {
             statuses = try await companion.chapterAnalysisStatus(book.id)
             review = try await companion.castReview(book)
             error = nil
-        } catch { self.error = CompanionClient.narrationMessage(for: error) }
+        } catch { if !Task.isCancelled { self.error = CompanionClient.narrationMessage(for: error) } }
+    }
+    private func beginRecovery() {
+        guard !loading, !state.working, draft?.working != true,
+              draft?.awaitingAnalysisConfirmation != true, !Task.isCancelled else { return }
+        action?.cancel()
+        action = Task { await recoverSelectedAnalysis() }
     }
     private func recoverSelectedAnalysis() async {
-        guard let book, let draft, companion.paired, !draft.working else { return }
+        guard !Task.isCancelled, let book, let draft, companion.paired, !draft.working else { return }
         let service = companion.castService(bookID: book.id)
         if draft.canResumeAnalysis { await draft.load(book: book, service: service) }
         else if !draft.busy, let id = statuses.first(where: { $0.chapterId == chapterID })?.analysisId {
             do {
                 let job = try await companion.analysis(id)
+                guard !Task.isCancelled else { return }
                 await draft.resumeExisting(book: book, job: job, service: service)
-            } catch { self.error = CompanionClient.narrationMessage(for: error) }
+            } catch { if !Task.isCancelled { self.error = CompanionClient.narrationMessage(for: error) } }
         }
+        guard !Task.isCancelled else { return }
         await refreshMetadata()
     }
     private func startAnalysis() {
@@ -374,6 +386,7 @@ struct ManageAudiobookView: View {
         let selectedID = chapterID
         action = Task {
             await draft.analyze(book: book, hosted: true, service: companion.castService(bookID: book.id), chapterIDs: [selectedID], force: statuses.contains { $0.chapterId == selectedID && $0.status != "not_analyzed" })
+            guard !Task.isCancelled else { return }
             await refreshMetadata()
         }
     }

@@ -142,8 +142,10 @@ private final class ManageAudiobookUITestProtocol: URLProtocol {
         return (404, ["detail": "Unexpected explicit Manage transport route: " + url.path])
     }
     private func analysis(polls: Int) -> [String: Any] {
-        let completed = polls >= 13
-        return ["id": "manage-analysis", "book_id": "manage-book", "status": completed ? "completed" : "running", "completed_segments": polls < 3 ? 0 : polls < 11 ? 2 : 4, "total_segments": 4, "chapter_ids": ["manage-chapter-0"], "stage": completed ? "completed" : polls < 3 ? "reading" : polls < 11 ? "analyzing" : "saving", "current_chapter_id": "manage-chapter-0", "current_chapter_title": "The Lantern", "current_chapter_index": 1, "total_chapters": 1, "completed_batches": polls < 3 ? 0 : 1, "total_batches": 2]
+        // Leave enough scripted server work for native navigation, process
+        // restart and a second dismissal. UI actions never advance this state.
+        let completed = polls >= 25
+        return ["id": "manage-analysis", "book_id": "manage-book", "status": completed ? "completed" : "running", "completed_segments": polls < 3 ? 0 : polls < 21 ? 2 : 4, "total_segments": 4, "chapter_ids": ["manage-chapter-0"], "stage": completed ? "completed" : polls < 3 ? "reading" : polls < 21 ? "analyzing" : "saving", "current_chapter_id": "manage-chapter-0", "current_chapter_title": "The Lantern", "current_chapter_index": 1, "total_chapters": 1, "completed_batches": polls < 3 ? 0 : 1, "total_batches": 2]
     }
     private func applySuggestions(_ state: inout [String: Any], book: [String: Any]) {
         guard var cast = state["cast"] as? [String: Any] else { return }

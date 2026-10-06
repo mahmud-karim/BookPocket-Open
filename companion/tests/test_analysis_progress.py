@@ -160,6 +160,9 @@ def test_narration_only_is_counted_without_model_and_empty_chapter_completes(tmp
         assert job["completed_segments"] == job["total_segments"] == 2
         assert job["completed_batches"] == job["total_batches"] == 1
         assert job["review_required"] is False
+        # Completion is committed before the worker releases its heavy lease.
+        # The next, unrelated fixture mutation waits for that actual shutdown.
+        client.app.state.scheduler.join()
         # Explicit test-only manifest boundary: an empty original chapter has no
         # source work, model request, assignment or percentage to fabricate.
         book["chapters"][0]["segments"] = []
