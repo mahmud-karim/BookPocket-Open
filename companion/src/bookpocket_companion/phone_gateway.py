@@ -15,9 +15,10 @@ _ROUTES = (
     ("DELETE", rf"/v1/(voices|books|jobs|voice-previews)/{_ID}"),
     ("PUT", r"/v1/pronunciations"),
     ("DELETE", r"/v1/devices/current"),
-    ("GET", rf"/v1/books/{_ID}/(source|cover|cast|analysis-status)"),
+    ("GET", rf"/v1/books/{_ID}/(source|cover|cast|analysis-status|review-issues)"),
     ("PUT", rf"/v1/books/{_ID}/cast"),
     ("POST", rf"/v1/books/{_ID}/analyze"),
+    ("POST", rf"/v1/books/{_ID}/review-issues/{_ID}/resolve"),
     ("GET", rf"/v1/voices/{_ID}/reference"),
     ("POST", rf"/v1/jobs/{_ID}/(cancel|pause|resume|retry|export|align)"),
 )

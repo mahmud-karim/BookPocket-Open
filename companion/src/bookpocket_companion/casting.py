@@ -10,6 +10,7 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
 from .store import canonical, digest, now
 from .scheduler import WorkCancelled
+from .quote_scanner import scan_dialogue
 
 class Character(BaseModel):
     id: str = Field(min_length=1, max_length=100)
@@ -42,7 +43,7 @@ class AnalysisRequest(BaseModel):
     chapter_ids: list[str] | None = Field(default=None, min_length=1, max_length=100000)
     force_reanalyze: bool = False
 
-PROMPT_VERSION = 'chapter-cast-3'
+PROMPT_VERSION = 'chapter-cast-4'
 
 
 def character_identity(value):
@@ -77,11 +78,7 @@ def reconcile_characters(existing, suggestions):
 
 
 def chapter_dialogue(chapter):
-    segments = [{'segment_id': value['id'], 'text': value['text']} for value in chapter['segments']]
-    units = dialogue_units(segments)
-    if not units and any(value.get('kind') != 'heading' and re.match(r'^\s*(?:[A-Z][A-Z0-9 _.-]{1,80}:\s+|[—–-]\s*\S)', value['text']) for value in chapter['segments']):
-        raise ValueError('Unsupported unquoted script or dash dialogue needs manual casting review; this chapter was not marked narrator-only')
-    return units
+    return dialogue_units([{'segment_id': value['id'], 'text': value['text']} for value in chapter['segments'] if value.get('kind') != 'heading'])
 
 def validate_cast(cast, book):
     segments = {s["id"]: s for c in book["chapters"] for s in c["segments"]}
@@ -124,34 +121,8 @@ def source_assignment(item, sources):
 
 def dialogue_units(segments):
     """Select immutable scalar ranges before asking a model who speaks them."""
-    pairs = {'“': '”', '"': '"', '«': '»', '„': '“'}
-    units = []
-    for segment in segments:
-        start, closing = None, None
-        for offset, char in enumerate(segment["text"]):
-            if closing is not None:
-                if char == closing:
-                    units.append({"utterance_id": f"u{len(units):05d}", "segment_id": segment["segment_id"],
-                                  "start_offset": start, "end_offset": offset+1,
-                                  "source_text": segment["text"][start:offset+1]})
-                    start, closing = None, None
-                elif char in pairs or char in {'‘', '’', '‹', '›', "'"}:
-                    # Apostrophes within words are not nested dialogue.
-                    if char in {'’', "'"} and offset and offset+1 < len(segment["text"]) and segment["text"][offset-1].isalnum() and segment["text"][offset+1].isalnum():
-                        continue
-                    # Clear plural possessives, e.g. pilots' maps, also occur
-                    # inside dialogue. Other standalone marks still need review.
-                    if char in {'’', "'"} and re.search(r"\b[^\W\d_]+s$", segment["text"][:offset], re.IGNORECASE) and re.match(r"\s+[^\W\d_]", segment["text"][offset+1:]):
-                        continue
-                    raise ValueError("Nested quotation marks need manual casting review; automatic analysis has not assigned this passage")
-            elif char in pairs:
-                start, closing = offset, pairs[char]
-            elif char in {'”', '»', '‘', '‹', '›'}:
-                raise ValueError("Unsupported or unmatched quotation marks need manual casting review")
-            elif char == "'" and (offset == 0 or segment["text"][offset-1].isspace()) and offset+1 < len(segment["text"]) and segment["text"][offset+1].isalpha():
-                raise ValueError("Single-quoted dialogue needs manual casting review")
-        if closing is not None:
-            raise ValueError("Unbalanced or multi-paragraph dialogue needs manual casting review")
+    units, issues = scan_dialogue(segments)
+    if issues: raise ValueError(issues[0]['message'])
     return units
 
 
@@ -218,6 +189,8 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                 for state in data.get('chapter_statuses', []):
                     if state['status'] in {'queued', 'running'}: state.update(status='failed', error=data['error'])
                 db.execute("UPDATE analyses SET data=? WHERE id=?", (canonical(data), row["id"]))
+    from .casting_review import CastReview
+    review = app.state.cast_review = CastReview(store, get_book)
     settings_file = store.root / "analyzer.json"
     analysis_lock = threading.Lock()
     failed_persistence = {}
@@ -244,8 +217,8 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
 
     def chapter_key(book, chapter, cfg):
         # A supported narration-only chapter needs no model or hosted upload.
-        try: uses_model = bool(chapter_dialogue(chapter))
-        except ValueError: uses_model = True
+        units, _ = scan_dialogue([{'segment_id': s['id'], 'text': s['text']} for s in chapter['segments'] if s.get('kind') != 'heading'])
+        uses_model = bool(units)
         return digest(canonical({'source_sha256': book['source_sha256'], 'chapter': chapter,
                                  'prompt_version': PROMPT_VERSION, 'analyzer': cfg if uses_model else 'narration-only'}))
 
@@ -284,7 +257,10 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
     def save_cast(identity: str, body: Cast):
         try: validate_cast(body, get_book(identity))
         except ValueError as exc: raise HTTPException(400, str(exc))
-        with store.db() as db: db.execute("INSERT OR REPLACE INTO casts VALUES(?,?)", (identity, canonical(body.model_dump())))
+        with store.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute("INSERT OR REPLACE INTO casts VALUES(?,?)", (identity, canonical(body.model_dump())))
+            review.changed(db, identity)
         return body.model_dump()
 
     @app.get("/v1/analyses/{identity}", dependencies=[Depends(auth)])
@@ -297,6 +273,9 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
         cfg = settings() if settings_file.exists() else None
         chapters = []
         with store.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            cast = review.cast(db, identity)
+            review.sync(db, book, cast)
             for chapter in book['chapters']:
                 key = chapter_key(book, chapter, cfg)
                 row = db.execute('SELECT analysis_id FROM chapter_analysis_coverage WHERE book_id=? AND chapter_id=? AND coverage_key=?', (identity, chapter['id'], key)).fetchone()
@@ -307,6 +286,8 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                     if state:
                         value.update(status=state['status'], analysis_id=job['id'])
                         if state.get('error'): value['error'] = state['error']
+                value.update(review.chapter_status(db, book, chapter['id'], cast))
+                if value['manual_ready']: value.update(status='completed', error=None)
                 chapters.append(value)
         return {'chapters': chapters}
 
@@ -334,6 +315,8 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                     raise HTTPException(400, 'Select unique chapters belonging to this original book')
                 selected = [chapter for chapter in book['chapters'] if body.chapter_ids is None or chapter['id'] in body.chapter_ids]
                 cfg = settings() if settings_file.exists() else None
+                current_cast = review.cast(db, identity)
+                review.sync(db, book, current_cast)
                 fingerprint = request_fingerprint(identity, body, book['source_sha256'])
                 reused, missing, keys, cached = [], [], {}, []
                 for chapter in selected:
@@ -341,7 +324,7 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                     row = db.execute('SELECT analysis_id FROM chapter_analysis_coverage WHERE book_id=? AND chapter_id=? AND coverage_key=?', (identity, chapter['id'], key)).fetchone() if body.chapter_ids is not None and not body.force_reanalyze else None
                     previous = read_analysis(db, row[0]) if row else None
                     state = next((state for state in previous.get('chapter_statuses', []) if state['chapter_id'] == chapter['id']), None) if previous else None
-                    if state and state['status'] == 'completed': reused.append(chapter['id'])
+                    if (state and state['status'] == 'completed') or (body.chapter_ids is not None and not body.force_reanalyze and review.chapter_status(db, book, chapter['id'], current_cast)['manual_ready']): reused.append(chapter['id'])
                     elif previous and previous['status'] in {'queued', 'running'}: cached.append(previous)
                     else: missing.append(chapter)
                 if cached:
@@ -353,8 +336,8 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                 if missing:
                     uses_model = False
                     for chapter in missing:
-                        try: uses_model = uses_model or bool(chapter_dialogue(chapter))
-                        except ValueError: pass  # Persist an actionable failed chapter from the worker.
+                        units, _ = scan_dialogue([{'segment_id': s['id'], 'text': s['text']} for s in chapter['segments'] if s.get('kind') != 'heading'])
+                        uses_model = uses_model or bool(units)
                     if uses_model and cfg is None: raise HTTPException(409, 'Configure an analysis model in Settings first')
                     if uses_model and cfg['hosted'] and not body.allow_hosted: raise HTTPException(409, 'Confirm sending these chapters to the configured hosted analysis API')
                 old = Cast.model_validate(get_cast(identity))
@@ -366,7 +349,7 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                        'source_sha256': book['source_sha256'], 'chapter_ids': [c['id'] for c in selected], 'reused_chapter_ids': reused,
                        'prompt_version': PROMPT_VERSION, 'analyzer_fingerprint': digest(canonical(cfg)) if cfg else None,
                        'chapter_statuses': [{'chapter_id': c['id'], 'status': 'completed' if c['id'] in reused else 'queued'} for c in selected],
-                       "warnings": ["Automatic casting identifies paired double-quoted dialogue only. Unquoted speech, script dialogue, and literary quotation conventions need manual review; unassigned prose uses the narrator."]}
+                       "warnings": ["Automatic casting keeps original outer quote ranges. Unclear quotation or speaker choices require explicit review before full cast generation."]}
                 job['completed_segments'] = sum(len(c['segments']) for c in selected if c['id'] in reused)
                 if not missing: job.update(status='completed', finished_at=now())
                 db.execute("INSERT INTO analyses VALUES(?,?)", (job["id"], canonical(job)))
@@ -413,7 +396,7 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                         state = next(value for value in job['chapter_statuses'] if value['chapter_id'] == chapter['id'])
                         state['status'] = 'running'
                         persist()
-                        all_units = chapter_dialogue(chapter)
+                        all_units, structural = scan_dialogue([{'segment_id': s['id'], 'text': s['text']} for s in chapter['segments'] if s.get('kind') != 'heading'])
                         current_saved = Cast.model_validate(get_cast(identity))
                         characters = {c.id: c for c in current_saved.characters}
                         assignments, batches, batch, count = [], [], [], 0
@@ -422,7 +405,9 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                             quote_count = sum(segment['text'].count(mark) for mark in ('“', '"', '«', '„'))
                             estimate = len(segment['text']) + quote_count * 180
                             if all_units and estimate > batch_limit:
-                                raise ValueError('A source paragraph exceeds the analysis output budget. Increase max_output_tokens or cast this paragraph manually')
+                                structural.append({'segment_id': segment['id'], 'start_offset': 0, 'end_offset': len(segment['text']),
+                                                   'reason': 'analysis_budget', 'message': 'This paragraph exceeds the model budget; assign its speakers explicitly.'})
+                                continue
                             if batch and count + estimate > batch_limit: batches.append(batch); batch, count = [], 0
                             batch.append({'segment_id': segment['id'], 'text': segment['text']})
                             count += estimate
@@ -464,7 +449,13 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                             result = merge_analysis(old, current, result, {s['id'] for s in chapter['segments']})
                             validate_cast(result, book)
                             db.execute('INSERT OR REPLACE INTO casts VALUES(?,?)', (identity, canonical(result.model_dump())))
+                            review.changed(db, identity)
+                            review.publish(db, book, chapter['id'], result, structural)
+                            status = review.chapter_status(db, book, chapter['id'], result)
+                            state.update(status)
                             state['status'] = 'completed'
+                            job['review_required'] = any(s.get('review_required', False) for s in job['chapter_statuses'])
+                            job['pending_review_count'] = sum(s.get('pending_review_count', 0) for s in job['chapter_statuses'])
                             # Coverage and chapter suggestions become visible in
                             # one commit; later chapter failure keeps earlier work.
                             db.execute('UPDATE analyses SET data=? WHERE id=?', (canonical(job), job['id']))

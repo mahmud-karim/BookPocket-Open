@@ -149,7 +149,7 @@ def create_app(config=None, engines=None, start_worker=True):
                 if key != "global" and (not attempts[key] or attempts[key][-1] < current - 60): del attempts[key]
 
     @app.get("/v1/health")
-    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id", "source_ranges_cast", "word_alignment", "delete_recordings", "pronunciation_settings", "chapter_analysis", "voice_previews"]}
+    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id", "source_ranges_cast", "word_alignment", "delete_recordings", "pronunciation_settings", "chapter_analysis", "voice_previews", "casting_review"]}
 
     @app.get("/v1/admin/connection", dependencies=[Depends(admin)])
     def connection():
@@ -392,6 +392,7 @@ def create_app(config=None, engines=None, start_worker=True):
                 db.execute("BEGIN IMMEDIATE")
                 if db.execute("SELECT 1 FROM deleted_jobs WHERE request_id=?", (body.request_id,)).fetchone():
                     raise HTTPException(410, "This recording was deleted; use a new request_id to generate a new take")
+                app.state.cast_review.guard(db, book, payload)
                 db.execute("INSERT INTO jobs VALUES(?,?,?,?)", (job["id"], body.request_id, serialized, canonical(job)))
         except sqlite3.IntegrityError:
             return create_job(body)
@@ -557,6 +558,8 @@ def create_app(config=None, engines=None, start_worker=True):
 
     from .casting import register_casting
     register_casting(app, store, auth, admin, get_book, scheduler)
+    from .casting_review import register_cast_review
+    register_cast_review(app, store, auth, get_book, get_voice)
     from .previews import register_previews
     register_previews(app, store, auth, get_voice, engines, config, scheduler)
 

@@ -63,7 +63,7 @@ def test_utterance_boundaries_and_strict_model_identity():
     with pytest.raises(ValueError, match="omitted"): resolve_utterances({"assignments": []}, units, {"mia", "leo"})
 
 
-@pytest.mark.parametrize("text", ['“Not closed', '“She said ‘go’.”', '‘Single quoted speech.’', '"She said \'go\'."'])
+@pytest.mark.parametrize("text", ['“Not closed', '‘Single quoted speech.’', '“The word ends’.”'])
 def test_unsupported_dialogue_requires_review(text):
     with pytest.raises(ValueError, match="review"):
         dialogue_units([{"segment_id": "s", "text": text}])
@@ -79,10 +79,10 @@ def test_plural_possessive_inside_dialogue_preserves_exact_source(apostrophe, op
     assert text[units[0]["start_offset"]:units[0]["end_offset"]] == units[0]["source_text"]
 
 
-@pytest.mark.parametrize("text", ['“She said ‘pilots’ maps.”', '"She said \'pilots\' maps."', '“The word ends’.”'])
-def test_plural_possessive_exception_does_not_swallow_nested_or_ambiguous_quotes(text):
-    with pytest.raises(ValueError, match="review"):
-        dialogue_units([{"segment_id": "s", "text": text}])
+@pytest.mark.parametrize("text", ['“She said ‘pilots’ maps.”', '"She said \'pilots\' maps."', '«She said “go.”»', '“She said ‘go’.”'])
+def test_balanced_nested_quotes_remain_one_exact_outer_utterance(text):
+    units = dialogue_units([{"segment_id": "s", "text": text}])
+    assert len(units) == 1 and units[0]["source_text"] == text
 
 
 def test_inflight_analysis_preserves_saved_edits_and_deletions_after_reconstruction(tmp_path, monkeypatch):
@@ -232,5 +232,7 @@ def test_analysis_preserves_reviewed_edits_and_reports_unsupported(tmp_path, mon
         job = c.get('/v1/analyses/'+job['id']).json()
         if job["status"] not in {"queued", "running"}: break
         time.sleep(.02)
-    assert job["status"] == "failed"
-    assert "unquoted" in job["error"]
+    assert job["status"] == "completed" and job["review_required"]
+    issues = c.get(f"/v1/books/{unquoted['id']}/review-issues").json()["issues"]
+    assert len(issues) == 1 and issues[0]["source_text"] == "MIA: Hello there."
+    assert "unquoted" in issues[0]["message"].casefold()
