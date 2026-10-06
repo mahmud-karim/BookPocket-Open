@@ -191,7 +191,9 @@ enum ReaderTakeMatch {
                 let statuses = try await companion.chapterAnalysisStatus(book.id)
                 if chapters.contains(where: { id in !statuses.contains { $0.chapterId == id && $0.status == "completed" } }) {
                     let draft = companion.castDraft(for: book.id)
-                    var service = companion.castService(bookID: book.id)
+                    // Automatic analysis uses the current saved PC cast. Saving
+                    // our unchanged fetch here could overwrite a desktop edit.
+                    var service = companion.castService(bookID: book.id, saveBeforeAnalysis: false)
                     service.poll = { id in
                         let current = try await companion.analysis(id)
                         self.analysisProgress = "\(current.status.capitalized) · \(current.completedSegments)/\(current.totalSegments) passages"
@@ -202,6 +204,7 @@ enum ReaderTakeMatch {
                     guard !draft.dirty, !draft.busy, draft.error == nil else { throw BookError.message(draft.error ?? "Save your cast edits before analyzing this chapter.") }
                     await draft.analyze(book: book, hosted: false, service: service, chapterIDs: chapters)
                     guard draft.analysis?.status == "completed", !draft.busy, draft.error == nil else { throw BookError.message(draft.error ?? draft.analysis?.error ?? "Chapter analysis has not completed. Open Cast Studio to resume it.") }
+                    guard !draft.dirty else { throw BookError.message("Save your cast edits before generating. Changes made during analysis have been kept in Cast Studio.") }
                 }
                 let saved = try await companion.fetchCast(book.id)
                 let castPlan = try ReaderCastPlan.build(cast: saved, book: book, ranges: selection.ranges, voices: companion.voices, engines: companion.engines)

@@ -30,6 +30,36 @@ private final class ReaderToolsProtocol: Foundation.URLProtocol {
 }
 
 final class ReaderNarrationToolsTests: XCTestCase {
+    @MainActor func testAutomaticChapterAnalysisDoesNotOverwriteSavedDesktopCast() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder); ReaderToolsProtocol.handler = nil }
+        let store = CompanionStore(root: folder, client: try client())
+        let (book, _, _) = words(), draft = CastDraft()
+        var server = BookCast(characters: [.init(id: "narrator", name: "Original narrator", aliases: [], voiceId: "voice")])
+        var writes = 0
+        ReaderToolsProtocol.handler = { request in
+            if request.url!.path == "/v1/health" { return (200, Data("{\"capabilities\":[\"analysis_request_id\",\"chapter_analysis\"]}".utf8)) }
+            if request.url!.path.hasSuffix("/cast") {
+                if request.httpMethod == "PUT" { writes += 1; XCTFail("Automatic analysis must not save its old fetched snapshot") }
+                return (200, try CompanionClient.encoder.encode(server))
+            }
+            XCTAssertTrue(request.url!.path.hasSuffix("/analyze"))
+            let submitted = try CompanionClient.decoder.decode(CastAnalysisRequest.self, from: XCTUnwrap(request.httpBody))
+            XCTAssertEqual(submitted.chapterIds, [book.chapters[0].id])
+            server.characters[0].aliases = ["Concurrent desktop alias"]
+            draft.value.characters[0].name = "Unsaved phone name"
+            let job = AnalysisJob(id: "analysis", bookId: book.id, status: "completed", completedSegments: 1, totalSegments: 1)
+            return (202, try CompanionClient.encoder.encode(job))
+        }
+        let service = store.castService(bookID: book.id, saveBeforeAnalysis: false)
+        await draft.load(book: book, service: service)
+        await draft.analyze(book: book, hosted: false, service: service, chapterIDs: [book.chapters[0].id])
+        XCTAssertNil(draft.error); XCTAssertEqual(writes, 0)
+        XCTAssertEqual(draft.value.characters[0].aliases, ["Concurrent desktop alias"])
+        XCTAssertEqual(draft.value.characters[0].name, "Unsaved phone name")
+        XCTAssertTrue(draft.dirty, "Generation must require saving the retained phone edit rather than silently using an older cast")
+        XCTAssertEqual(server.characters[0].name, "Original narrator")
+    }
     @MainActor func testTrimmedReferenceCreationReturnsVoiceForExistingCharacterDraft() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

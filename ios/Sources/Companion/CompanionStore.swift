@@ -428,8 +428,8 @@ enum CompanionConnectionState: Equatable {
         let response: Response = try await client.send("/v1/books/\(bookID)/analysis-status")
         return response.chapters
     }
-    func castService(bookID: String) -> CastService {
-        CastService(fetch: { try await self.fetchCast(bookID) }, save: { try await self.saveCast($0, bookID: bookID) }, analyze: { try await self.analyze(bookID, request: $0) }, poll: { try await self.analysis($0) }, requireReliableAnalysis: { try await self.requireReliableAnalysis() })
+    func castService(bookID: String, saveBeforeAnalysis: Bool = true) -> CastService {
+        CastService(fetch: { try await self.fetchCast(bookID) }, save: { if saveBeforeAnalysis { try await self.saveCast($0, bookID: bookID) } }, analyze: { try await self.analyze(bookID, request: $0) }, poll: { try await self.analysis($0) }, requireReliableAnalysis: { try await self.requireReliableAnalysis() })
     }
     func voicePreview(_ request: VoicePreviewRequest) async throws -> VoicePreviewJob {
         if !voiceAuditions.contains(where: { $0.request.requestId == request.requestId }) {
