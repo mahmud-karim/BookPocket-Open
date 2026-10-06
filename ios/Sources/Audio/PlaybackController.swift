@@ -24,8 +24,13 @@ struct RecordingInterval {
     var duration: Double = 0
     var elapsed: Double = 0
     var sleepUntil: Date?
+    var miniPlayerDismissed = false
+    var listeningSession: ListeningSession?
+    var onSessionUpdate: ((Bool) -> Void)?
+    private var preparedSpeechLocator: Locator?
+    private var speechPrepared = false
     var rate: Double = UserDefaults.standard.double(forKey: "playbackRate") == 0 ? 1 : UserDefaults.standard.double(forKey: "playbackRate") {
-        didSet { UserDefaults.standard.set(rate, forKey: "playbackRate"); if isPlaying { player?.rate = Float(rate) }; nowPlaying() }
+        didSet { UserDefaults.standard.set(rate, forKey: "playbackRate"); if isPlaying { player?.rate = Float(rate) }; nowPlaying(); onSessionUpdate?(true) }
     }
     var speechLocator: Locator?
     var speechChapters: [ReadiumShared.Link] = []
@@ -78,17 +83,21 @@ struct RecordingInterval {
             Task { @MainActor in if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self?.pause() } }
         })
     }
-    func speak(publication: Publication, book: LocalBook, from locator: Locator?) {
+    func speak(publication: Publication, book: LocalBook, from locator: Locator?, autoplay: Bool = true) {
         stop()
         error = nil
         title = book.title; subtitle = "On-device voice"; bookID = book.id
+        listeningSession = ListeningSession(bookID: book.id)
+        listeningSession?.locatorJSON = try? locator?.jsonString()
+        speechLocator = locator; preparedSpeechLocator = locator; speechPrepared = !autoplay
         speechPublication = publication
         func flatten(_ links: [ReadiumShared.Link]) -> [ReadiumShared.Link] { links.flatMap { [$0] + flatten($0.children) } }
         speechChapters = flatten(publication.manifest.tableOfContents)
         if speechChapters.isEmpty { speechChapters = publication.readingOrder }
         speech = PublicationSpeechSynthesizer(publication: publication, config: .init(voiceIdentifier: UserDefaults.standard.string(forKey: "speechVoice")), engineFactory: { SystemWordSpeechEngine() }, delegate: self)
         guard let speech else { error = "This publication does not contain text that can be read aloud."; return }
-        speech.start(from: locator)
+        if autoplay { speech.start(from: locator) }
+        onSessionUpdate?(true)
     }
     func selectSpeechChapter(_ chapter: ReadiumShared.Link) async -> Bool {
         error = nil
@@ -98,14 +107,14 @@ struct RecordingInterval {
             return false
         }
         chapterTitle = chapter.title ?? "Chapter"
-        speechLocator = locator; onLocator?(locator)
+        speechLocator = locator; onLocator?(locator); speechPrepared = false; miniPlayerDismissed = false
         synthesizer.start(from: locator)
         return true
     }
     func play(url: URL, book: LocalBook, start: Double = 0) throws {
         try play(parts: [RecordingPart(url: url)], book: book, start: start)
     }
-    func play(parts: [RecordingPart], book: LocalBook, start: Double = 0, recordingID: String? = nil) throws {
+    func play(parts: [RecordingPart], book: LocalBook, start: Double = 0, recordingID: String? = nil, autoplay: Bool = true) throws {
         stop()
         error = nil
         do {
@@ -146,11 +155,13 @@ struct RecordingInterval {
             Task { @MainActor in
                 guard let self, let item, item === self.player?.currentItem, self.isPlaying else { return }
                 self.elapsed = self.duration; self.onProgress?(self.elapsed)
-                self.isPlaying = false; self.nowPlaying(); self.onFinished?()
+                self.isPlaying = false; self.nowPlaying(); self.onFinished?(); self.onSessionUpdate?(true)
             }
         }
         if elapsed > 0 { seek(elapsed) }
-        isPlaying = true; audio.playImmediately(atRate: Float(rate)); nowPlaying()
+        isPlaying = autoplay
+        if autoplay { audio.playImmediately(atRate: Float(rate)) }
+        nowPlaying()
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
@@ -161,7 +172,7 @@ struct RecordingInterval {
                 if player.currentItem?.status == .failed { self.error = "Audio playback failed. Retry the download."; self.pause(); continue }
                 let seconds = player.currentTime().seconds
                 guard seconds.isFinite else { continue }
-                self.elapsed = min(self.duration, max(0, seconds)); self.onProgress?(self.elapsed); self.nowPlaying()
+                self.elapsed = min(self.duration, max(0, seconds)); self.onProgress?(self.elapsed); self.nowPlaying(); self.onSessionUpdate?(false)
             }
         }
     }
@@ -177,15 +188,22 @@ struct RecordingInterval {
             if wasPlaying, !seeking, player.currentTime().seconds.isFinite { elapsed = player.currentTime().seconds }
             if wasPlaying { onProgress?(elapsed) }
         }
-        isPlaying = false; nowPlaying()
+        isPlaying = false; nowPlaying(); onSessionUpdate?(true)
     }
-    func resume() { speech?.resume(); if let player { if elapsed >= duration { seek(0) }; isPlaying = true; player.playImmediately(atRate: Float(rate)) }; nowPlaying() }
-    func stop() { speech?.stop(); speech = nil; speechPublication = nil; speechChapters = []; chapterTitle = ""; player?.pause(); player = nil; if let finishObserver { NotificationCenter.default.removeObserver(finishObserver) }; finishObserver = nil; tickTask?.cancel(); seekRevision = UUID(); seeking = false; recordingIntervals = []; recordingID = nil; isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onClearHighlight?(); onClearHighlight = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
+    func dismissMiniPlayer() { pause(); miniPlayerDismissed = true; onSessionUpdate?(true) }
+    func resume() {
+        miniPlayerDismissed = false
+        if speechPrepared { speechPrepared = false; speech?.start(from: preparedSpeechLocator) } else { speech?.resume() }
+        if let player { if elapsed >= duration { seek(0) }; isPlaying = true; player.playImmediately(atRate: Float(rate)) }
+        nowPlaying(); onSessionUpdate?(true)
+    }
+    func stop() { speech?.stop(); speech = nil; speechPublication = nil; speechPrepared = false; preparedSpeechLocator = nil; listeningSession = nil; miniPlayerDismissed = false; speechChapters = []; chapterTitle = ""; player?.pause(); player = nil; if let finishObserver { NotificationCenter.default.removeObserver(finishObserver) }; finishObserver = nil; tickTask?.cancel(); seekRevision = UUID(); seeking = false; recordingIntervals = []; recordingID = nil; isPlaying = false; duration = 0; elapsed = 0; onProgress = nil; onFinished = nil; onClearHighlight?(); onClearHighlight = nil; onLocator = nil; speechLocator = nil; bookID = nil; title = ""; subtitle = ""; nowPlaying() }
     func skip(_ seconds: Double) { if player != nil { seek(elapsed + seconds) } else if seconds > 0 { speech?.next() } else { speech?.previous() } }
     func seek(_ value: Double) {
         guard let player, value.isFinite else { return }
         let revision = UUID(); seekRevision = revision; seeking = true
         elapsed = min(max(0, value), duration); onProgress?(elapsed); nowPlaying()
+        onSessionUpdate?(true)
         player.seek(to: CMTime(seconds: elapsed, preferredTimescale: 60_000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor in guard let self, self.seekRevision == revision else { return }; self.seeking = false }
         }
@@ -216,7 +234,7 @@ struct RecordingInterval {
             if candidates.count == 1, let title = candidates.first?.title { chapterTitle = title }
             else if chapterTitle.isEmpty, let title = speechLocator?.title { chapterTitle = title }
         }
-        nowPlaying()
+        nowPlaying(); onSessionUpdate?(false)
     }
     func publicationSpeechSynthesizer(_ synthesizer: PublicationSpeechSynthesizer, utterance: PublicationSpeechSynthesizer.Utterance, didFailWithError error: PublicationSpeechSynthesizer.Error) { guard synthesizer === speech else { return }; self.error = "Speech failed: \(error)"; pause() }
 }

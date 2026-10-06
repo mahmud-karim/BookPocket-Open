@@ -77,6 +77,7 @@ struct ListenView: View {
         VStack(spacing: 4) {
             Text(player.title).font(.system(compact ? .title3 : .title2, design: .serif)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.8)
             Text(player.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            if let scope = player.listeningSession?.scope { Text(scope + " recording").font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("listen.scope") }
         }
     }
     private var chaptersButton: some View {

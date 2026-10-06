@@ -18,6 +18,11 @@ import Foundation
         library.update(local)
         if ProcessInfo.processInfo.arguments.contains("--reader-player-fixture") {
             try installReaderTakes(local: local, companion: companion)
+            if ProcessInfo.processInfo.arguments.contains("--studio-failed-jobs-fixture"), var failed = companion.jobs.first {
+                failed.id = "studio-failed-fixture"; failed.status = "failed"; failed.error = "Explicit offline test failure"; failed.assets = []; failed.completedSegments = 0
+                var cancelled = failed; cancelled.id = "studio-cancelled-fixture"; cancelled.status = "cancelled"; cancelled.error = nil
+                companion.jobs.insert(contentsOf: [failed, cancelled], at: 0)
+            }
             return
         }
         let titles = ["Tone one — 90 seconds", "Tone two — 120 seconds", "Unavailable tone"]

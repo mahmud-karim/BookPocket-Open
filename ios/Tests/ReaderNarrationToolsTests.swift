@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 import ReadiumShared
 @testable import BookPocketOpen
 
@@ -29,6 +30,115 @@ private final class ReaderToolsProtocol: Foundation.URLProtocol {
 }
 
 final class ReaderNarrationToolsTests: XCTestCase {
+    @MainActor func testTrimmedReferenceCreationReturnsVoiceForExistingCharacterDraft() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder); ReaderToolsProtocol.handler = nil }
+        let rate = 8_000, count = rate * 8
+        var data = Data()
+        func word<T: FixedWidthInteger>(_ value: T) { var little = value.littleEndian; withUnsafeBytes(of: &little) { data.append(contentsOf: $0) } }
+        data.append(contentsOf: "RIFF".utf8); word(UInt32(36 + count * 2)); data.append(contentsOf: "WAVEfmt ".utf8)
+        word(UInt32(16)); word(UInt16(1)); word(UInt16(1)); word(UInt32(rate)); word(UInt32(rate * 2)); word(UInt16(2)); word(UInt16(16))
+        data.append(contentsOf: "data".utf8); word(UInt32(count * 2))
+        for sample in 0..<count { word(Int16(sin(2 * .pi * 220 * Double(sample) / Double(rate)) * 200)) }
+        let original = folder.appendingPathComponent("explicit-reference-tone.wav"); try data.write(to: original)
+        let editor = VoiceSampleEditor(); defer { editor.cleanUp() }; try editor.load(original)
+        editor.start = 2; editor.end = 5; try editor.preview(); XCTAssertTrue(editor.playing); editor.stop()
+        let trimmed = try await editor.export(); defer { try? FileManager.default.removeItem(at: trimmed) }
+        XCTAssertEqual(try AVAudioPlayer(contentsOf: trimmed).duration, 3, accuracy: 0.05)
+        let store = CompanionStore(root: folder.appendingPathComponent("Companion"), client: try client())
+        let created = RemoteVoice(id: "created-mira", name: "Mira", engine: "omnivoice", kind: "clone", language: "en")
+        ReaderToolsProtocol.handler = { request in
+            XCTAssertEqual(request.url!.path, "/v1/voices"); XCTAssertEqual(request.httpMethod, "POST")
+            let body = try XCTUnwrap(request.httpBody)
+            XCTAssertTrue(String(decoding: body, as: UTF8.self).contains("Exact selected reference transcript"))
+            return (201, try CompanionClient.encoder.encode(created))
+        }
+        let voice = try await store.clone(name: "Mira", engine: "omnivoice", language: "en", transcript: "Exact selected reference transcript", sample: trimmed)
+        var cast = BookCast(characters: [.init(id: "mira", name: "Mira", aliases: ["Captain"], voiceId: nil)])
+        cast.characters[0].voiceId = voice.id
+        XCTAssertEqual(cast.characters[0].aliases, ["Captain"]); XCTAssertEqual(cast.characters[0].voiceId, created.id)
+        XCTAssertEqual(store.voices.first?.id, created.id); XCTAssertEqual(try Data(contentsOf: original), data, "Reference trimming never changes the original file")
+    }
+    @MainActor func testExactTrimmedListeningSessionRestoresPausedAndDismissedOffline() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let library = LibraryStore(root: folder.appendingPathComponent("Library"))
+        let local = try await library.importBook(XCTUnwrap(Bundle(for: Self.self).url(forResource: "lantern", withExtension: "epub")))
+        let store = CompanionStore(root: folder.appendingPathComponent("Companion"))
+        var (book, job, segment) = words(); book.sourceSha256 = local.sourceSHA256
+        let data = try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: "test-tone", withExtension: "wav")))
+        try data.write(to: store.root.appendingPathComponent("tone.wav"))
+        job.assets[0].sha256 = SourceIdentity.hash(data); job.assets[0].bytes = data.count
+        job.assets[0].sourceTimings = [.init(start: 0.1, end: 0.25, startOffset: 2, endOffset: 9)]
+        var second = segment; second.id = "second"; book.chapters[0].segments.append(second)
+        var secondAsset = job.assets[0]; secondAsset.id = "second"; secondAsset.segmentId = second.id
+        secondAsset.sourceTimings = [.init(start: 0, end: 0.15, startOffset: 0, endOffset: 9)]
+        job.assets.append(secondAsset); job.segmentIds.append(second.id); job.completedSegments = 2; job.totalSegments = 2
+        var newer = job; newer.id = "newest-unused-take"
+        store.books = [book]; store.jobs = [newer, job]
+        store.downloads = job.assets.enumerated().map { .init(localBookID: local.id, jobID: job.id, asset: $0.element, file: "tone.wav", segment: $0.offset == 0 ? segment : second) }
+        try store.persistTransportFixture()
+        let selection = DownloadedRecordingSelection(records: store.downloads, bounds: [(0.1, nil), (0, 0.15)])
+        let player = PlaybackController(); defer { player.stop() }
+        store.playRecording(selection, library: library, player: player, autoplay: false, scope: "Page")
+        player.rate = 1.25; player.seek(0.2); player.dismissMiniPlayer()
+        let reopened = CompanionStore(root: store.root), restored = PlaybackController(); defer { restored.stop() }
+        await reopened.restoreListeningSession(library: LibraryStore(root: library.root), player: restored)
+        XCTAssertNil(restored.error); XCTAssertFalse(restored.isPlaying); XCTAssertTrue(restored.miniPlayerDismissed)
+        XCTAssertEqual(restored.recordingID, selection.id); XCTAssertEqual(restored.elapsed, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(restored.duration, 0.3, accuracy: 0.0001); XCTAssertEqual(restored.rate, 1.25)
+        XCTAssertEqual(restored.listeningSession?.jobID, job.id); XCTAssertEqual(restored.listeningSession?.scope, "Page")
+        XCTAssertEqual(restored.recordingPosition(at: restored.elapsed)?.index, 1)
+        XCTAssertEqual(restored.recordingPosition(at: restored.elapsed)?.seconds ?? -1, 0.05, accuracy: 0.0001)
+        restored.resume(); XCTAssertTrue(restored.isPlaying); XCTAssertFalse(restored.miniPlayerDismissed); restored.pause()
+        try reopened.removeDownloadedTake(job.id)
+        XCTAssertNil(CompanionStore(root: store.root).listeningSession, "Removing the selected download invalidates its resume state")
+    }
+    @MainActor func testMissingListeningDownloadNeverRestoresAnotherTake() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let library = LibraryStore(root: folder.appendingPathComponent("Library"))
+        let local = try await library.importBook(XCTUnwrap(Bundle(for: Self.self).url(forResource: "lantern", withExtension: "epub")))
+        let store = CompanionStore(root: folder.appendingPathComponent("Companion"))
+        let (_, job, segment) = words(); let data = try Data(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: "test-tone", withExtension: "wav")))
+        var asset = job.assets[0]; asset.sha256 = SourceIdentity.hash(data); asset.bytes = data.count
+        var valid = job; valid.assets = [asset]; store.jobs = [valid]
+        let record = DownloadRecord(localBookID: local.id, jobID: job.id, asset: asset, file: "tone.wav", segment: segment)
+        store.downloads = [record]; try data.write(to: store.root.appendingPathComponent(record.file)); try store.persistTransportFixture()
+        let player = PlaybackController(); store.playRecording(.init(records: [record], bounds: [(0, nil)]), library: library, player: player, autoplay: false)
+        player.seek(0.1); player.pause(); player.stop(); try FileManager.default.removeItem(at: store.root.appendingPathComponent(record.file))
+        let restored = PlaybackController(); await CompanionStore(root: store.root).restoreListeningSession(library: library, player: restored)
+        XCTAssertNil(restored.bookID); XCTAssertFalse(restored.isPlaying); XCTAssertNotNil(restored.error)
+    }
+    @MainActor func testGeneratedAuditionRecoversOriginalRequestWithoutBookQueuePollution() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder); ReaderToolsProtocol.handler = nil }
+        let store = CompanionStore(root: folder, client: try client())
+        let request = VoicePreviewRequest(requestId: UUID().uuidString, voiceId: "mira", text: "Original audition", language: "en")
+        ReaderToolsProtocol.handler = { incoming in
+            if incoming.url!.path == "/v1/health" { return (200, Data("{\"capabilities\":[\"voice_previews\"]}".utf8)) }
+            XCTAssertEqual(try CompanionClient.decoder.decode(VoicePreviewRequest.self, from: XCTUnwrap(incoming.httpBody)), request)
+            throw URLError(.networkConnectionLost)
+        }
+        do { _ = try await store.voicePreview(request); XCTFail("Lost confirmation should retain its request") } catch {}
+        let reopened = CompanionStore(root: folder, client: try client())
+        XCTAssertEqual(reopened.voiceAuditions.first?.request, request)
+        var accepted = VoicePreviewJob(id: "preview", voiceId: request.voiceId, status: "running")
+        ReaderToolsProtocol.handler = { incoming in
+            if incoming.url!.path == "/v1/health" { return (200, Data("{\"capabilities\":[\"voice_previews\"]}".utf8)) }
+            if incoming.httpMethod == "POST" { XCTAssertEqual(try CompanionClient.decoder.decode(VoicePreviewRequest.self, from: XCTUnwrap(incoming.httpBody)), request); return (202, try CompanionClient.encoder.encode(accepted)) }
+            XCTAssertEqual(incoming.url!.path, "/v1/voice-previews/preview")
+            accepted.status = "completed"; accepted.asset = self.words().1.assets[0]
+            return (200, try CompanionClient.encoder.encode(accepted))
+        }
+        let running = try await reopened.voicePreview(request)
+        do { _ = try await reopened.voicePreviewAudio(running); XCTFail("Running auditions cannot be played as generated audio") } catch {}
+        let completed = try await reopened.voicePreviewStatus(running.id)
+        XCTAssertEqual(completed.status, "completed"); XCTAssertNotNil(completed.asset)
+        XCTAssertTrue(reopened.jobs.isEmpty); XCTAssertTrue(reopened.books.isEmpty); XCTAssertTrue(reopened.downloads.isEmpty)
+        XCTAssertEqual(CompanionStore(root: folder).voiceAuditions.first?.job?.status, "completed")
+    }
     private func client() throws -> CompanionClient {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [ReaderToolsProtocol.self]
         return try CompanionClient(url: XCTUnwrap(URL(string: "https://reader-tools.invalid")), fingerprint: nil, token: "test-only", configuration: config)

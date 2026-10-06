@@ -29,7 +29,7 @@ struct ReaderCastPlan {
             for row in assignments {
                 guard row.reviewed, SourceIdentity.scalarRange(row.startOffset, row.endOffset, in: segment.text) != nil,
                       let character = cast.characters.first(where: { $0.id == row.characterId }) else { throw setup }
-                let id = character.voiceId ?? narrator.id
+                guard let id = character.voiceId else { throw BookError.message("Choose a voice for \(character.name), create one, or explicitly choose Use narrator in Cast Studio.") }
                 guard voices.contains(where: { $0.id == id && $0.engine == narrator.engine }) else { throw setup }
                 let start = max(range.startOffset, row.startOffset), stop = min(range.endOffset, row.endOffset)
                 guard start >= end, stop > start else { throw setup }
@@ -100,6 +100,7 @@ enum ReaderTakeMatch {
     var voice: RemoteVoice?
     var plan: [NarrationSpan] = []
     var working = false
+    var analysisProgress: String?
     var error: String?
     // Capture failures belong to the visible source. A later exact capture can
     // recover them without hiding a generation, download, or playback failure.
@@ -123,7 +124,7 @@ enum ReaderTakeMatch {
         currentBookID: () -> String, currentLocation: () -> Locator?,
         download: () async -> Bool, play: () -> Void) async -> Bool {
         guard !working else { return false }
-        working = true; defer { working = false }
+        working = true; defer { working = false; analysisProgress = nil }
         guard await download() else { return false }
         guard playbackSession == intent.session, selectedJobID == intent.jobID,
               mode == intent.mode, selection?.ranges == intent.ranges, snapshot?.id == intent.snapshotID,
@@ -185,6 +186,22 @@ enum ReaderTakeMatch {
             if mode == .cast {
                 guard !companion.castDraft(for: book.id).dirty, !companion.castDraft(for: book.id).busy else {
                     throw BookError.message("Finish reviewing and save your cast before generating. Open Set up cast to keep your latest edits.")
+                }
+                let chapters = book.chapters.filter { chapter in chapter.segments.contains { segment in selection.ranges.contains { $0.segmentId == segment.id } } }.map(\.id)
+                let statuses = try await companion.chapterAnalysisStatus(book.id)
+                if chapters.contains(where: { id in !statuses.contains { $0.chapterId == id && $0.status == "completed" } }) {
+                    let draft = companion.castDraft(for: book.id)
+                    var service = companion.castService(bookID: book.id)
+                    service.poll = { id in
+                        let current = try await companion.analysis(id)
+                        self.analysisProgress = "\(current.status.capitalized) · \(current.completedSegments)/\(current.totalSegments) passages"
+                        return current
+                    }
+                    analysisProgress = "Analyzing chapter speakers…"
+                    await draft.load(book: book, service: service)
+                    guard !draft.dirty, !draft.busy, draft.error == nil else { throw BookError.message(draft.error ?? "Save your cast edits before analyzing this chapter.") }
+                    await draft.analyze(book: book, hosted: false, service: service, chapterIDs: chapters)
+                    guard draft.analysis?.status == "completed", !draft.busy, draft.error == nil else { throw BookError.message(draft.error ?? draft.analysis?.error ?? "Chapter analysis has not completed. Open Cast Studio to resume it.") }
                 }
                 let saved = try await companion.fetchCast(book.id)
                 let castPlan = try ReaderCastPlan.build(cast: saved, book: book, ranges: selection.ranges, voices: companion.voices, engines: companion.engines)

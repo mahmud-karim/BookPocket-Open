@@ -3,12 +3,14 @@ import UIKit
 
 struct CastView: View {
     let book: RemoteBook
+    var relevantRanges: [SourceRange]? = nil
     @Environment(CompanionStore.self) private var companion
-    var body: some View { CastDraftView(book: book, draft: companion.castDraft(for: book.id)) }
+    var body: some View { CastDraftView(book: book, relevantRanges: relevantRanges, draft: companion.castDraft(for: book.id)) }
 }
 
 private struct CastDraftView: View {
     let book: RemoteBook
+    let relevantRanges: [SourceRange]?
     @Bindable var draft: CastDraft
     @Environment(CompanionStore.self) private var companion
     @Environment(\.dismiss) private var dismiss
@@ -16,6 +18,13 @@ private struct CastDraftView: View {
     @State private var allowHosted = false
     @State private var showingAssignment = false
     @State private var action: Task<Void, Never>?
+    @State private var chapterID = ""
+    @State private var chapterStatuses: [ChapterAnalysisStatus] = []
+    @State private var creatingCharacter: CastCharacter?
+    @State private var auditionVoice: RemoteVoice?
+    private var relevantCharacters: Set<String>? {
+        relevantRanges.map { ranges in Set(draft.value.assignments.filter { row in ranges.contains { $0.segmentId == row.segmentId && $0.startOffset < row.endOffset && row.startOffset < $0.endOffset } }.map(\.characterId) + ["narrator"]) }
+    }
     private var service: CastService {
         CastService(fetch: { try await companion.fetchCast(book.id) },
                     save: { try await companion.saveCast($0, bookID: book.id) },
@@ -30,7 +39,11 @@ private struct CastDraftView: View {
                     Text("Build a cast for every conversation. Voices stay attached to the original words.").foregroundStyle(.secondary)
                     Toggle("Allow configured hosted analysis", isOn: $allowHosted)
                     Text(allowHosted ? "Analysis will send book text to the hosted API configured on your PC." : "Analysis uses your PC's local model. Hosted APIs are blocked.").font(.caption).foregroundStyle(.secondary)
-                    Button("Analyze speakers", systemImage: "person.2.wave.2") { startAnalysis() }.disabled(draft.busy)
+                    Picker("Chapter", selection: $chapterID) { ForEach(book.chapters) { Text($0.title).tag($0.id) } }.accessibilityIdentifier("cast.chapter")
+                    if let status = chapterStatuses.first(where: { $0.chapterId == chapterID }) { Text(status.status.replacingOccurrences(of: "_", with: " ").capitalized).accessibilityIdentifier("cast.chapter.status"); if let error = status.error { Text(error).foregroundStyle(.red) } }
+                    Button("Analyze chapter", systemImage: "person.2.wave.2") { startAnalysis(chapters: [chapterID]) }.disabled(draft.busy || chapterID.isEmpty).accessibilityIdentifier("cast.analyze.chapter")
+                    Button("Reanalyze chapter") { startAnalysis(chapters: [chapterID], force: true) }.disabled(draft.busy || chapterID.isEmpty).accessibilityIdentifier("cast.reanalyze.chapter")
+                    Button("Analyze entire book") { startAnalysis(chapters: book.chapters.map(\.id)) }.disabled(draft.busy).accessibilityIdentifier("cast.analyze.book")
                     if draft.loading { ProgressView("Loading saved cast…") }
                     if let analysis = draft.analysis {
                         if draft.mergingResults { ProgressView("Loading suggestions…") }
@@ -46,16 +59,26 @@ private struct CastDraftView: View {
                         Button("Add narrator", systemImage: "person.wave.2") { draft.value.characters.append(.init(id: "narrator", name: "Narrator", aliases: [], voiceId: nil)) }
                     }
                     ForEach($draft.value.characters) { $character in
+                        if relevantCharacters == nil || relevantCharacters!.contains(character.id) {
                         VStack(alignment: .leading, spacing: 8) {
                             TextField("Character name", text: $character.name)
                             TextField("Aliases, separated by commas", text: Binding(get: { character.aliases.joined(separator: ", ") }, set: { character.aliases = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }))
                                 .font(.caption).foregroundStyle(.secondary)
                             Picker("Voice", selection: Binding(get: { character.voiceId ?? "" }, set: { character.voiceId = $0.isEmpty ? nil : $0 })) {
-                                Text("Use narrator").tag("")
-                                ForEach(companion.voices) { Text($0.name).tag($0.id) }
+                                Text("Choose voice").tag("")
+                                ForEach(companion.voices.filter { voice in character.id == "narrator" || draft.value.characters.first(where: { $0.id == "narrator" })?.voiceId.flatMap { id in companion.voices.first { $0.id == id } }?.engine == voice.engine }) { Text($0.name).tag($0.id) }
                             }
+                            HStack {
+                                Button("Create voice", systemImage: "plus") { creatingCharacter = character }.buttonStyle(.borderless).accessibilityIdentifier("cast.voice.create." + character.id)
+                                if character.id != "narrator", let narrator = draft.value.characters.first(where: { $0.id == "narrator" })?.voiceId {
+                                    Button("Use narrator") { character.voiceId = narrator }.buttonStyle(.borderless).accessibilityIdentifier("cast.voice.narrator." + character.id)
+                                }
+                                if let voice = companion.voices.first(where: { $0.id == character.voiceId }) { Button("Audition") { auditionVoice = voice }.buttonStyle(.borderless).accessibilityIdentifier("cast.voice.audition." + character.id) }
+                            }.frame(minHeight: 44)
+                        }.deleteDisabled(relevantRanges != nil)
                         }
                     }.onDelete { offsets in
+                        guard relevantRanges == nil else { return }
                         let removed = Set(offsets.map { draft.value.characters[$0].id })
                         draft.value.characters.remove(atOffsets: offsets)
                         draft.value.assignments.removeAll { removed.contains($0.characterId) }
@@ -64,13 +87,18 @@ private struct CastDraftView: View {
                 }
                 Section {
                     ForEach($draft.value.assignments) { $assignment in
+                        if relevantRanges == nil || relevantRanges!.contains(where: { $0.segmentId == assignment.segmentId && $0.startOffset < assignment.endOffset && assignment.startOffset < $0.endOffset }) {
                         VStack(alignment: .leading, spacing: 10) {
                             if let text = excerpt(assignment) { Text(text).font(.system(.body, design: .serif)).lineLimit(5) }
                             Picker("Speaker", selection: $assignment.characterId) { ForEach(draft.value.characters) { Text($0.name).tag($0.id) } }
                             if !assignment.reviewed { Label(assignment.confidence < 0.8 ? "Uncertain speaker — review required" : "Suggested speaker", systemImage: "questionmark.circle").font(.caption).foregroundStyle(.secondary) }
                             Toggle("Reviewed", isOn: $assignment.reviewed)
-                        }.padding(.vertical, 6)
-                    }.onDelete { draft.value.assignments.remove(atOffsets: $0) }
+                            if relevantRanges != nil {
+                                Button("Delete assignment", role: .destructive) { let id = assignment.id; draft.value.assignments.removeAll { $0.id == id } }.buttonStyle(.borderless)
+                            }
+                        }.padding(.vertical, 6).deleteDisabled(relevantRanges != nil)
+                        }
+                    }.onDelete { if relevantRanges == nil { draft.value.assignments.remove(atOffsets: $0) } }
                     Button("Assign selected words", systemImage: "text.cursor") { showingAssignment = true }.disabled(draft.value.characters.isEmpty)
                 } header: { Text("Dialogue & narration") } footer: { Text("Delete an incorrect range and select its exact replacement. Unassigned words use the narrator.") }
                 if let error = draft.error { Text(error).foregroundStyle(.red) }
@@ -88,9 +116,13 @@ private struct CastDraftView: View {
             }
             .navigationTitle("Cast studio").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Save & close") { save(close: true) }.disabled(draft.busy) } }
-            .task { await draft.load(book: book, service: service) }
+            .task {
+                if chapterID.isEmpty { chapterID = book.chapters.first(where: { chapter in relevantRanges?.contains { range in chapter.segments.contains { $0.id == range.segmentId } } == true })?.id ?? book.chapters.first?.id ?? "" }
+                await draft.load(book: book, service: service)
+                do { chapterStatuses = try await companion.chapterAnalysisStatus(book.id) } catch { draft.error = error.localizedDescription }
+            }
             .onDisappear {
-                guard !showingAssignment else { return }
+                guard !showingAssignment, creatingCharacter == nil, auditionVoice == nil else { return }
                 if !draft.awaitingAnalysisConfirmation { action?.cancel() }
                 draft.cancel()
             }
@@ -99,6 +131,12 @@ private struct CastDraftView: View {
                 if overlaps { draft.error = "Those words already have a speaker. Delete the overlapping assignment first." }
                 else { draft.value.assignments.append(assignment) }
             } }
+            .sheet(item: $creatingCharacter) { character in
+                VoiceCreationView(initialName: character.name, initialEngine: draft.value.characters.first(where: { $0.id == "narrator" })?.voiceId.flatMap { id in companion.voices.first { $0.id == id } }?.engine ?? "omnivoice") { voice in
+                    if let index = draft.value.characters.firstIndex(where: { $0.id == character.id }) { draft.value.characters[index].voiceId = voice.id }
+                }
+            }
+            .sheet(item: $auditionVoice) { VoiceAuditionView(voice: $0) }
         }
     }
     private func excerpt(_ assignment: CastAssignment) -> String? {
@@ -111,8 +149,11 @@ private struct CastDraftView: View {
             if close && saved && !Task.isCancelled { dismiss() }
         }
     }
-    private func startAnalysis() {
-        action = Task { await draft.analyze(book: book, hosted: allowHosted, service: service) }
+    private func startAnalysis(chapters: [String], force: Bool = false) {
+        action = Task {
+            await draft.analyze(book: book, hosted: allowHosted, service: service, chapterIDs: chapters, force: force)
+            do { chapterStatuses = try await companion.chapterAnalysisStatus(book.id) } catch { draft.error = error.localizedDescription }
+        }
     }
 }
 

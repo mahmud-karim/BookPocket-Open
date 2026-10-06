@@ -99,7 +99,7 @@ struct ReaderPlayerView: View {
                             }
                     }.tint(Obsidian.accent)
                         .sheet(isPresented: $showPairing, onDismiss: { refresh() }) { PairingView() }
-                        .sheet(isPresented: $showCast, onDismiss: { refreshPreparation() }) { if let remote = state.remote { CastView(book: remote) } }
+                        .sheet(isPresented: $showCast, onDismiss: { refreshPreparation() }) { if let remote = state.remote { CastView(book: remote, relevantRanges: state.selection?.ranges) } }
                         .sheet(isPresented: $showPronunciation) { PronunciationEditorView(language: reader.book?.language ?? "en", onRegenerate: { detail = nil; chooser = .scope }) }
                         .alert(deleteFromPC ? "Delete this entire generated take from your PC and iPhone?" : "Remove this download from your iPhone?", isPresented: Binding(get: { removingRecording != nil }, set: { if !$0 { removingRecording = nil } })) {
                             Button(deleteFromPC ? "Delete generated take" : "Remove download", role: .destructive) { removeRecording() }.accessibilityIdentifier("reader.recording.confirm")
@@ -378,7 +378,7 @@ struct ReaderPlayerView: View {
             .accessibilityIdentifier("reader.player.readiness")
     }
     private var readiness: String {
-        if state.working { return "Preparing narration…" }
+        if state.working { return state.analysisProgress ?? "Preparing narration…" }
         if discovering { return "Checking \(state.playbackScope == .page ? "this page" : "this chapter")…" }
         if let job, ["queued", "running", "paused"].contains(job.status) { return "\(job.status.capitalized) · \(job.completedSegments)/\(job.totalSegments) passages" }
         if state.showingSelection && !companion.paired { return "Pair your PC to generate · open details" }
@@ -535,7 +535,7 @@ struct ReaderPlayerView: View {
         reader.connectPlayback(player); detail = nil
     }
     @ViewBuilder private var generatedControls: some View {
-        if state.working { ProgressView("Preparing narration…").accessibilityIdentifier("reader.player.working") }
+        if state.working { ProgressView(state.analysisProgress ?? "Preparing narration…").accessibilityIdentifier("reader.player.working") }
         if let job {
             VStack(alignment: .leading, spacing: 8) {
                 Text("\(job.status.capitalized) · \(job.completedSegments) of \(job.totalSegments) passages").font(.caption).foregroundStyle(.secondary)
@@ -634,7 +634,7 @@ struct ReaderPlayerView: View {
         let recording: DownloadedRecordingSelection
         do { recording = try DownloadedRecordingSelection.reader(job: job, selection: selection, records: companion.orderedDownloads(jobID: job.id)) }
         catch { state.error = error.localizedDescription; return }
-        companion.playRecording(recording, library: library, player: player, fromBeginning: true)
+        companion.playRecording(recording, library: library, player: player, fromBeginning: true, scope: state.playbackScope == .page ? "Page" : "Chapter")
         guard player.isPlaying else { state.error = player.error; state.readyIDs.remove(job.id); return }
         reader.connectPlayback(player)
     }

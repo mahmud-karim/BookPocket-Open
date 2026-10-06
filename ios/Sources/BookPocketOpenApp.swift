@@ -6,6 +6,8 @@ import SwiftUI
     @State private var companion: CompanionStore
     @State private var selectedTab = "library"
     @AppStorage("appTheme") private var theme = "dark"
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var restoredListening = false
     #if DEBUG
     @State private var installedTransportFixture = false
     #endif
@@ -22,7 +24,8 @@ import SwiftUI
         if UITestTransportFixture.enabled {
             // A fresh isolated store prevents existing pairing credentials or
             // personal downloads from entering the offline transport test.
-            let root = FileManager.default.temporaryDirectory.appendingPathComponent("TransportUITest-" + UUID().uuidString)
+            let sessionID = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--transport-persistence-id=") }?.split(separator: "=").last.map(String.init)
+            let root = URL.documentsDirectory.appendingPathComponent("TransportUITest-" + (sessionID ?? UUID().uuidString))
             _library = State(initialValue: LibraryStore(root: root.appendingPathComponent("Library")))
             _companion = State(initialValue: CompanionStore(root: root.appendingPathComponent("Companion")))
             return
@@ -59,11 +62,20 @@ import SwiftUI
                 #if DEBUG
                 if UITestTransportFixture.enabled && !installedTransportFixture {
                     installedTransportFixture = true
-                    do { try await UITestTransportFixture.install(library: library, companion: companion); selectedTab = "listen" }
+                    do {
+                        if library.books.isEmpty { try await UITestTransportFixture.install(library: library, companion: companion); try companion.persistTransportFixture() }
+                        selectedTab = "listen"
+                    }
                     catch { library.error = error.localizedDescription }
                 }
                 #endif
+                if !restoredListening {
+                    restoredListening = true
+                    player.onSessionUpdate = { [weak companion, weak player] force in if let player { companion?.captureListeningSession(player, force: force) } }
+                    await companion.restoreListeningSession(library: library, player: player)
+                }
             }
+            .onChange(of: scenePhase) { if scenePhase != .active { companion.captureListeningSession(player) } }
             .onOpenURL { url in Task { do { try await library.importBook(url) } catch { library.error = error.localizedDescription } } }
             .alert("Book Pocket Open", isPresented: Binding(get: { library.error != nil || player.error != nil }, set: { if !$0 { library.error = nil; player.error = nil } })) { Button("OK") { library.error = nil; player.error = nil } } message: { Text(library.error ?? player.error ?? "") }
         }
@@ -72,7 +84,7 @@ import SwiftUI
     // Inset each tab's content, whose safe area already excludes the native tab bar.
     // Insetting the entire TabView can replace/cover that bar while narration exists.
     @ViewBuilder private var miniPlayer: some View {
-        if player.bookID != nil {
+        if player.bookID != nil && !player.miniPlayerDismissed {
             HStack(spacing: 14) {
                 Button { selectedTab = "listen" } label: {
                     HStack(spacing: 12) {
@@ -92,6 +104,9 @@ import SwiftUI
                 }
                     .accessibilityIdentifier("player.mini.toggle")
                     .accessibilityValue(player.isPlaying ? "Playing" : "Paused")
+                Button { player.dismissMiniPlayer() } label: {
+                    Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+                }.accessibilityLabel("Close player").accessibilityIdentifier("player.mini.close")
             }
             .padding(.horizontal, 18).padding(.vertical, 6)
             .background(Obsidian.surface).overlay(alignment: .top) { Divider() }

@@ -44,6 +44,9 @@ enum CompanionConnectionState: Equatable {
     var pronunciationDraftRevision: Int?
     var narrationPronunciations: [PronunciationRule] { pronunciationDraft ?? importedPronunciations }
     private var deletedTakeIDs: Set<String> = []
+    private(set) var listeningSession: ListeningSession?
+    private(set) var voiceAuditions: [SavedVoiceAudition] = []
+    @ObservationIgnored private var listeningSavedAt = Date.distantPast
     var error: String?
     var status: String?
     var refreshing = false
@@ -100,6 +103,8 @@ enum CompanionConnectionState: Equatable {
             pronunciationDraft = try database?.read("pronunciationDraft", as: [PronunciationRule].self)
             pronunciationDraftRevision = try database?.read("pronunciationDraftRevision", as: Int.self)
             deletedTakeIDs = try database?.read("deletedTakeIDs", as: Set<String>.self) ?? []
+            listeningSession = try database?.read("listeningSession", as: ListeningSession.self)
+            voiceAuditions = try database?.read("voiceAuditions", as: [SavedVoiceAudition].self) ?? []
             if let identity, let token = DeviceKeychain.read(account: identity.deviceID) { self.client = try CompanionClient(url: identity.url, fingerprint: identity.fingerprint, token: token) }
         } catch { self.error = error.localizedDescription }
         if let client { self.client = client }
@@ -122,8 +127,13 @@ enum CompanionConnectionState: Equatable {
             try database.write("pronunciationDraft", value: pronunciationDraft)
             try database.write("pronunciationDraftRevision", value: pronunciationDraftRevision)
             try database.write("deletedTakeIDs", value: deletedTakeIDs)
+            try database.write("listeningSession", value: listeningSession)
+            try database.write("voiceAuditions", value: voiceAuditions)
         }
     }
+    #if DEBUG
+    func persistTransportFixture() throws { try persist() }
+    #endif
     func connect(qr: PairingQR) async {
         pairing = true; status = "Requesting a secure connection…"
         defer { pairing = false }
@@ -408,7 +418,46 @@ enum CompanionConnectionState: Equatable {
     func analyze(_ bookID: String, request: CastAnalysisRequest) async throws -> AnalysisJob {
         guard let client else { throw BookError.message("Connect to your companion first.") }
         try await requireReliableAnalysis()
+        if request.chapterIds != nil { try await requireCapability("chapter_analysis", message: "Update PC Companion for chapter analysis, then reconnect.") }
         return try await client.send("/v1/books/\(bookID)/analyze", method: "POST", body: CompanionClient.encoder.encode(request))
+    }
+    func chapterAnalysisStatus(_ bookID: String) async throws -> [ChapterAnalysisStatus] {
+        try await requireCapability("chapter_analysis", message: "Update PC Companion for chapter analysis, then reconnect.")
+        struct Response: Decodable { var chapters: [ChapterAnalysisStatus] }
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        let response: Response = try await client.send("/v1/books/\(bookID)/analysis-status")
+        return response.chapters
+    }
+    func castService(bookID: String) -> CastService {
+        CastService(fetch: { try await self.fetchCast(bookID) }, save: { try await self.saveCast($0, bookID: bookID) }, analyze: { try await self.analyze(bookID, request: $0) }, poll: { try await self.analysis($0) }, requireReliableAnalysis: { try await self.requireReliableAnalysis() })
+    }
+    func voicePreview(_ request: VoicePreviewRequest) async throws -> VoicePreviewJob {
+        if !voiceAuditions.contains(where: { $0.request.requestId == request.requestId }) {
+            voiceAuditions.append(SavedVoiceAudition(request: request)); try persist()
+        }
+        try await requireCapability("voice_previews", message: "Update PC Companion to audition generated voices.")
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        let job: VoicePreviewJob = try await client.send("/v1/voice-previews", method: "POST", body: CompanionClient.encoder.encode(request))
+        guard job.voiceId == request.voiceId else { throw BookError.message("The companion returned a different audition voice.") }
+        if let index = voiceAuditions.firstIndex(where: { $0.request.requestId == request.requestId }) { voiceAuditions[index].job = job; try persist() }
+        return job
+    }
+    func voicePreviewStatus(_ id: String) async throws -> VoicePreviewJob {
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        let job: VoicePreviewJob = try await client.send("/v1/voice-previews/\(id)")
+        if let index = voiceAuditions.firstIndex(where: { $0.job?.id == id }) { voiceAuditions[index].job = job; try persist() }
+        return job
+    }
+    func removeVoicePreview(_ id: String) async throws {
+        guard let client else { throw BookError.message(connectionRequiredMessage) }
+        try await client.command("/v1/voice-previews/\(id)")
+        voiceAuditions.removeAll { $0.job?.id == id }; try persist()
+    }
+    func voicePreviewAudio(_ job: VoicePreviewJob) async throws -> URL {
+        guard job.status == "completed", let asset = job.asset, let client else { throw BookError.message("Wait for the generated audition to finish.") }
+        let url = root.appendingPathComponent("audition-" + SourceIdentity.hash(Data(job.id.utf8)) + ".wav")
+        try await client.download(asset, to: url)
+        return url
     }
     func analysis(_ id: String) async throws -> AnalysisJob {
         guard let client else { throw BookError.message("Connect to your companion first.") }
@@ -442,11 +491,13 @@ enum CompanionConnectionState: Equatable {
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
-    func clone(name: String, engine: String, language: String, transcript: String, sample: URL) async throws {
+    @discardableResult func clone(name: String, engine: String, language: String, transcript: String, sample: URL) async throws -> RemoteVoice {
         guard let client else { throw BookError.message(connectionRequiredMessage) }
         let scoped = sample.startAccessingSecurityScopedResource(); defer { if scoped { sample.stopAccessingSecurityScopedResource() } }
         let voice = try await client.cloneVoice(name: name, engine: engine, language: language, transcript: transcript, sample: sample)
         voices.append(voice)
+        try persist()
+        return voice
     }
     @discardableResult func download(_ job: RemoteJob, localBook: LocalBook) async -> Bool {
         guard downloading == nil, !deletedTakeIDs.contains(job.id) else { return false }
@@ -496,7 +547,7 @@ enum CompanionConnectionState: Equatable {
         }
         playRecording(.init(records: selected, bounds: selected.map { _ in (0, nil) }), library: library, player: player, fromBeginning: fromBeginning)
     }
-    func playRecording(_ selection: DownloadedRecordingSelection, library: LibraryStore, player: PlaybackController, fromBeginning: Bool = false) {
+    func playRecording(_ selection: DownloadedRecordingSelection, library: LibraryStore, player: PlaybackController, fromBeginning: Bool = false, autoplay: Bool = true, position: Double? = nil, scope: String? = nil) {
         guard let first = selection.records.first, let book = library.book(first.localBookID) else {
             error = "Import the original book to read alongside this narration."; player.error = error; return
         }
@@ -512,8 +563,8 @@ enum CompanionConnectionState: Equatable {
             let savedIndex = !fromBeginning ? selection.records.firstIndex(where: { $0.id == book.audioAssetID || $0.asset.id == book.audioAssetID }) : nil
             let currentFollow = player.bookID == book.id ? player.onLocator : nil
             let currentClear = player.bookID == book.id ? player.onClearHighlight : nil
-            try player.play(parts: parts, book: book, recordingID: selection.id)
-            if let savedIndex {
+            try player.play(parts: parts, book: book, start: position ?? 0, recordingID: selection.id, autoplay: autoplay)
+            if position == nil, let savedIndex {
                 let interval = player.recordingIntervals[savedIndex]
                 let resume = min(interval.end, interval.start + max(0, book.audioSeconds - interval.sourceStart))
                 // A completed take is replayed from its beginning. Seeking a
@@ -548,12 +599,66 @@ enum CompanionConnectionState: Equatable {
                 if player.speechLocator != locator { player.speechLocator = locator; player.onLocator?(locator) }
             }
             player.onProgress?(player.elapsed)
+            player.listeningSession = ListeningSession(bookID: book.id, jobID: first.jobID, selection: selection, scope: scope)
+            player.onSessionUpdate = { [weak self, weak player] force in if let player { self?.captureListeningSession(player, force: force) } }
+            captureListeningSession(player, force: true)
             player.onFinished = { [weak library, weak player] in
                 guard let player, let position = player.recordingPosition(at: player.duration), var current = library?.book(first.localBookID) else { return }
                 current.audioAssetID = selection.records[position.index].id; current.audioSeconds = position.seconds
                 library?.update(current)
             }
         } catch { self.error = error.localizedDescription; player.error = error.localizedDescription; player.pause() }
+    }
+    func captureListeningSession(_ player: PlaybackController, force: Bool = true) {
+        guard var snapshot = player.listeningSession,
+              force || Date().timeIntervalSince(listeningSavedAt) >= 5 else { return }
+        snapshot.elapsed = player.elapsed; snapshot.rate = player.rate; snapshot.miniPlayerDismissed = player.miniPlayerDismissed
+        if let locator = player.speechLocator { snapshot.locatorJSON = try? locator.jsonString() }
+        do {
+            guard let database else { throw BookError.message("Listening progress could not be saved.") }
+            try database.write("listeningSession", value: snapshot)
+            listeningSession = snapshot; listeningSavedAt = Date()
+        } catch { self.error = error.localizedDescription }
+    }
+    func restoreListeningSession(library: LibraryStore, player: PlaybackController) async {
+        guard player.bookID == nil, let saved = listeningSession else { return }
+        do {
+            guard let book = library.book(saved.bookID), saved.elapsed.isFinite, saved.elapsed >= 0,
+                  saved.rate.isFinite, (0.25...3).contains(saved.rate) else { throw BookError.message("The last listening selection is no longer available.") }
+            if let jobID = saved.jobID {
+                guard !deletedTakeIDs.contains(jobID), !saved.parts.isEmpty,
+                      Set(saved.parts.map(\.recordID)).count == saved.parts.count else { throw BookError.message("The last recording is no longer downloaded.") }
+                let records = try saved.parts.map { part -> DownloadRecord in
+                    guard let record = downloads.first(where: { $0.id == part.recordID && $0.jobID == jobID && $0.localBookID == book.id }),
+                          record.asset.sha256 == part.sha256, record.asset.sourceStart == part.sourceStart, record.asset.sourceEnd == part.sourceEnd,
+                          available(record, recheck: true), part.start.isFinite, part.start >= 0,
+                          (part.end ?? record.asset.duration) > part.start,
+                          (part.end ?? record.asset.duration) <= record.asset.duration + 0.05 else { throw BookError.message("The last recording is missing or changed. Download that take again to resume.") }
+                    let evidence = (record.asset.sourceTimings ?? []) + record.asset.timings
+                    guard part.start == 0 || evidence.contains(where: { $0.start == part.start }),
+                          part.end == nil || part.end == record.asset.duration || evidence.contains(where: { $0.end == part.end }) else { throw BookError.message("The saved page boundaries no longer match this recording.") }
+                    return record
+                }
+                let selection = DownloadedRecordingSelection(records: records, bounds: saved.parts.map { ($0.start, $0.end) })
+                player.rate = saved.rate
+                playRecording(selection, library: library, player: player, autoplay: false, position: saved.elapsed, scope: saved.scope)
+                guard player.recordingID == selection.id else { throw BookError.message(player.error ?? "The last recording cannot be opened.") }
+            } else {
+                let publication = try await library.publications.open(library.file(book))
+                guard player.bookID == nil else { publication.close(); return }
+                let locator = saved.locatorJSON.flatMap { try? Locator(jsonString: $0) }
+                player.rate = saved.rate; player.speak(publication: publication, book: book, from: locator, autoplay: false)
+                player.onLocator = { [weak library] locator in library?.saveLocation(book.id, locator: locator) }
+            }
+            player.miniPlayerDismissed = saved.miniPlayerDismissed
+            player.onSessionUpdate = { [weak self, weak player] force in if let player { self?.captureListeningSession(player, force: force) } }
+            captureListeningSession(player, force: true)
+        } catch {
+            // Keep the exact unusable snapshot for a repaired/redownloaded file;
+            // never replace it with a newer or merely available recording.
+            player.stop()
+            player.error = error.localizedDescription
+        }
     }
     func orderedDownloads(jobID: String) -> [DownloadRecord] {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return downloads.filter { $0.jobID == jobID && available($0) } }
@@ -680,8 +785,10 @@ enum CompanionConnectionState: Equatable {
     func removeDownloadedTake(_ jobID: String) throws {
         let removing = downloads.filter { $0.jobID == jobID }
         let previous = downloads
+        let previousSession = listeningSession
+        if listeningSession?.jobID == jobID { listeningSession = nil }
         downloads.removeAll { $0.jobID == jobID }
-        do { try persist() } catch { downloads = previous; throw error }
+        do { try persist() } catch { downloads = previous; listeningSession = previousSession; throw error }
         for record in removing where !downloads.contains(where: { $0.file == record.file }) { try? FileManager.default.removeItem(at: root.appendingPathComponent(record.file)) }
     }
     func savePronunciationsOnPhone(_ rules: [PronunciationRule]) throws {

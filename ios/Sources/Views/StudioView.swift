@@ -13,6 +13,8 @@ struct StudioView: View {
     @State private var revoke = false
     @State private var exportURL: URL?
     @State private var importProject = false
+    @State private var deletingJob: RemoteJob?
+    @State private var deleting = false
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -52,10 +54,6 @@ struct StudioView: View {
                             }
                             Text("Retries keep the same request ID, preventing duplicate generation.").font(.caption).foregroundStyle(.secondary)
                         }
-                        if !companion.jobs.isEmpty {
-                            Text("Production queue").font(.title2.bold())
-                            ForEach(companion.jobs) { job in jobCard(job) }
-                        }
                         DisclosureGroup("Available engines") {
                             ForEach(companion.engines) { engine in
                                 VStack(alignment: .leading, spacing: 6) {
@@ -78,6 +76,10 @@ struct StudioView: View {
                                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(Obsidian.surface, in: .rect(cornerRadius: 16))
                             }
                         }
+                    }
+                    if !companion.jobs.isEmpty {
+                        Text("Production queue").font(.title2.bold())
+                        ForEach(companion.jobs) { job in jobCard(job) }
                     }
                     if !companion.downloads.isEmpty {
                         Text("On this device").font(.title2.bold())
@@ -112,6 +114,15 @@ struct StudioView: View {
                 Task { do { try await companion.importProject(result.get(), library: library) } catch { companion.error = error.localizedDescription } }
             }
             .confirmationDialog("Revoke this device's companion access? Downloaded audio will remain available.", isPresented: $revoke, titleVisibility: .visible) { Button("Revoke device", role: .destructive) { Task { await companion.disconnect() } } }
+            .alert("Delete this \(deletingJob?.status ?? "") job?", isPresented: Binding(get: { deletingJob != nil }, set: { if !$0 { deletingJob = nil } })) {
+                Button("Cancel", role: .cancel) { deletingJob = nil }.accessibilityIdentifier("studio.job.delete.cancel")
+                Button("Delete job", role: .destructive) {
+                    guard let job = deletingJob else { return }; deletingJob = nil; deleting = true
+                    Task { do { try await companion.deleteGeneratedTake(job.id, library: library, player: player) } catch { companion.error = error.localizedDescription }; deleting = false }
+                }.accessibilityIdentifier("studio.job.delete.confirm")
+            } message: {
+                Text("\(companion.books.first { $0.id == deletingJob?.bookId }?.title ?? "Narration") · \(deletingJob?.completedSegments ?? 0) of \(deletingJob?.totalSegments ?? 0) passages. This removes the whole job and its downloads. Your book and other takes are kept.")
+            }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
                 await companion.refresh(reportErrors: false)
@@ -133,6 +144,10 @@ struct StudioView: View {
                 if ["queued", "running"].contains(job.status) { Button("Pause") { Task { await companion.jobAction(job, "pause") } }; Button("Cancel", role: .destructive) { Task { await companion.jobAction(job, "cancel") } } }
                 if job.status == "paused" { Button("Resume") { Task { await companion.jobAction(job, "resume") } } }
                 if ["failed", "cancelled"].contains(job.status) { Button("Retry") { Task { await companion.jobAction(job, "retry") } } }
+                if ["failed", "cancelled"].contains(job.status) {
+                    Button("Delete job", systemImage: "trash", role: .destructive) { deletingJob = job }
+                        .disabled(deleting).accessibilityIdentifier("studio.job.delete." + job.id)
+                }
                 if !job.assets.isEmpty, let local = library.books.first(where: { $0.companionBookID == job.bookId || $0.sourceSHA256 == companion.books.first(where: { $0.id == job.bookId })?.sourceSha256 }) {
                     Button(companion.downloading == job.id ? "Downloading…" : "Download", systemImage: "arrow.down.circle") { Task { await companion.download(job, localBook: local) } }.disabled(companion.downloading != nil)
                 }
@@ -149,7 +164,7 @@ struct StudioView: View {
                     }.disabled(companion.exporting)
                 }
             }.font(.subheadline)
-        }.padding(18).background(Obsidian.surface, in: .rect(cornerRadius: 16))
+        }.padding(18).background(Obsidian.surface, in: .rect(cornerRadius: 16)).accessibilityIdentifier("studio.job." + job.id)
     }
 }
 
@@ -193,6 +208,9 @@ struct PairingView: View {
 }
 
 struct VoiceCreationView: View {
+    var initialName = ""
+    var initialEngine = ""
+    var onCreated: ((RemoteVoice) -> Void)?
     @Environment(CompanionStore.self) private var companion
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -210,7 +228,7 @@ struct VoiceCreationView: View {
             Form {
                 Section("Voice profile") {
                     TextField("Voice name", text: $name)
-                    Picker("Engine", selection: $engine) { Text("Choose engine").tag(""); ForEach(companion.engines.filter { $0.available && $0.supportsCloning }) { Text($0.name).tag($0.id) } }
+                    Picker("Engine", selection: $engine) { Text("Choose engine").tag(""); ForEach(companion.engines.filter { $0.available && $0.supportsCloning }) { Text($0.name).tag($0.id) } }.disabled(!initialEngine.isEmpty)
                     TextField("Language code", text: $language).textInputAutocapitalization(.never)
                 }
                 Section {
@@ -236,16 +254,18 @@ struct VoiceCreationView: View {
                         do {
                             let trimmed = try await sampleEditor.export()
                             defer { try? FileManager.default.removeItem(at: trimmed) }
-                            try await companion.clone(name: name, engine: engine, language: language, transcript: transcript, sample: trimmed)
+                            let voice = try await companion.clone(name: name, engine: engine, language: language, transcript: transcript, sample: trimmed)
+                            onCreated?(voice)
                             dismiss()
                         } catch { self.error = error.localizedDescription }
                         creating = false
                     }
-                }.disabled(creating || name.isEmpty || engine.isEmpty || sample == nil || !authorized)
+                }.disabled(creating || name.isEmpty || engine.isEmpty || sample == nil || !authorized || (engine == "omnivoice" && transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
             }.navigationTitle("New voice").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in do { let url = try result.get(); try sampleEditor.load(url); sample = url } catch { self.error = error.localizedDescription } }
             .onDisappear { sampleEditor.cleanUp() }
+            .onAppear { if name.isEmpty { name = initialName }; if engine.isEmpty { engine = initialEngine } }
         }
     }
 }

@@ -160,6 +160,8 @@ struct NarrationSpan: Codable, Equatable {
 struct CastAnalysisRequest: Codable, Equatable {
     var requestId: String
     var allowHosted: Bool
+    var chapterIds: [String]? = nil
+    var forceReanalyze: Bool? = nil
 }
 struct AnalysisJob: Codable, Identifiable {
     var id: String
@@ -169,6 +171,33 @@ struct AnalysisJob: Codable, Identifiable {
     var totalSegments: Int
     var error: String?
     var warnings: [String]?
+    var chapterIds: [String]? = nil
+    var reusedChapterIds: [String]? = nil
+}
+struct ChapterAnalysisStatus: Codable, Identifiable {
+    var chapterId: String
+    var status: String
+    var analysisId: String?
+    var error: String?
+    var id: String { chapterId }
+}
+struct VoicePreviewRequest: Codable, Equatable {
+    var requestId: String
+    var voiceId: String
+    var text: String
+    var language: String
+}
+struct VoicePreviewJob: Codable, Identifiable {
+    var id: String
+    var voiceId: String
+    var status: String
+    var createdAt: String?
+    var error: String?
+    var asset: AudioAsset?
+}
+struct SavedVoiceAudition: Codable {
+    var request: VoicePreviewRequest
+    var job: VoicePreviewJob?
 }
 struct PairingQR: Codable {
     var url: String

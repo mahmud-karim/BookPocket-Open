@@ -129,7 +129,7 @@ struct CastService {
         } catch is CancellationError {} catch { if operationID == id { self.error = error.localizedDescription } }
         return false
     }
-    func analyze(book: RemoteBook, hosted: Bool, service: CastService) async {
+    func analyze(book: RemoteBook, hosted: Bool, service: CastService, chapterIDs: [String]? = nil, force: Bool = false) async {
         guard let id = begin() else { return }
         let base = value
         defer { finish(id) }
@@ -138,7 +138,7 @@ struct CastService {
             try await service.save(base); try check(id)
             saved = base
             analysisBase = base
-            pendingAnalysisRequest = CastAnalysisRequest(requestId: UUID().uuidString.lowercased(), allowHosted: hosted)
+            pendingAnalysisRequest = CastAnalysisRequest(requestId: UUID().uuidString.lowercased(), allowHosted: hosted, chapterIds: chapterIDs, forceReanalyze: force ? true : nil)
             analysis = nil
             try await confirmAnalysis(id: id, service: service, recovering: false)
             try await resumeAnalysis(id: id, book: book, service: service)

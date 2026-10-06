@@ -12,6 +12,37 @@ import XCTest
 }
 
 final class CastDraftTests: XCTestCase {
+    @MainActor func testChapterScopedAnalysisKeepsReviewedOtherChapterAndExplicitVoiceChoices() async throws {
+        var selected = book
+        var second = selected.chapters[0]; second.id = "second"; second.segments[0].id = "second-source"; selected.chapters.append(second)
+        let reviewed = row("first-reviewed", "“Go.”", reviewed: true)
+        var suggestion = row("second-suggestion", "“Wait.”", character: "ivo"); suggestion.segmentId = "second-source"
+        var server = BookCast(characters: characters, assignments: [reviewed])
+        let draft = CastDraft(); var submitted: CastAnalysisRequest?
+        let service = CastService(fetch: { server }, save: { server = $0 }, analyze: { request in
+            submitted = request; if !server.assignments.contains(where: { $0.id == suggestion.id }) { server.assignments.append(suggestion) }
+            return AnalysisJob(id: "chapter-analysis", bookId: selected.id, status: "completed", completedSegments: 1, totalSegments: 1, chapterIds: request.chapterIds)
+        }, poll: { _ in throw URLError(.unsupportedURL) }, requireReliableAnalysis: {}, wait: {})
+        await draft.load(book: selected, service: service)
+        draft.value.characters[0].aliases = ["Saved captain"]
+        await draft.analyze(book: selected, hosted: false, service: service, chapterIDs: [second.id])
+        XCTAssertEqual(submitted?.chapterIds, [second.id]); XCTAssertNil(submitted?.forceReanalyze)
+        XCTAssertEqual(draft.value.assignments.first { $0.id == reviewed.id }, reviewed)
+        XCTAssertEqual(draft.value.assignments.first { $0.id == suggestion.id }, suggestion)
+        XCTAssertEqual(draft.value.characters[0].aliases, ["Saved captain"])
+        let narrator = RemoteVoice(id: "narrator", name: "Narrator", engine: "omnivoice", kind: "test-only", language: "en")
+        let engine = RemoteEngine(id: "omnivoice", name: "Test engine", available: true, supportsCloning: true, languages: ["en"], license: "test-only")
+        var cast = draft.value; cast.characters.append(.init(id: "narrator", name: "Narrator", aliases: [], voiceId: narrator.id))
+        cast.assignments[1].reviewed = true
+        let ranges = [SourceRange(segmentId: "second-source", startOffset: suggestion.startOffset, endOffset: suggestion.endOffset)]
+        XCTAssertThrowsError(try ReaderCastPlan.build(cast: cast, book: selected, ranges: ranges, voices: [narrator], engines: [engine]), "Relevant missing voices require a deliberate choice")
+        cast.characters[1].voiceId = narrator.id
+        let plan = try ReaderCastPlan.build(cast: cast, book: selected, ranges: ranges, voices: [narrator], engines: [engine])
+        XCTAssertEqual(plan.spans.map(\.voiceId), [narrator.id], "Use narrator is an explicit durable voice choice")
+        XCTAssertEqual(selected.chapters[0].segments[0].text, text)
+        await draft.analyze(book: selected, hosted: false, service: service, chapterIDs: [second.id], force: true)
+        XCTAssertEqual(submitted?.forceReanalyze, true)
+    }
     private let text = "“Mira 🧭 said, ‘stay.’” Then Ivo replied, “Go.” Later: “Wait.” Finally: “Rest.”"
     private var book: RemoteBook {
         RemoteBook(id: "cast-fixture", title: "Original cast fixture", author: "Test", language: "en", sourceSha256: SourceIdentity.hash(Data(text.utf8)), chapters: [.init(id: "chapter", title: "Original", href: "text.xhtml", segments: [.init(id: "source", text: text, kind: "paragraph", locator: .object([:]))])])
