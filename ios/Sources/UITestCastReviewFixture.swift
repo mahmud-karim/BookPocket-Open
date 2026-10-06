@@ -99,7 +99,7 @@ private final class CastReviewUITestProtocol: URLProtocol {
             guard request.httpMethod == "GET" else { return (409, ["detail": "Use the atomic review route for this issue."]) }
             return (200, cast)
         }
-        if url.path.hasSuffix("/analysis-status") { return (200, ["chapters": [["chapter_id": "cast-review-chapter", "status": resolved ? "completed" : "failed", "pending_review_count": resolved ? 0 : 1, "manual_ready": resolved, "ready_for_generation": resolved]]]) }
+        if url.path.hasSuffix("/analysis-status") { return (200, ["chapters": [["chapter_id": "cast-review-chapter", "status": resolved ? "completed" : "failed", "pending_review_count": resolved ? 0 : 1, "manual_ready": resolved, "review_required": !resolved]]]) }
         if url.path.hasSuffix("/review-issues") { return (200, ["book_id": "cast-review-book", "source_sha256": book["source_sha256"]!, "revision": revision, "issues": [issue]]) }
         if url.path.hasSuffix("/review-issues/" + UITestCastReviewFixture.issueID + "/resolve") {
             let body = try requestBody()
