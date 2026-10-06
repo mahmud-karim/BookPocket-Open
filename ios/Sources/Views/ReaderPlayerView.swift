@@ -99,7 +99,8 @@ struct ReaderPlayerView: View {
             }.padding(.horizontal, 20).padding(.top, 12)
                 .padding(.bottom, max(12, geometry.safeAreaInsets.bottom))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        }.background(Obsidian.background.ignoresSafeArea(edges: .bottom))
+        }.ignoresSafeArea(.container, edges: .bottom)
+            .background(Obsidian.background.ignoresSafeArea(edges: .bottom))
             .foregroundStyle(.primary).environment(\.colorScheme, .dark).tint(Obsidian.accent)
             .accessibilityElement(children: .contain).accessibilityIdentifier("reader.player.surface")
             .accessibilityValue(player.speechLocator?.text.highlight ?? "")
@@ -363,7 +364,8 @@ struct ReaderPlayerView: View {
     private func refreshLocal() {
         guard !discovering else { pendingDiscovery = true; return }
         discovering = true
-        state.readyIDs = []
+        // Keep the selected recording's clock intact during exact-source lookup.
+        // canPlay remains disabled until discovery resolves the new source.
         Task {
             defer {
                 discovering = false
