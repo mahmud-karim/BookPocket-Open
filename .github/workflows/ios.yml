@@ -27,7 +27,7 @@ jobs:
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
     timeout-minutes: 90
     env:
-      UI_TEST_SCOPE: ${{ inputs.ui_scope || 'full' }}
+      UI_TEST_SCOPE: ${{ inputs.ui_scope || (github.head_ref == 'codex/read-aloud-player' && 'reader') || 'full' }}
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/select_xcode.py
@@ -76,6 +76,7 @@ jobs:
           if [ "$UI_TEST_SCOPE" = reader ]; then
             TEST_FILTERS=(
               -only-testing:BookPocketOpenTests
+              -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests
               -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousPageRecordingShowsTotalTimeAndSeeksAcrossPassages
               -only-testing:BookPocketOpenUITests/ReaderUITests/testContinuousRecordingTimelineFitsLargestTextSizes
               -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters
@@ -177,6 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           COMPACT_FILTERS=(
+            -only-testing:BookPocketOpenUITests/ReadAloudPlayerUITests
             -only-testing:BookPocketOpenUITests/ReaderUITests/testListenFitsOneScreenAndSelectsChapters
             -only-testing:BookPocketOpenUITests/ReaderUITests/testDownloadedAudioFitsOneScreenAndSelectsOfflineChapters
             -only-testing:BookPocketOpenUITests/ReaderUITests/testLargestDynamicTypeKeepsListenAndReaderControlsUsable

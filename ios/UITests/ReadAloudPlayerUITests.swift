@@ -64,6 +64,11 @@ final class ReadAloudPlayerUITests: XCTestCase {
         XCTAssertTrue(toggle.isEnabled); XCTAssertEqual(toggle.value as? String, "Paused")
         XCTAssertEqual(seconds(app.staticTexts["reader.player.duration"]), 124)
         fits(app); screenshot("Read aloud ready page — paper top and charcoal bottom")
+        XCUIDevice.shared.orientation = .landscapeRight
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)], timeout: 10), .completed)
+        fits(app); screenshot("Read aloud ready page compact landscape")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)], timeout: 10), .completed)
         app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0.8)
         let sought = seconds(app.staticTexts["reader.player.elapsed"])
         XCTAssertGreaterThan(sought, 64, "Seeking before Play crosses backend assets without starting narration")
@@ -160,6 +165,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
             app.buttons["reader.options"].tap(); app.buttons["Reading appearance"].tap()
             app.segmentedControls.buttons[theme].tap(); app.buttons["Done"].tap()
             screenshot("Reader \(theme) top and page after theme change")
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["reader.speak"])], timeout: 20), .completed)
             app.buttons["reader.speak"].tap(); screenshot("Reader \(theme) top with charcoal Read aloud")
             app.buttons["reader.player.close"].tap()
         }
