@@ -148,7 +148,7 @@ enum ReaderTakeMatch {
         guard let book = companion.books.first(where: { $0.sourceSha256 == local.sourceSHA256 }) else { selectedJobID = nil; return }
         let selection: ReaderSourceSelection
         do { selection = try ReaderSourceMapper.resolve(snapshot, book: book) }
-        catch { captureError = error.localizedDescription; selectedJobID = nil; return }
+        catch { captureError = captureError ?? error.localizedDescription; selectedJobID = nil; return }
         remote = book; self.selection = selection; captureError = nil
         pageSelection = snapshot.scope == .page ? selection : nil
         // An explicitly selected saved clip remains identifiable after reflow.

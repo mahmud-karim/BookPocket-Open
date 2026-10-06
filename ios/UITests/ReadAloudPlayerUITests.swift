@@ -23,6 +23,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
         let choice = app.buttons["reader.voice." + mode]
         XCTAssertTrue(choice.waitForExistence(timeout: 10)); choice.tap()
         XCTAssertTrue(app.buttons["reader.player.toggle"].waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: narrator)], timeout: 20), .completed)
     }
     private func chooseRecording(_ app: XCUIApplication, _ id: String) {
         app.buttons["reader.player.saved"].tap()

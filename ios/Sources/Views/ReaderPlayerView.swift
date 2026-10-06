@@ -127,7 +127,7 @@ struct ReaderPlayerView: View {
             }
             if wide {
                 HStack(spacing: 24) {
-                    VStack(spacing: 8) { chapterRow; scopePicker; recordingLabel; status; setupLink }.frame(maxWidth: .infinity)
+                    VStack(spacing: 4) { chapterRow; scopePicker; recordingLabel; if !canPlay { status }; setupLink }.frame(maxWidth: .infinity)
                     VStack(spacing: 8) { timeline; transport; settings }.frame(maxWidth: .infinity)
                 }
             } else {
