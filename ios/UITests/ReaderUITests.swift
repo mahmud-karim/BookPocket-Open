@@ -2,6 +2,75 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testMiniPlayerDismissalAndListeningSelectionSurviveRestart() {
+        executionTimeAllowance = 300
+        let app = narrationToolsApp()
+        app.launchArguments.append("--transport-persistence-id=" + UUID().uuidString)
+        app.launch(); openContinuousPage(app)
+        let readerPlay = app.buttons["reader.player.toggle"]
+        readerPlay.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: readerPlay)], timeout: 10), .completed)
+        readerPlay.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Paused"), object: readerPlay)], timeout: 10), .completed)
+        let baseline = audioSeconds(app.staticTexts["reader.player.elapsed"])
+        app.buttons["reader.player.forward"].tap()
+        XCTAssertEqual(audioSeconds(app.staticTexts["reader.player.elapsed"]), baseline + 15, accuracy: 1)
+        app.navigationBars["Read aloud"].buttons["Done"].tap(); app.buttons["reader.close"].tap()
+        let close = app.buttons["player.mini.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10)); assertMinimumHitArea(close)
+        narrationToolsScreenshot(app, "Obsidian mini player with accessible close control")
+        close.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: close)], timeout: 5), .completed)
+        app.tabBars.buttons["Listen"].tap()
+        let play = app.buttons["player.full.toggle"]
+        XCTAssertTrue(play.waitForExistence(timeout: 10)); XCTAssertEqual(play.value as? String, "Paused")
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 124, "Restore the selected page, not the available 184-second chapter")
+        XCTAssertEqual(app.staticTexts["listen.scope"].label, "Page recording")
+        app.buttons["listen.speed"].tap(); XCTAssertTrue(app.buttons["1.5×"].waitForExistence(timeout: 5)); app.buttons["1.5×"].tap()
+        let position = audioSeconds(app.staticTexts["listen.elapsed"])
+        for name in ["Library", "Studio", "Connection", "Listen"] {
+            XCTAssertTrue(app.tabBars.buttons[name].isHittable); app.tabBars.buttons[name].tap(); XCTAssertFalse(close.exists)
+        }
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.tabBars.buttons["Listen"].tap()
+        XCTAssertTrue(play.waitForExistence(timeout: 15)); XCTAssertEqual(play.value as? String, "Paused")
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.elapsed"]), position, accuracy: 1)
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 124)
+        XCTAssertEqual(app.staticTexts["listen.scope"].label, "Page recording")
+        XCTAssertEqual(app.buttons["listen.speed"].value as? String, "1.5×"); XCTAssertFalse(close.exists)
+        narrationToolsScreenshot(app, "Obsidian exact offline page restored paused after app restart")
+        play.tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 10), "Explicit playback reopens the dismissed mini player")
+        close.tap(); XCTAssertEqual(play.value as? String, "Paused")
+        XCTAssertEqual(audioSeconds(app.staticTexts["listen.duration"]), 124)
+    }
+
+    func testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow() {
+        executionTimeAllowance = 300
+        let app = narrationToolsApp()
+        app.launchArguments += ["--studio-failed-jobs-fixture", "--transport-persistence-id=" + UUID().uuidString]
+        app.launch(); XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.tabBars.buttons["Studio"].tap()
+        let delete = app.buttons["studio.job.delete.studio-failed-fixture"]
+        toolsScrollTo(delete, app: app); XCTAssertTrue(delete.waitForExistence(timeout: 10)); XCTAssertTrue(delete.isHittable); delete.tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let cancel = alert.buttons.matching(identifier: "studio.job.delete.cancel").firstMatch
+        let confirm = alert.buttons.matching(identifier: "studio.job.delete.confirm").firstMatch
+        XCTAssertTrue(cancel.isHittable); XCTAssertEqual(cancel.label, "Cancel"); XCTAssertEqual(confirm.label, "Delete job")
+        narrationToolsScreenshot(app, "Obsidian failed production job deletion confirmation")
+        cancel.tap(); XCTAssertTrue(delete.exists, "Cancel keeps the failed queue entry")
+        delete.tap(); XCTAssertTrue(alert.waitForExistence(timeout: 5)); confirm.tap()
+        let error = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Pair your PC")).firstMatch
+        XCTAssertTrue(error.waitForExistence(timeout: 10)); XCTAssertTrue(delete.exists, "Offline deletion keeps its queue entry")
+        narrationToolsScreenshot(app, "Obsidian offline failed job deletion preserves queue")
+        app.terminate(); app.launch(); XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 30)); app.tabBars.buttons["Studio"].tap()
+        toolsScrollTo(delete, app: app); XCTAssertTrue(delete.waitForExistence(timeout: 10))
+        let cancelled = app.buttons["studio.job.delete.studio-cancelled-fixture"]
+        toolsScrollTo(cancelled, app: app); XCTAssertTrue(cancelled.exists, "The cancelled job remains separately manageable")
+        app.tabBars.buttons["Listen"].tap(); app.buttons["listen.downloads"].tap()
+        XCTAssertTrue(app.buttons["listen.download.reader-continuous-page"].waitForExistence(timeout: 10), "Unrelated completed recordings survive failed deletion")
+    }
+
     func testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording() {
         executionTimeAllowance = 300
         let app = narrationToolsApp(); app.launch(); openContinuousPage(app)

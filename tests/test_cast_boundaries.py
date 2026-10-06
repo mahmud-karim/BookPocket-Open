@@ -28,6 +28,9 @@ def cast_api(tmp_path):
 
 def test_hosted_analysis_requires_explicit_consent_before_outbound_request(cast_api, monkeypatch):
     _, client, _, book = cast_api
+    # Narrator-only chapters need no model and must not require hosted consent.
+    # Use actual dialogue to exercise the outbound privacy boundary.
+    book = client.post("/v1/books", files={"file": ("dialogue.txt", '\u201cThe lantern is ready,\u201d said Mira.')}).json()
     assert client.put("/v1/admin/analyzer", json={"url": "https://model.example.invalid/v1", "model": "test-model", "api_key": "test-placeholder"}).status_code == 200
     def forbid(*args, **kwargs): raise AssertionError("Unauthorized book transmission")
     monkeypatch.setattr(casting.httpx, "Client", forbid)
