@@ -59,8 +59,9 @@ final class ManageAudiobookUITests: XCTestCase {
         let review = app.buttons["manage.review"]; reveal(review, app: app); review.tap()
         let exact = app.staticTexts["cast.review.exact"]
         XCTAssertTrue(exact.waitForExistence(timeout: 15)); XCTAssertTrue(exact.label.contains("Can you hear me?"))
-        app.buttons["cast.review.cancel"].tap()
-        XCTAssertTrue(app.buttons["manage.chapter"].waitForExistence(timeout: 10))
+        let reviewCancel = app.buttons["cast.review.cancel"]
+        reviewCancel.tap()
+        waitForManage(afterClosing: reviewCancel, app: app)
         selectChapter("Across the Bridge", app: app)
         XCTAssertFalse(app.staticTexts["manage.analysis.stage"].exists, "The other chapter cannot inherit the first chapter's job")
         reveal(app.buttons["manage.characters"], app: app)
@@ -80,7 +81,7 @@ final class ManageAudiobookUITests: XCTestCase {
         // Selecting a chapter can leave the compact screen scrolled below its
         // narration picker. Reveal the real button before sending the tap.
         let kyon = app.buttons["manage.narration.kyon"]
-        reveal(kyon, app: app, seekEarlier: true); assertTouchTarget(kyon)
+        reveal(kyon, app: app, seekEarlier: true, requireFullVisibility: true); assertTouchTarget(kyon)
         XCTAssertTrue(kyon.isEnabled)
         shot(app, "Manage audiobook — visible Kyon control before changing narration")
         kyon.tap()
@@ -171,14 +172,29 @@ final class ManageAudiobookUITests: XCTestCase {
         XCTAssertFalse(app.buttons["reader.player.generate"].exists)
     }
     private func selectChapter(_ title: String, app: XCUIApplication) {
-        let picker = app.buttons["manage.chapter"]; reveal(picker, app: app, seekEarlier: true); picker.tap()
-        let chapter = app.buttons[title]; XCTAssertTrue(chapter.waitForExistence(timeout: 10)); chapter.tap()
-        XCTAssertTrue(picker.label.contains(title))
+        let picker = app.buttons["manage.chapter"]
+        reveal(picker, app: app, seekEarlier: true, requireFullVisibility: true)
+        assertTouchTarget(picker); XCTAssertTrue(picker.isEnabled)
+        picker.tap()
+        let chapter = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+        XCTAssertTrue(chapter.waitForExistence(timeout: 10), "The native chapter menu must expose the exact selected book chapter")
+        XCTAssertTrue(chapter.isEnabled && chapter.isHittable)
+        chapter.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value == %@", title), object: picker)], timeout: 10), .completed)
+        XCTAssertEqual(picker.value as? String, title)
     }
     private func closeCast(_ app: XCUIApplication) {
         let save = app.buttons["cast.save"]
-        if save.exists { save.tap() } else { app.buttons["Save & close"].tap() }
-        XCTAssertTrue(app.buttons["manage.close"].waitForExistence(timeout: 15))
+        let close = save.exists ? save : app.buttons["Save & close"]
+        XCTAssertTrue(close.isEnabled && close.isHittable); close.tap()
+        waitForManage(afterClosing: close, app: app)
+    }
+    private func waitForManage(afterClosing childControl: XCUIElement, app: XCUIApplication) {
+        // Underlying Manage elements remain in the accessibility tree while a
+        // child sheet closes. Existence alone cannot prove that it is dismissed.
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: childControl)
+        let accessible = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true AND hittable == true"), object: app.buttons["manage.close"])
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed, accessible], timeout: 15), .completed)
     }
     private func submitAvailableScope(_ app: XCUIApplication) {
         // Manage owns the scope decision; target its native choices when present.
@@ -202,21 +218,26 @@ final class ManageAudiobookUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(frame.height, 44)
         XCTAssertGreaterThanOrEqual(frame.width, 44)
     }
-    private func reveal(_ element: XCUIElement, app: XCUIApplication, seekEarlier: Bool = false) {
+    private func reveal(_ element: XCUIElement, app: XCUIApplication, seekEarlier: Bool = false, requireFullVisibility: Bool = false) {
         for _ in 0..<8 {
-            if element.exists && element.isHittable { return }
             let containers = app.scrollViews.allElementsBoundByIndex + app.collectionViews.allElementsBoundByIndex
             let scroll = containers.filter { $0.exists && $0.frame.height > 120 }.max { $0.frame.height < $1.frame.height }
             let frame = scroll?.frame ?? app.frame
             let top = max(frame.minY + 10, app.navigationBars.firstMatch.frame.maxY + 10)
             let bottom = min(frame.maxY - 25, app.frame.maxY - 30)
-            let backwards = element.exists && element.frame.height > 0 ? element.frame.maxY <= top : seekEarlier
+            let fullyVisible = element.exists && element.frame.minY >= top && element.frame.maxY <= bottom
+            if element.exists && element.isHittable && (!requireFullVisibility || fullyVisible) { return }
+            let backwards = element.exists && element.frame.height > 0 ? (requireFullVisibility ? element.frame.minY < top : element.frame.maxY <= top) : seekEarlier
             let startY = backwards ? top + (bottom - top) * 0.4 : top + (bottom - top) * 0.75
             let endY = backwards ? top + (bottom - top) * 0.75 : top + (bottom - top) * 0.4
             let origin = app.coordinate(withNormalizedOffset: .zero)
             origin.withOffset(CGVector(dx: frame.midX, dy: startY)).press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(dx: frame.midX, dy: endY)))
         }
         XCTAssertTrue(element.exists && element.isHittable, "A real native control must be reachable: \(element)")
+        if requireFullVisibility {
+            XCTAssertGreaterThanOrEqual(element.frame.minY, app.navigationBars.firstMatch.frame.maxY + 10)
+            XCTAssertLessThanOrEqual(element.frame.maxY, app.frame.maxY - 30)
+        }
     }
     private func shot(_ app: XCUIApplication, _ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
