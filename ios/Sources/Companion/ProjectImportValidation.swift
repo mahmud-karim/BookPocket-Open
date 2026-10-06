@@ -20,7 +20,14 @@ enum ProjectImportValidation {
             guard Set(assetSegments) == selected, job.completedSegments == selected.count,
                   job.totalSegments == selected.count else { throw invalid }
         }
-        try RangedAudioValidation.validate(job: job, book: book)
+        do { try RangedAudioValidation.validate(job: job, book: book) }
+        catch {
+            // Whole-source archive timing is part of its narration manifest.
+            // Keep the established archive diagnostic while ranged projects
+            // retain their specific source-range recovery instructions.
+            if job.sourceRanges?.isEmpty != false { throw invalid }
+            throw error
+        }
         for asset in job.assets {
             guard let segment = segments.first(where: { $0.id == asset.segmentId }),
                   asset.bytes > 0, asset.duration.isFinite, asset.duration > 0 else { throw invalid }

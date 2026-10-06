@@ -101,8 +101,9 @@ struct ReaderPlayerView: View {
                         .sheet(isPresented: $showPairing, onDismiss: { refresh() }) { PairingView() }
                         .sheet(isPresented: $showCast, onDismiss: { refreshPreparation() }) { if let remote = state.remote { CastView(book: remote) } }
                         .sheet(isPresented: $showPronunciation) { PronunciationEditorView(language: reader.book?.language ?? "en", onRegenerate: { detail = nil; chooser = .scope }) }
-                        .confirmationDialog(deleteFromPC ? "Delete this entire generated take from your PC and iPhone?" : "Remove this download from your iPhone?", isPresented: Binding(get: { removingRecording != nil }, set: { if !$0 { removingRecording = nil } }), titleVisibility: .visible) {
-                            Button(deleteFromPC ? "Delete generated take" : "Remove download", role: .destructive) { removeRecording() }
+                        .alert(deleteFromPC ? "Delete this entire generated take from your PC and iPhone?" : "Remove this download from your iPhone?", isPresented: Binding(get: { removingRecording != nil }, set: { if !$0 { removingRecording = nil } })) {
+                            Button(deleteFromPC ? "Delete generated take" : "Remove download", role: .destructive) { removeRecording() }.accessibilityIdentifier("reader.recording.confirm")
+                            Button("Cancel", role: .cancel) { removingRecording = nil }.accessibilityIdentifier("reader.recording.cancel")
                         } message: { Text(deleteFromPC ? "All page or chapter assets in this take will be deleted. Your book and other takes are kept." : "Your PC copy stays available to download again.") }
                 }
                 .task(id: (state.selectedJobID ?? "") + ":\(state.pollRevision)") {

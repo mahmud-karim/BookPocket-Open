@@ -43,10 +43,11 @@ struct PronunciationEditorView: View {
                     ForEach(companion.narrationPronunciations) { rule in
                         VStack(alignment: .leading) {
                             Button { term = rule.term; replacement = rule.replacement; enabled = rule.enabled; editingTerm = rule.term } label: { Label("\(rule.term) → \(rule.replacement)", systemImage: "pencil") }
+                                .buttonStyle(.borderless).frame(minHeight: 44)
                                 .accessibilityIdentifier("pronunciation.edit." + rule.term)
                             Toggle("Enabled", isOn: Binding(get: { companion.narrationPronunciations.first { $0.term == rule.term }?.enabled ?? false }, set: { value in update(rule, enabled: value) }))
                                 .accessibilityIdentifier("pronunciation.toggle." + rule.term)
-                            Button("Remove correction", role: .destructive) { remove(rule) }.accessibilityIdentifier("pronunciation.remove." + rule.term)
+                            Button("Remove correction", role: .destructive) { remove(rule) }.buttonStyle(.borderless).frame(minHeight: 44).accessibilityIdentifier("pronunciation.remove." + rule.term)
                         }
                     }
                     if companion.narrationPronunciations.isEmpty { Text("No corrections saved.").foregroundStyle(.secondary) }

@@ -22,6 +22,11 @@ final class SystemWordSpeechEngine: NSObject, TTSEngine, AVSpeechSynthesizerDele
     static func spokenRange(_ range: NSRange, in original: String) -> Range<String.Index>? {
         guard range.location != NSNotFound, range.length > 0, range.location >= 0,
               range.location <= original.utf16.count, range.length <= original.utf16.count - range.location else { return nil }
+        let units = Array(original.utf16)
+        func scalarBoundary(_ offset: Int) -> Bool {
+            offset == units.count || !(0xDC00...0xDFFF).contains(Int(units[offset]))
+        }
+        guard scalarBoundary(range.location), scalarBoundary(range.location + range.length) else { return nil }
         return Range(range, in: original)
     }
     func speak(_ utterance: TTSUtterance, onSpeakRange: @escaping (Range<String.Index>) -> Void) async -> Result<Void, TTSError> {
