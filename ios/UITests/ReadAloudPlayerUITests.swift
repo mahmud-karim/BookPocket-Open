@@ -64,9 +64,27 @@ final class ReadAloudPlayerUITests: XCTestCase {
         return parts.count == 2 ? parts[0] * 60 + parts[1] : -1
     }
     private func waitForClock(_ element: XCUIElement, seconds expected: Double, accuracy: Double = 1) {
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             element.exists && abs(self.seconds(element) - expected) <= accuracy
-        }, object: nil)], timeout: 10), .completed, "The native transport must settle at the requested continuous position")
+        }, object: nil)], timeout: 10)
+        XCTAssertEqual(result, .completed, "Requested continuous position \(expected); actual clock \(seconds(element))")
+    }
+    private func seek(_ app: XCUIApplication, normalized target: Double, duration: Double) {
+        let slider = app.sliders["reader.player.seek"]
+        var gesture = target
+        // Apple's native adjustment is best effort. iOS 26's drag landed at
+        // 105.67/124 for an 80% request, stably; exact 15-second skips passed.
+        // Correct the physical gesture using the real observed slider value.
+        // The final clock assertion remains strict at 99.2 seconds, not 106.
+        for _ in 0..<4 {
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: slider)], timeout: 20), .completed)
+            slider.adjust(toNormalizedSliderPosition: CGFloat(gesture))
+            let clock = seconds(app.staticTexts["reader.player.elapsed"])
+            if abs(clock - duration * target) <= 1 { return }
+            let measured = Double(slider.value as? String ?? "") ?? clock
+            guard measured.isFinite, measured >= 0, measured <= duration else { return }
+            gesture = max(0, min(1, gesture + target - measured / duration))
+        }
     }
     private func fits(_ app: XCUIApplication, missing: Bool = false) {
         let surface = app.otherElements["reader.player.surface"]
@@ -107,8 +125,9 @@ final class ReadAloudPlayerUITests: XCTestCase {
         fits(app); screenshot("Read aloud ready page compact landscape")
         XCUIDevice.shared.orientation = .portrait
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)], timeout: 10), .completed)
-        app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0.8)
+        seek(app, normalized: 0.8, duration: 124)
         waitForClock(app.staticTexts["reader.player.elapsed"], seconds: 124 * 0.8, accuracy: 2)
+        screenshot("Read aloud paused seek to 80 percent across assets")
         let sought = seconds(app.staticTexts["reader.player.elapsed"])
         XCTAssertGreaterThan(sought, 64, "Seeking before Play crosses backend assets without starting narration")
         XCTAssertEqual(toggle.value as? String, "Paused")
