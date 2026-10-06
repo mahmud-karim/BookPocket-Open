@@ -3,7 +3,8 @@ import Foundation
 enum CastReview {
     static func chaptersNeedingAnalysis(_ chapters: [String], statuses: [ChapterAnalysisStatus], inventory: CastReviewInventory) -> [String] {
         chapters.filter { chapter in !statuses.contains { status in
-            status.chapterId == chapter && (status.status == "completed" || (status.status == "failed" && inventory.issues.contains { $0.chapterId == chapter }))
+            status.chapterId == chapter && (status.status == "completed" || status.manualReady == true ||
+                (status.status == "failed" && inventory.issues.contains { $0.chapterId == chapter && ["ambiguous_quotation", "unreviewed_assignment"].contains($0.reason) }))
         } }
     }
     static func validate(_ inventory: CastReviewInventory, book: RemoteBook) throws {

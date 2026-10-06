@@ -61,6 +61,10 @@ final class CastReviewTests: XCTestCase {
         XCTAssertEqual(CastReview.chaptersNeedingAnalysis(["chapter"], statuses: [failed], inventory: completed), [])
         var unknown = completed; unknown.issues = []
         XCTAssertEqual(CastReview.chaptersNeedingAnalysis(["chapter"], statuses: [failed], inventory: unknown), ["chapter"])
+        var missing = inventory; missing.issues[0].reason = "missing_assignment"
+        XCTAssertEqual(CastReview.chaptersNeedingAnalysis(["chapter"], statuses: [failed], inventory: missing), ["chapter"], "A repaired quotation parser must retry legacy model failures, not force every missing speaker to be named manually")
+        var manual = failed; manual.manualReady = true
+        XCTAssertEqual(CastReview.chaptersNeedingAnalysis(["chapter"], statuses: [manual], inventory: missing), [])
         let running = ChapterAnalysisStatus(chapterId: "chapter", status: "running", analysisId: "inflight", error: nil)
         XCTAssertEqual(CastReview.chaptersNeedingAnalysis(["chapter"], statuses: [running], inventory: completed), ["chapter"])
     }
