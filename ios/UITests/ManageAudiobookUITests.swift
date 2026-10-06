@@ -70,9 +70,9 @@ final class ManageAudiobookUITests: XCTestCase {
         XCTAssertEqual(app.buttons["manage.main"].label, "Generate audio")
         shot(app, "Manage audiobook — reviewed second chapter ready without leaked first chapter state")
         app.buttons["manage.main"].tap()
-        XCTAssertTrue(app.buttons["manage.generate.chapter"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons.matching(identifier: "manage.generate.chapter").firstMatch.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["manage.generate.page"].exists, "A first-chapter page snapshot cannot be used for a different selected chapter")
-        app.buttons["manage.generate.chapter"].tap()
+        app.buttons.matching(identifier: "manage.generate.chapter").firstMatch.tap()
         waitQueued(app)
         // Return to the blocked chapter: single narrator remains usable without
         // assigning Mira's missing cast voice or silently reviewing her lines.
@@ -168,7 +168,7 @@ final class ManageAudiobookUITests: XCTestCase {
     }
     private func submitAvailableScope(_ app: XCUIApplication) {
         // Manage owns the scope decision; target its native choices when present.
-        let chapter = app.buttons["manage.generate.chapter"]
+        let chapter = app.buttons.matching(identifier: "manage.generate.chapter").firstMatch
         XCTAssertTrue(chapter.waitForExistence(timeout: 10)); chapter.tap()
     }
     private func waitQueued(_ app: XCUIApplication) {

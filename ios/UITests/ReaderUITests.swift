@@ -106,7 +106,7 @@ final class ReaderUITests: XCTestCase {
         toolsScrollTo(generate, app: app)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND label == %@", "Generate audio"), object: generate)], timeout: 15), .completed)
         assertMinimumHitArea(generate); generate.tap()
-        let chapter = app.buttons["manage.generate.chapter"]
+        let chapter = app.buttons.matching(identifier: "manage.generate.chapter").firstMatch
         XCTAssertTrue(chapter.waitForExistence(timeout: 10)); chapter.tap()
     }
     private func chooseNewReviewSpeaker(_ app: XCUIApplication) {
