@@ -630,8 +630,10 @@ final class ReaderUITests: XCTestCase {
         for id in ["backward", "toggle", "forward", "speed", "chapters", "sleep", "narrator", "close", action] {
             let control = app.buttons["reader.player." + id]
             if scrolling {
-                for _ in 0..<8 { if control.isHittable { break }; surface.swipeDown() }
-                for _ in 0..<8 { if control.isHittable { break }; surface.swipeUp() }
+                // Disabled transport still needs a visible, full touch-sized
+                // frame; disabled controls need not report hittable to XCTest.
+                for _ in 0..<8 { if viewport.contains(control.frame) && (control.isHittable || !control.isEnabled) { break }; surface.scrollViews.firstMatch.swipeDown() }
+                for _ in 0..<8 { if viewport.contains(control.frame) && (control.isHittable || !control.isEnabled) { break }; surface.scrollViews.firstMatch.swipeUp() }
             }
             XCTAssertTrue(control.exists && viewport.contains(control.frame), id)
             XCTAssertGreaterThanOrEqual(control.frame.width + 0.001, 44, id)
@@ -641,7 +643,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertFalse(app.buttons["reader.player.generate"].exists, "Generation belongs to setup")
         XCTAssertFalse(app.buttons["reader.player.pronunciation"].exists)
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
-        if scrolling { for _ in 0..<8 { surface.swipeDown() } }
+        if scrolling { for _ in 0..<8 { if app.buttons["reader.player.close"].isHittable { break }; surface.scrollViews.firstMatch.swipeDown() } }
     }
     private func openReaderSetup(_ app: XCUIApplication) {
         let action = app.buttons["reader.player.setup"].exists ? app.buttons["reader.player.setup"] : app.buttons["reader.player.manage"]
@@ -832,6 +834,12 @@ final class ReaderUITests: XCTestCase {
     private func assertReaderTimelineFits(_ app: XCUIApplication, name: String) {
         assertReaderPlayerFits(app, name: name)
         let slider = app.sliders["reader.player.seek"], elapsed = app.staticTexts["reader.player.elapsed"], duration = app.staticTexts["reader.player.duration"]
+        let surface = app.otherElements["reader.player.surface"]
+        if surface.scrollViews.count > 0 {
+            // At accessibility sizes, inspect the timeline together after
+            // scrolling it into view, then verify transport remains reachable.
+            for _ in 0..<8 { if elapsed.isHittable && duration.isHittable && app.frame.contains(elapsed.frame) && app.frame.contains(duration.frame) { break }; surface.scrollViews.firstMatch.swipeUp() }
+        }
         let viewport = app.frame, sliderFrame = slider.frame, elapsedFrame = elapsed.frame, durationFrame = duration.frame
         let toggleFrame = app.buttons["reader.player.toggle"].frame, surfaceFrame = app.otherElements["reader.player.surface"].frame
         for (text, frame) in [(elapsed, elapsedFrame), (duration, durationFrame)] { XCTAssertTrue(text.exists && text.isHittable && viewport.contains(frame)); XCTAssertGreaterThan(frame.height, 0) }
@@ -1051,7 +1059,8 @@ final class ReaderUITests: XCTestCase {
     }
 
     private func audioSeconds(_ element: XCUIElement) -> Double {
-        let value = (element.value as? String) ?? element.label
+        let accessible = element.value as? String
+        let value = accessible?.contains(":") == true ? accessible! : element.label
         let components = value.split(separator: ":").compactMap { Double($0) }
         guard components.count == 2 else { XCTFail("Expected an actual minute:second playback value, received \(value)"); return -.infinity }
         return components[0] * 60 + components[1]

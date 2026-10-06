@@ -115,7 +115,7 @@ struct AudiobookSetupView: View {
                     Spacer(minLength: 0); Image(systemName: "chevron.right").font(.caption)
                 }.padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 48).contentShape(.rect)
             }.buttonStyle(.plain).background(Obsidian.surface, in: .rect(cornerRadius: 12))
-                .accessibilityIdentifier("reader.player.saved")
+                .accessibilityIdentifier("audiobook.setup.saved")
                 .accessibilityValue(savedSummary)
         }
     }

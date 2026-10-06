@@ -102,6 +102,7 @@ struct ReaderView: View {
             }
             .sheet(isPresented: Binding(get: { showPlayer && dynamicTypeSize.isAccessibilitySize }, set: { if !$0 { closePlayer() } }), onDismiss: { companion.readerPlayer(for: model.bookID).invalidatePlaybackIntent() }) {
                 ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer, onManage: openAudiobookSetup)
+                    .interactiveDismissDisabled()
                     .sheet(item: $audiobookSetup, onDismiss: { openPlayer() }) { request in
                         ManageAudiobookView(request: request, reader: model, state: companion.readerPlayer(for: model.bookID))
                     }
