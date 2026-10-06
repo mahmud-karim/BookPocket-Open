@@ -46,7 +46,15 @@ import UIKit
         prefs.lineHeight = 1.6
         return prefs
     }
-    func applyPreferences() { navigator?.submitPreferences(preferences()) }
+    func applyPreferences(theme: String, fontSize: Double, scroll: Bool) {
+        // Submit the values displayed by SwiftUI directly. Reading defaults
+        // during the AppStorage change can still return the previous palette.
+        var prefs = preferences()
+        prefs.theme = theme == "dark" ? .dark : theme == "white" ? .light : .sepia
+        prefs.fontSize = min(200, max(75, fontSize)) / 100
+        prefs.scroll = scroll
+        navigator?.submitPreferences(prefs)
+    }
     func addAnnotation(highlight: Bool) {
         guard var book, let locator = highlight ? navigator?.currentSelection?.locator : navigator?.currentLocation else {
             error = highlight ? "Select a passage in the book first, then tap Highlight." : "Wait for the book to finish opening."
