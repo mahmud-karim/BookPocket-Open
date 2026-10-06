@@ -379,8 +379,10 @@ struct ReaderPlayerView: View {
     private var readinessLabel: some View {
         Group {
             if state.needsCast {
-                Button("Needs attention · review dialogue", systemImage: "person.crop.circle.badge.questionmark") { showReview = true }
-                    .frame(minHeight: 44).accessibilityIdentifier("reader.player.review")
+                Button { showReview = true } label: {
+                    Label("Needs attention · review dialogue", systemImage: "person.crop.circle.badge.questionmark")
+                        .frame(minHeight: 44).contentShape(.rect)
+                }.accessibilityIdentifier("reader.player.review")
             } else { Text(readiness).accessibilityIdentifier("reader.player.readiness") }
         }.font(dynamicTypeSize.isAccessibilitySize ? .system(size: 16) : .caption)
             .foregroundStyle(canPlay && !active && state.mode != .device ? .green : .secondary).lineLimit(2)
