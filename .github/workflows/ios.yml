@@ -13,7 +13,7 @@ on:
         options: [macos-15, macos-15-intel]
         default: macos-15
       ui_scope:
-        description: 'UI coverage (narration focuses both phones on the three narration tools)'
+        description: 'UI coverage (playback checks restart and queue deletion on both phones)'
         type: choice
         options: [full, connection, reader, narration, playback]
         default: full
@@ -34,25 +34,30 @@ jobs:
       - run: brew install xcodegen
       - run: xcodegen generate
         working-directory: ios
-      - id: device
-        run: |
-          set -euo pipefail
-          DEVICE=$(python3 scripts/select_simulator.py --report artifacts/primary-device.json)
-          echo "id=$DEVICE" >> "$GITHUB_OUTPUT"
-      - id: compact
-        name: Select an installed compact iPhone
-        run: |
-          set -euo pipefail
-          DEVICE=$(python3 scripts/select_simulator.py --compact --exclude '${{ steps.device.outputs.id }}' --report artifacts/compact-device.json)
-          echo "id=$DEVICE" >> "$GITHUB_OUTPUT"
       - name: Compile simulator app and tests
         run: |
           set -euo pipefail
           mkdir -p artifacts
+          # Warm cold simulator services while the independent generic build runs.
+          (
+            DEVICE=$(python3 scripts/select_simulator.py --report artifacts/primary-device.json)
+            echo "$DEVICE" > artifacts/primary-device-id.txt
+            COMPACT=$(python3 scripts/select_simulator.py --compact --exclude "$DEVICE" --report artifacts/compact-device.json)
+            echo "$COMPACT" > artifacts/compact-device-id.txt
+            python3 scripts/boot_simulator.py "$DEVICE"
+            python3 scripts/boot_simulator.py "$COMPACT"
+          ) > artifacts/simulator-warmup.log 2>&1 &
+          WARMUP=$!
           xcodebuild -version
           xcodebuild build-for-testing -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/Simulator" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-compile.log
+          wait "$WARMUP"
+      - id: device
+        run: echo "id=$(cat artifacts/primary-device-id.txt)" >> "$GITHUB_OUTPUT"
+      - id: compact
+        name: Select an installed compact iPhone
+        run: echo "id=$(cat artifacts/compact-device-id.txt)" >> "$GITHUB_OUTPUT"
       - name: Boot simulator
         timeout-minutes: 10
         run: python3 scripts/boot_simulator.py '${{ steps.device.outputs.id }}'
