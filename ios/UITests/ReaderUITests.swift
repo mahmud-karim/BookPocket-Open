@@ -2,6 +2,119 @@ import XCTest
 import UIKit
 
 final class ReaderUITests: XCTestCase {
+    func testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration() {
+        executionTimeAllowance = 300
+        let app = castReviewApp()
+        app.launch(); openCastReviewReader(app)
+        requestCastReview(app)
+        chooseNewReviewSpeaker(app)
+        narrationToolsScreenshot(app, "Obsidian original unclear passage with explicit speaker and voice")
+        let save = app.buttons["cast.review.save"]
+        scrollReviewTo(save, app: app); XCTAssertTrue(save.isEnabled && save.isHittable); save.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: save)], timeout: 20), .completed)
+        let close = app.buttons["Save & close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10)); close.tap()
+        XCTAssertTrue(app.buttons["reader.player.generate"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["reader.player.review"].exists, "An explicit saved review removes this scope's blocker")
+        XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled, "Review does not fabricate generated audio")
+        app.buttons["reader.player.generate"].tap()
+        XCTAssertTrue(app.buttons["reader.generate.chapter"].waitForExistence(timeout: 10)); app.buttons["reader.generate.chapter"].tap()
+        let queued = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "Queued")).firstMatch
+        XCTAssertTrue(queued.waitForExistence(timeout: 20), "Only the authenticated resolved exact-source plan can queue generation")
+        XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
+        narrationToolsScreenshot(app, "Obsidian full cast queued only after original text review")
+        app.terminate(); app.launch(); openCastReviewReader(app)
+        app.buttons["reader.player.generate"].tap()
+        XCTAssertTrue(app.buttons["reader.generate.chapter"].waitForExistence(timeout: 10)); app.buttons["reader.generate.chapter"].tap()
+        XCTAssertTrue(queued.waitForExistence(timeout: 20), "A restarted app prepares the persisted reviewed cast through the authenticated transport")
+        XCTAssertFalse(app.buttons["reader.player.review"].exists, "The original review survives a real app restart")
+        XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
+        app.navigationBars["Read aloud"].buttons["Done"].tap(); app.buttons["reader.close"].tap()
+        app.tabBars.buttons["Studio"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "studio.job.cast-review-generated").firstMatch.waitForExistence(timeout: 15), "The accepted generation request remains saved without simulated audio")
+    }
+
+    func testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate() {
+        executionTimeAllowance = 300
+        let app = castReviewApp(); app.launchArguments.append("--cast-review-conflict")
+        app.launch(); openCastReviewReader(app); requestCastReview(app); chooseNewReviewSpeaker(app)
+        let save = app.buttons["cast.review.save"]
+        scrollReviewTo(save, app: app); XCTAssertTrue(save.isEnabled && save.isHittable); save.tap()
+        let error = app.staticTexts["cast.review.error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 15)); XCTAssertTrue(error.label.contains("changed on your PC"))
+        let speaker = app.descendants(matching: .any).matching(identifier: "cast.review.speaker").firstMatch
+        let voice = app.descendants(matching: .any).matching(identifier: "cast.review.voice").firstMatch
+        XCTAssertTrue((speaker.label + " " + String(describing: speaker.value)).contains("Mira"))
+        XCTAssertTrue((voice.label + " " + String(describing: voice.value)).contains("Mira review voice"))
+        scrollReviewTo(error, app: app)
+        narrationToolsScreenshot(app, "Obsidian conflicting review save preserves speaker and voice")
+        app.buttons["cast.review.cancel"].tap()
+        let close = app.buttons["Save & close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10)); close.tap()
+        XCTAssertTrue(app.buttons["reader.player.review"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
+        app.terminate(); app.launch(); openCastReviewReader(app)
+        app.buttons["reader.player.generate"].tap()
+        XCTAssertTrue(app.buttons["reader.generate.chapter"].waitForExistence(timeout: 10)); app.buttons["reader.generate.chapter"].tap()
+        XCTAssertTrue(app.buttons["reader.player.review"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
+        narrationToolsScreenshot(app, "Obsidian unresolved review remains blocked after restart")
+        app.navigationBars["Read aloud"].buttons["Done"].tap(); app.buttons["reader.close"].tap()
+        app.tabBars.buttons["Studio"].tap()
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "studio.job.cast-review-generated").firstMatch.exists, "A failed review cannot silently generate or replace a voice")
+    }
+
+    private func castReviewApp() -> XCUIApplication {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--cast-review-fixture", "--review-persistence-id=" + UUID().uuidString]
+        return app
+    }
+    private func openCastReviewReader(_ app: XCUIApplication) {
+        let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
+        XCTAssertTrue(app.tabBars.buttons["Library"].waitForExistence(timeout: 30)); app.tabBars.buttons["Library"].tap()
+        XCTAssertTrue(book.waitForExistence(timeout: 45)); book.tap(); XCTAssertTrue(waitForReaderContents(app))
+        let original = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "🧭 Café bells rang.")).firstMatch
+        XCTAssertTrue(original.waitForExistence(timeout: 15)); XCTAssertTrue(original.label.contains("“Keep the lantern steady."))
+        app.buttons["reader.speak"].tap(); chooseReaderNarrator(app, "cast")
+    }
+    private func requestCastReview(_ app: XCUIApplication) {
+        app.buttons["reader.player.generate"].tap()
+        XCTAssertTrue(app.buttons["reader.generate.chapter"].waitForExistence(timeout: 10)); app.buttons["reader.generate.chapter"].tap()
+        let review = app.buttons["reader.player.review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 20)); XCTAssertFalse(app.buttons["reader.player.toggle"].isEnabled)
+        assertMinimumHitArea(review); review.tap()
+        let exact = app.staticTexts["cast.review.exact"]
+        XCTAssertTrue(exact.waitForExistence(timeout: 20))
+        XCTAssertEqual(exact.label, "🧭 Café bells rang. Mira said, “Keep the lantern steady.")
+        narrationToolsScreenshot(app, "Obsidian original Unicode passage before assigning its speaker")
+        XCTAssertFalse(app.buttons["cast.review.save"].isEnabled, "An unclear passage requires an explicit speaker and voice")
+    }
+    private func chooseNewReviewSpeaker(_ app: XCUIApplication) {
+        let name = app.textFields["cast.review.newCharacter"]
+        scrollReviewTo(name, app: app); XCTAssertTrue(name.isHittable); name.tap(); name.typeText("Mira")
+        let add = app.buttons["cast.review.addCharacter"]
+        XCTAssertTrue(add.isEnabled); add.tap()
+        let voice = app.descendants(matching: .any).matching(identifier: "cast.review.voice").firstMatch
+        scrollReviewTo(voice, app: app); XCTAssertTrue(voice.isHittable); voice.tap()
+        let choice = app.buttons["Mira review voice"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 10)); choice.tap()
+        XCTAssertTrue(app.buttons["cast.review.createVoice"].isEnabled)
+        XCTAssertTrue(app.buttons["cast.review.save"].isEnabled)
+    }
+    private func scrollReviewTo(_ element: XCUIElement, app: XCUIApplication) {
+        let form = app.scrollViews.firstMatch.exists ? app.scrollViews.firstMatch : app.collectionViews.firstMatch
+        for _ in 0..<12 {
+            if element.exists && element.isHittable { return }
+            let top = app.navigationBars.firstMatch.frame.maxY + 8
+            let down = element.exists && element.frame.minY < top
+            let surface = form.exists ? form : app
+            let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.42 : 0.72))
+            let end = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.72 : 0.42))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+    }
+
     func testMiniPlayerDismissalAndListeningSelectionSurviveRestart() {
         executionTimeAllowance = 300
         let app = narrationToolsApp()

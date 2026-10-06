@@ -13,6 +13,14 @@ import SwiftUI
     #endif
     init() {
         #if DEBUG
+        if UITestCastReviewFixture.enabled {
+            let sessionID = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--review-persistence-id=") }?.split(separator: "=").last.map(String.init)
+            let root = URL.documentsDirectory.appendingPathComponent("CastReviewUITest-" + (sessionID ?? UUID().uuidString))
+            _library = State(initialValue: LibraryStore(root: root.appendingPathComponent("Library")))
+            do { _companion = State(initialValue: try UITestCastReviewFixture.store(root: root.appendingPathComponent("Companion"))) }
+            catch { fatalError("Isolated cast review fixture failed: \(error)") }
+            return
+        }
         if UITestConnectionFixture.enabled {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("ConnectionUITest-" + UUID().uuidString)
             _library = State(initialValue: LibraryStore(root: root.appendingPathComponent("Library")))
@@ -60,6 +68,13 @@ import SwiftUI
             }
             .task {
                 #if DEBUG
+                if UITestCastReviewFixture.enabled && !installedTransportFixture {
+                    installedTransportFixture = true
+                    do {
+                        if library.books.isEmpty { try await UITestCastReviewFixture.install(library: library, companion: companion) }
+                        else { await companion.refresh() }
+                    } catch { library.error = error.localizedDescription }
+                }
                 if UITestTransportFixture.enabled && !installedTransportFixture {
                     installedTransportFixture = true
                     do {
