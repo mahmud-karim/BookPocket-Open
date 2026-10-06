@@ -35,6 +35,23 @@ final class ReadAloudPlayerUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
+    private func paperMatches(_ name: String) -> Bool {
+        // Sample blank status-safe-area and actual EPUB pixels, rather than
+        // trusting a selected segment or the native toolbar's preference.
+        guard let image = XCUIScreen.main.screenshot().image.cgImage else { return false }
+        let expected = name == "Obsidian" ? [0, 0, 0] : name == "White" ? [255, 255, 255] : [250, 244, 232]
+        for y in [0.02, 0.20] {
+            guard let pixel = image.cropping(to: CGRect(x: Double(image.width) * 0.8, y: Double(image.height) * y, width: 1, height: 1)),
+                  let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            guard let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return false }
+            if (0..<3).contains(where: { abs(Int(bytes[$0]) - expected[$0]) > 3 }) { return false }
+        }
+        return true
+    }
+    private func waitForPaper(_ name: String) {
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.paperMatches(name) }, object: nil)], timeout: 15), .completed, "The actual EPUB page and reader status area must both use the chosen paper palette")
+    }
     private func seconds(_ element: XCUIElement) -> Double {
         // Listen describes the time through its accessibility value; reader
         // timeline labels expose the same clock directly as visible text.
@@ -179,6 +196,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
         executionTimeAllowance = 240
         let app = app()
         chooseRecording(app, "reader-continuous-page")
+        waitForPaper("Cream")
         screenshot("Reader cream top with Read aloud open")
         app.buttons["reader.player.close"].tap(); screenshot("Reader cream top after X close")
         app.buttons["reader.options"].tap(); app.buttons["reader.manageAudiobook"].tap()
@@ -187,9 +205,10 @@ final class ReadAloudPlayerUITests: XCTestCase {
         for theme in ["Obsidian", "White", "Cream"] {
             app.buttons["reader.options"].tap(); app.buttons["Reading appearance"].tap()
             app.segmentedControls.buttons[theme].tap(); app.buttons["Done"].tap()
+            waitForPaper(theme)
             screenshot("Reader \(theme) top and page after theme change")
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["reader.speak"])], timeout: 20), .completed)
-            app.buttons["reader.speak"].tap(); screenshot("Reader \(theme) top with charcoal Read aloud")
+            app.buttons["reader.speak"].tap(); waitForPaper(theme); screenshot("Reader \(theme) top with charcoal Read aloud")
             app.buttons["reader.player.close"].tap()
         }
     }

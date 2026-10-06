@@ -118,6 +118,9 @@ struct ReaderView: View {
             }
             .alert("Reader", isPresented: Binding(get: { model.error != nil && !model.loading && model.navigator != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
         }.tint(theme == "dark" ? .white : .black).preferredColorScheme(theme == "dark" ? .dark : .light)
+            .onChange(of: fontSize) { model.applyPreferences(theme: theme, fontSize: fontSize, scroll: scroll) }
+            .onChange(of: theme) { model.applyPreferences(theme: theme, fontSize: fontSize, scroll: scroll) }
+            .onChange(of: scroll) { model.applyPreferences(theme: theme, fontSize: fontSize, scroll: scroll) }
             .overlay(alignment: .bottom) {
                 if showPlayer && !dynamicTypeSize.isAccessibilitySize {
                     // An overlay preserves the Readium viewport and exact page
@@ -214,7 +217,7 @@ struct ReaderView: View {
                     }
                     Text("Install additional voices in iOS Settings → Accessibility → Spoken Content.").font(.caption).foregroundStyle(.secondary)
                 }
-            }.onChange(of: fontSize) { model.applyPreferences() }.onChange(of: theme) { model.applyPreferences() }.onChange(of: scroll) { model.applyPreferences() }
+            }
         }
     }
     private func flatten(_ links: [ReadiumShared.Link]) -> [ReadiumShared.Link] { links.flatMap { [$0] + flatten($0.children) } }
