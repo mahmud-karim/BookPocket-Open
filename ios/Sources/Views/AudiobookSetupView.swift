@@ -40,7 +40,7 @@ struct AudiobookSetupView: View {
                     if let error = state.attention { Text(error).foregroundStyle(.red) }
                     if state.needsCast { Button("Review dialogue") { showReview = true }.accessibilityIdentifier("reader.player.review") }
                     if state.mode == .cast { Button("Set up cast", systemImage: "person.2") { Task { await openCast() } }.frame(minHeight: 48).disabled(state.working).accessibilityIdentifier("reader.player.cast") }
-                    if isCapturedChapter && state.snapshot != nil { Text(state.preview).font(.system(.body, design: .serif)).textSelection(.enabled).accessibilityIdentifier("reader.generation.preview") }
+                    if isCapturedChapter { Text(requestPreview).font(.system(.body, design: .serif)).textSelection(.enabled).accessibilityIdentifier("reader.generation.preview") }
                 }.padding(20)
             }.background(Obsidian.background)
                 .navigationTitle("Manage audiobook").navigationBarTitleDisplayMode(.inline)
@@ -79,6 +79,18 @@ struct AudiobookSetupView: View {
         selectedChapter.map { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(capturedHref) } ?? true
     }
     private var currentChapter: String { selectedChapter?.title ?? request.chapterTitle }
+    private var requestPreview: String {
+        if let local = reader.book,
+           let remote = companion.books.first(where: { $0.sourceSha256 == local.sourceSHA256 }),
+           let selection = try? ReaderSourceMapper.resolve(request.snapshot, book: remote) { return selection.text }
+        guard request.scope == .page else { return "The chapter boundaries are captured. Connect your PC to verify the original source and preview the exact words." }
+        return request.snapshot.documents[capturedHref]?.blocks.flatMap { block in
+            block.visible.compactMap { span -> String? in
+                guard let range = SourceIdentity.scalarRange(span.start, span.end, in: block.text) else { return nil }
+                return String(block.text[range])
+            }
+        }.joined(separator: "\n\n") ?? ""
+    }
     private var recordings: [ReaderAudioRecording] {
         guard let local = reader.book,
               let book = companion.books.first(where: { $0.sourceSha256 == local.sourceSHA256 }),
@@ -243,7 +255,7 @@ struct AudiobookSetupView: View {
             } label: { Label(state.selectedJobID == nil ? "Choose a matching take" : "Change take", systemImage: "list.bullet").frame(minHeight: 48) }
             .accessibilityIdentifier("reader.player.takes")
         }
-        if state.showingSelection, state.voice != nil, state.selection != nil {
+        if state.showingSelection, state.snapshot?.id == request.snapshot.id, state.voice != nil, state.selection != nil {
             Button("Generate with \(state.mode.title)", systemImage: "waveform.badge.plus") { Task { await state.generate(companion: companion) } }
                 .buttonStyle(.borderedProminent).foregroundStyle(Obsidian.onAccent).disabled(state.working)
                 .accessibilityIdentifier("reader.generation.submit")

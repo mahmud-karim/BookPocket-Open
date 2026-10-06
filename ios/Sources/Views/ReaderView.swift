@@ -143,7 +143,10 @@ struct ReaderView: View {
                 let snapshot = try await model.captureScope(state.playbackScope)
                 let title = flatten(model.chapters).first { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(snapshot.hrefs[snapshot.current.resource]) }?.title ?? model.location?.title ?? "Current chapter"
                 if state.mode == .device { state.mode = .kyon }
-                if let local = model.book, !state.working && !state.showingSelection { state.discover(snapshot: snapshot, local: local, companion: companion) }
+                if let local = model.book, !state.working {
+                    state.showingSelection = false; state.voice = nil; state.plan = []; state.needsCast = false
+                    state.discover(snapshot: snapshot, local: local, companion: companion)
+                }
                 audiobookSetup = .init(bookID: model.bookID, chapterTitle: title, scope: state.playbackScope, mode: state.mode, snapshot: snapshot)
             } catch { state.captureError = error.localizedDescription; model.error = error.localizedDescription }
         }
