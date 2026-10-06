@@ -415,6 +415,12 @@ enum CompanionConnectionState: Equatable {
         guard let client else { throw BookError.message(connectionRequiredMessage) }
         let response: CastReviewInventory = try await client.send("/v1/books/\(book.id)/review-issues")
         try CastReview.validate(response, book: book)
+        let acknowledged = response.issues.filter { issue in issue.status == "resolved" && castReviewRequests.contains { $0.bookId == book.id && $0.issueId == issue.id } }
+        if !acknowledged.isEmpty {
+            let current = try await fetchCast(book.id)
+            let verified = Set(acknowledged.filter { (try? CastReview.validateResolution(.init(revision: response.revision, issue: $0, cast: current), issue: $0, book: book)) != nil }.map(\.id))
+            if !verified.isEmpty { castReviewRequests.removeAll { $0.bookId == book.id && verified.contains($0.issueId) }; try persist() }
+        }
         return response
     }
     func resolveCastReview(_ issue: CastReviewIssue, book: RemoteBook, request: CastReviewRequest) async throws -> CastReviewResult {
@@ -425,6 +431,17 @@ enum CompanionConnectionState: Equatable {
         }
         do {
             let response: CastReviewResult = try await client.send("/v1/books/\(book.id)/review-issues/\(issue.id)/resolve", method: "POST", body: CompanionClient.encoder.encode(captured))
+            if response.issue.status == "pending" {
+                // A confirmed idempotent replay reports the *current* cast. A
+                // later edit can reopen this range. Its old UUID must not keep
+                // replaying forever or reapply the earlier speaker choice.
+                guard response.issue.id == issue.id, response.issue.segmentId == issue.segmentId,
+                      response.issue.startOffset == issue.startOffset, response.issue.endOffset == issue.endOffset else { throw BookError.message("The review response identifies different original words.") }
+                try CastReview.validate(.init(bookId: book.id, sourceSha256: book.sourceSha256, revision: response.revision, issues: [response.issue]), book: book)
+                _ = try CastMerge.merge(base: BookCast(), local: BookCast(), remote: response.cast, book: book)
+                castReviewRequests.removeAll { $0.bookId == book.id && $0.issueId == issue.id }; try persist()
+                throw BookError.message("This passage changed after the earlier save. Your choices are kept. Review them and save again.")
+            }
             try CastReview.validateResolution(response, issue: issue, book: book)
             castReviewRequests.removeAll { $0.bookId == book.id && $0.issueId == issue.id }; try persist()
             return response

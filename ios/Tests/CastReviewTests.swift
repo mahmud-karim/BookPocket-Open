@@ -126,6 +126,20 @@ final class CastReviewTests: XCTestCase {
         let recovered = try await reopened.resolveCastReview(issue, book: book, request: changed)
         XCTAssertEqual(calls, [original, original]); XCTAssertEqual(recovered.cast, cast)
         XCTAssertTrue(reopened.castReviewRequests.isEmpty)
+        var current = response; current.issue.status = "pending"; current.cast.assignments = []
+        CastReviewTestProtocol.handle = { _, body in
+            calls.append(try CompanionClient.decoder.decode(CastReviewRequest.self, from: body))
+            return (200, try CompanionClient.encoder.encode(current))
+        }
+        do { _ = try await reopened.resolveCastReview(issue, book: book, request: original); XCTFail("An acknowledged reopened issue requires an explicit new save") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("changed after the earlier save")) }
+        XCTAssertTrue(reopened.castReviewRequests.isEmpty, "A definitive current-state reply clears the old UUID rather than endlessly replaying it")
+        CastReviewTestProtocol.handle = { _, body in
+            calls.append(try CompanionClient.decoder.decode(CastReviewRequest.self, from: body))
+            return (200, try CompanionClient.encoder.encode(response))
+        }
+        _ = try await reopened.resolveCastReview(issue, book: book, request: changed)
+        XCTAssertEqual(calls.last, changed, "Only the next explicit Save submits the new choice and request identity")
     }
     @MainActor func testReviewRevisionConflictPreservesDraftAndAllowsExplicitCurrentRevisionRetry() async throws {
         let draft = CastDraft()
