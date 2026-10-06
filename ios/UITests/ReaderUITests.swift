@@ -44,7 +44,9 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(error.waitForExistence(timeout: 15)); XCTAssertTrue(error.label.contains("changed on your PC"))
         let speaker = app.descendants(matching: .any).matching(identifier: "cast.review.speaker").firstMatch
         let voice = app.descendants(matching: .any).matching(identifier: "cast.review.voice").firstMatch
+        scrollReviewTo(speaker, app: app, seekEarlier: true)
         XCTAssertTrue((speaker.label + " " + String(describing: speaker.value)).contains("Mira"))
+        scrollReviewTo(voice, app: app)
         XCTAssertTrue((voice.label + " " + String(describing: voice.value)).contains("Mira review voice"))
         scrollReviewTo(error, app: app)
         narrationToolsScreenshot(app, "Obsidian conflicting review save preserves speaker and voice")
@@ -88,23 +90,28 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(exact.waitForExistence(timeout: 20))
         XCTAssertEqual(exact.label, "🧭 Café bells rang. Mira said, “Keep the lantern steady.")
         narrationToolsScreenshot(app, "Obsidian original Unicode passage before assigning its speaker")
-        XCTAssertFalse(app.buttons["cast.review.save"].isEnabled, "An unclear passage requires an explicit speaker and voice")
+        let save = app.buttons["cast.review.save"]
+        scrollReviewTo(save, app: app, requireHittable: false)
+        XCTAssertTrue(save.waitForExistence(timeout: 10), "The initial disabled Save row must be materialized on a compact Form")
+        XCTAssertFalse(save.isEnabled, "An unclear passage requires an explicit speaker and voice")
     }
     private func chooseNewReviewSpeaker(_ app: XCUIApplication) {
         let name = app.textFields["cast.review.newCharacter"]
-        scrollReviewTo(name, app: app); XCTAssertTrue(name.isHittable); name.tap(); name.typeText("Mira")
+        scrollReviewTo(name, app: app, seekEarlier: true); XCTAssertTrue(name.isHittable); name.tap(); name.typeText("Mira")
         let add = app.buttons["cast.review.addCharacter"]
         XCTAssertTrue(add.isEnabled); add.tap()
         let voice = app.descendants(matching: .any).matching(identifier: "cast.review.voice").firstMatch
         scrollReviewTo(voice, app: app); XCTAssertTrue(voice.isHittable); voice.tap()
         let choice = app.buttons["Mira review voice"]
         XCTAssertTrue(choice.waitForExistence(timeout: 10)); choice.tap()
-        XCTAssertTrue(app.buttons["cast.review.createVoice"].isEnabled)
-        XCTAssertTrue(app.buttons["cast.review.save"].isEnabled)
+        let create = app.buttons["cast.review.createVoice"], save = app.buttons["cast.review.save"]
+        scrollReviewTo(create, app: app); XCTAssertTrue(create.waitForExistence(timeout: 10)); XCTAssertTrue(create.isEnabled)
+        scrollReviewTo(save, app: app); XCTAssertTrue(save.waitForExistence(timeout: 10)); XCTAssertTrue(save.isEnabled)
+        let speaker = app.descendants(matching: .any).matching(identifier: "cast.review.speaker").firstMatch
+        scrollReviewTo(speaker, app: app, seekEarlier: true)
     }
-    private func scrollReviewTo(_ element: XCUIElement, app: XCUIApplication) {
+    private func scrollReviewTo(_ element: XCUIElement, app: XCUIApplication, seekEarlier: Bool = false, requireHittable: Bool = true) {
         for _ in 0..<12 {
-            if element.exists && element.isHittable { return }
             // The reader beneath this sheet contains a 44-point horizontal
             // scroll view. Select the visible vertical Form instead of that
             // first unrelated ScrollView, and keep drags above the keyboard.
@@ -117,7 +124,11 @@ final class ReaderUITests: XCTestCase {
             let keyboard = app.keyboards.firstMatch
             let bottom = min(surface.frame.maxY, keyboard.exists ? keyboard.frame.minY - 8 : app.frame.maxY - 30)
             guard bottom - top >= 100 else { return }
-            let down = element.exists && element.frame.minY < top
+            let materialized = element.exists && !element.frame.isEmpty
+            if materialized && element.frame.minY >= top && element.frame.maxY <= bottom && (!requireHittable || element.isHittable) { return }
+            // SwiftUI's compact Form virtualizes offscreen rows. Their absence
+            // carries no direction, so callers explicitly seek earlier rows.
+            let down = materialized ? element.frame.minY < top : seekEarlier
             let origin = app.coordinate(withNormalizedOffset: .zero)
             let start = origin.withOffset(CGVector(dx: app.frame.width * 0.5, dy: top + (bottom - top) * (down ? 0.35 : 0.75)))
             let end = origin.withOffset(CGVector(dx: app.frame.width * 0.5, dy: top + (bottom - top) * (down ? 0.75 : 0.35)))
