@@ -164,7 +164,8 @@ struct StudioView: View {
                     }.disabled(companion.exporting)
                 }
             }.font(.subheadline)
-        }.padding(18).background(Obsidian.surface, in: .rect(cornerRadius: 16)).accessibilityIdentifier("studio.job." + job.id)
+        }.padding(18).background(Obsidian.surface, in: .rect(cornerRadius: 16))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("studio.job." + job.id)
     }
 }
 
