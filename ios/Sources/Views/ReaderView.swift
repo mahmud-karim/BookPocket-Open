@@ -135,7 +135,7 @@ struct ReaderView: View {
                 }
             }
     }
-    private var readerPaper: Color { Color(uiColor: ReaderPaperTheme.background(theme)) }
+    private var readerPaper: SwiftUI.Color { SwiftUI.Color(uiColor: ReaderPaperTheme.background(theme)) }
     private func openAudiobookSetup() {
         let state = companion.readerPlayer(for: model.bookID)
         Task {

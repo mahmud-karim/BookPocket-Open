@@ -7,6 +7,8 @@ struct AudiobookSetupView: View {
     let reader: ReaderModel
     @Bindable var state: ReaderPlayerState
     var initialDestination: Destination = .generation
+    /// Catalog-only override; it never changes the frozen generation snapshot.
+    var selectedChapter: RemoteChapter? = nil
     @Environment(CompanionStore.self) private var companion
     @Environment(LibraryStore.self) private var library
     @Environment(PlaybackController.self) private var player
@@ -32,15 +34,15 @@ struct AudiobookSetupView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text(request.chapterTitle).font(.headline)
+                    Text(currentChapter).font(.headline)
                     Text("\(request.mode.title) · \(request.scope.title)").accessibilityIdentifier("audiobook.setup.context")
-                    generatedControls
+                    if isCapturedChapter { generatedControls }
                     savedAudioButton
                     pronunciationAndHighlighting
                     if let error = state.attention { Text(error).foregroundStyle(.red) }
                     if state.needsCast { Button("Review dialogue") { showReview = true }.accessibilityIdentifier("reader.player.review") }
                     if state.mode == .cast { Button("Set up cast", systemImage: "person.2") { Task { await openCast() } }.frame(minHeight: 48).disabled(state.working).accessibilityIdentifier("reader.player.cast") }
-                    if state.snapshot != nil { Text(state.preview).font(.system(.body, design: .serif)).textSelection(.enabled).accessibilityIdentifier("reader.generation.preview") }
+                    if isCapturedChapter && state.snapshot != nil { Text(state.preview).font(.system(.body, design: .serif)).textSelection(.enabled).accessibilityIdentifier("reader.generation.preview") }
                 }.padding(20)
             }.background(Obsidian.background)
                 .navigationTitle("Manage audiobook").navigationBarTitleDisplayMode(.inline)
@@ -57,7 +59,7 @@ struct AudiobookSetupView: View {
                 .sheet(isPresented: $showPairing, onDismiss: { refresh() }) { PairingView() }
                 .sheet(isPresented: $showCast, onDismiss: { refreshPreparation() }) { if let remote = state.remote { CastView(book: remote, relevantRanges: state.selection?.ranges) } }
                 .sheet(isPresented: $showReview, onDismiss: { refreshPreparation() }) { if let remote = state.remote { CastView(book: remote, relevantRanges: state.selection?.ranges, autoReview: true) } }
-                .sheet(isPresented: $showPronunciation) { PronunciationEditorView(language: reader.book?.language ?? "en", onRegenerate: { capture(request.scope) }) }
+                .sheet(isPresented: $showPronunciation) { PronunciationEditorView(language: reader.book?.language ?? "en", onRegenerate: isCapturedChapter ? { capture(request.scope) } : nil) }
                 .task(id: (state.selectedJobID ?? "") + ":\(state.pollRevision)") {
                     guard let id = state.selectedJobID else { return }
                     while !Task.isCancelled {
@@ -74,17 +76,19 @@ struct AudiobookSetupView: View {
             }
             .onDisappear { state.invalidatePlaybackIntent() }
     }
-    private var currentChapter: String {
-        guard let location = reader.location else { return "Choose a chapter" }
-        let matches = flatten(reader.chapters).filter { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(location.href.string) }
-        if matches.count == 1, let title = matches.first?.title { return title }
-        return location.title ?? "Choose a chapter"
+    private var capturedHref: String { request.snapshot.hrefs[request.snapshot.current.resource] }
+    private var isCapturedChapter: Bool {
+        selectedChapter.map { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(capturedHref) } ?? true
     }
+    private var currentChapter: String { selectedChapter?.title ?? request.chapterTitle }
     private var recordings: [ReaderAudioRecording] {
         guard let local = reader.book,
               let book = companion.books.first(where: { $0.sourceSha256 == local.sourceSHA256 }),
-              let href = reader.location?.href.string,
-              let chapter = book.chapters.first(where: { ReaderSourceMapper.href($0.href) == ReaderSourceMapper.href(href) }) else { return [] }
+              local.id == request.bookID,
+              let chapter = book.chapters.first(where: { candidate in
+                  if let selectedChapter { return candidate.id == selectedChapter.id }
+                  return ReaderSourceMapper.href(candidate.href) == ReaderSourceMapper.href(capturedHref)
+              }) else { return [] }
         return ReaderAudioCatalog.recordings(book: book, chapter: chapter, mode: state.mode,
             jobs: companion.jobs, localBookID: local.id, downloads: companion.orderedDownloads)
     }
@@ -125,7 +129,9 @@ struct AudiobookSetupView: View {
                 ForEach(chapters) { recording in recordingRow(recording).listRowBackground(Obsidian.surface) }
                 if chapters.isEmpty {
                     Text("Chapter not generated").foregroundStyle(.secondary)
-                    Button("Generate audio…") { detail = nil; capture(request.scope) }.accessibilityIdentifier("reader.saved.generate")
+                    if isCapturedChapter {
+                        Button("Generate audio…") { detail = nil; capture(request.scope) }.accessibilityIdentifier("reader.saved.generate")
+                    }
                 }
             }
         }.scrollContentBackground(.hidden).accessibilityIdentifier("reader.saved.list")
@@ -266,6 +272,7 @@ struct AudiobookSetupView: View {
         }
     }
     private func capture(_ scope: NarrationScope) {
+        guard isCapturedChapter else { return }
         state.invalidatePlaybackIntent()
         Task {
             do {
