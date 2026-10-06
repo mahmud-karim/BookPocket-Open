@@ -51,6 +51,7 @@ jobs:
           xcodebuild -version
           xcodebuild build-for-testing -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/Simulator" \
+            ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-compile.log
           wait "$WARMUP"
       - id: device
