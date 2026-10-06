@@ -28,10 +28,23 @@ struct ManageAudiobookView: View {
     }
     private var chapter: RemoteChapter? { book?.chapters.first { $0.id == chapterID } }
     private var capturedContext: String {
-        guard let book, let original = try? ReaderSourceMapper.resolve(request.snapshot, book: book) else {
+        if let book, let original = try? ReaderSourceMapper.resolve(request.snapshot, book: book) {
+            return "\(request.scope.title) · \(original.text)"
+        }
+        // Offline setup can describe the reader's actual frozen page without
+        // claiming that the PC has verified its canonical generation ranges.
+        let snapshot = request.snapshot
+        guard request.scope == .page, snapshot.hrefs.indices.contains(snapshot.current.resource),
+              let document = snapshot.documents[snapshot.hrefs[snapshot.current.resource]] else {
             return "\(request.scope.title) · Original source unavailable"
         }
-        return "\(request.scope.title) · \(original.text)"
+        let words = document.blocks.flatMap { block in
+            block.visible.compactMap { span -> String? in
+                guard let range = SourceIdentity.scalarRange(span.start, span.end, in: block.text) else { return nil }
+                return String(block.text[range])
+            }
+        }.joined(separator: "\n\n")
+        return words.isEmpty ? "\(request.scope.title) · Original source unavailable" : "\(request.scope.title) · \(words) · Awaiting PC source verification"
     }
     private var ranges: [SourceRange] { chapter?.segments.map { .init(segmentId: $0.id, startOffset: 0, endOffset: $0.text.unicodeScalars.count) } ?? [] }
     private var draft: CastDraft? { book.map { companion.castDraft(for: $0.id) } }
