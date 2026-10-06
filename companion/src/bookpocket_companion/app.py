@@ -149,7 +149,7 @@ def create_app(config=None, engines=None, start_worker=True):
                 if key != "global" and (not attempts[key] or attempts[key][-1] < current - 60): del attempts[key]
 
     @app.get("/v1/health")
-    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id", "source_ranges_cast", "word_alignment", "delete_recordings", "pronunciation_settings"]}
+    def health(): return {"api_version": "1", "name": "Book Pocket Open", "version": __version__, "capabilities": ["source_ranges", "analysis_request_id", "source_ranges_cast", "word_alignment", "delete_recordings", "pronunciation_settings", "chapter_analysis", "voice_previews"]}
 
     @app.get("/v1/admin/connection", dependencies=[Depends(admin)])
     def connection():
@@ -281,7 +281,13 @@ def create_app(config=None, engines=None, start_worker=True):
             request = json.loads(store.item("jobs", j["id"])["request"])
             if j["status"] in {"running", "queued", "paused"} and (j["voice_id"] == identity or identity in request.get("cast", {}).values() or identity in {p["voice_id"] for p in request.get("narration_plan", [])}):
                 raise HTTPException(409, "Cancel active jobs using this voice before deleting it")
-        with store.db() as db: db.execute("DELETE FROM voices WHERE id=?", (identity,))
+        with store.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            for preview in db.execute('SELECT data FROM voice_previews WHERE deleted=0'):
+                value = json.loads(preview[0])
+                if value['voice_id'] == identity and value['status'] in {'queued', 'running'}:
+                    raise HTTPException(409, 'Delete or finish active voice previews before deleting this voice')
+            db.execute("DELETE FROM voices WHERE id=?", (identity,))
         Path(row["reference"]).unlink(missing_ok=True)
         return {"deleted": True}
 
@@ -551,6 +557,8 @@ def create_app(config=None, engines=None, start_worker=True):
 
     from .casting import register_casting
     register_casting(app, store, auth, admin, get_book, scheduler)
+    from .previews import register_previews
+    register_previews(app, store, auth, get_voice, engines, config, scheduler)
 
     if config.studio_dir and config.studio_dir.is_dir():
         app.mount("/", StaticFiles(directory=config.studio_dir, html=True), name="studio")

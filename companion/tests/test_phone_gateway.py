@@ -40,8 +40,9 @@ def test_pairing_shared_library_cast_and_revocation(gateway):
     assert phone.get(f"/v1/books/{book['id']}/source").content == "An original compass 🧭 passage.".encode()
     assert phone.get(f"/v1/books/{book['id']}/cast").status_code == 200
     assert phone.put(f"/v1/books/{book['id']}/cast", json={"characters": [], "assignments": []}).status_code == 200
-    # Routed to real analysis handlers; absent configuration/job, not gateway 404.
-    assert phone.post(f"/v1/books/{book['id']}/analyze", json={"allow_hosted": False}).status_code == 409
+    # Supported narration-only chapters need no analysis model.
+    assert phone.post(f"/v1/books/{book['id']}/analyze", json={"allow_hosted": False}).status_code == 202
+    assert phone.get(f"/v1/books/{book['id']}/analysis-status").status_code == 200
     assert phone.get("/v1/analyses/missing").json()["detail"] != "Phone API route not found"
     assert phone.delete("/v1/devices/current").status_code == 200
     assert phone.get("/v1/books").status_code == 401
@@ -56,6 +57,10 @@ def test_recording_alignment_deletion_and_pronunciations_are_protected_device_ro
         assert response.status_code == 404 and response.json()['detail'] != 'Phone API route not found'
         assert getattr(phone, method)(path, headers={'Authorization': 'Bearer fixture-admin'}).status_code == 401
     assert phone.put('/v1/pronunciations', json={'pronunciation_rules': [], 'expected_revision': 1}, headers={'Authorization': 'Bearer fixture-admin'}).status_code == 401
+    assert phone.post('/v1/voice-previews', json={'request_id': '862ab859-0207-4422-a7ea-6660577fef3b', 'voice_id': 'missing', 'text': 'Original preview.'}).status_code == 404
+    assert phone.get('/v1/voice-previews/missing').json()['detail'] != 'Phone API route not found'
+    assert phone.delete('/v1/voice-previews/missing').json()['detail'] != 'Phone API route not found'
+    assert phone.get('/v1/voice-previews/missing', headers={'Authorization': 'Bearer fixture-admin'}).status_code == 401
 
 
 @pytest.mark.parametrize("path", ["/", "/docs", "/redoc", "/openapi.json", "/v1/admin/connection", "/v1/admin/pairing-tickets", "/v1/admin/analyzer", "/v1/books/a/unknown", "/bookpocket/v1/health"])

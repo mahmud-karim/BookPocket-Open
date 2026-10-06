@@ -10,12 +10,12 @@ from .store import digest
 _ID = r"[A-Za-z0-9][A-Za-z0-9_:-]{0,255}"
 _ROUTES = (
     ("GET", r"/v1/(health|engines|voices|books|jobs|legacy-recordings|pronunciations)"),
-    ("POST", r"/v1/(pairings|voices|books|jobs|projects/import)"),
-    ("GET", rf"/v1/(pairings|voices|books|jobs|assets|analyses)/{_ID}"),
-    ("DELETE", rf"/v1/(voices|books|jobs)/{_ID}"),
+    ("POST", r"/v1/(pairings|voices|books|jobs|projects/import|voice-previews)"),
+    ("GET", rf"/v1/(pairings|voices|books|jobs|assets|analyses|voice-previews)/{_ID}"),
+    ("DELETE", rf"/v1/(voices|books|jobs|voice-previews)/{_ID}"),
     ("PUT", r"/v1/pronunciations"),
     ("DELETE", r"/v1/devices/current"),
-    ("GET", rf"/v1/books/{_ID}/(source|cover|cast)"),
+    ("GET", rf"/v1/books/{_ID}/(source|cover|cast|analysis-status)"),
     ("PUT", rf"/v1/books/{_ID}/cast"),
     ("POST", rf"/v1/books/{_ID}/analyze"),
     ("GET", rf"/v1/voices/{_ID}/reference"),
