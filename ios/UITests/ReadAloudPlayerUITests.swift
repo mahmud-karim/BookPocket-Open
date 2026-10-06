@@ -72,6 +72,29 @@ final class ReadAloudPlayerUITests: XCTestCase {
         }, object: nil)], timeout: 10)
         XCTAssertEqual(result, .completed, "Requested continuous position \(expected); actual clock \(seconds(element))")
     }
+    private func tapReadyTransport(_ app: XCUIApplication, id: String) {
+        let button = app.buttons["reader.player." + id]
+        XCTContext.runActivity(named: "Transport state before " + id) { activity in
+            let state = "enabled=\(button.isEnabled), hittable=\(button.isHittable), frame=\(button.frame), readiness=\(app.staticTexts["reader.player.readiness"].exists)\n" + button.debugDescription
+            let attachment = XCTAttachment(string: state)
+            attachment.lifetime = .keepAlways
+            activity.add(attachment)
+        }
+        // A paused seek follows the EPUB locator and starts an asynchronous
+        // exact-source lookup. Tap only once transport is available again.
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            button.isEnabled && button.isHittable && !app.staticTexts["reader.player.readiness"].exists
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [ready], timeout: 20)
+        XCTAssertEqual(result, .completed, "Transport must recover after paused seek")
+        guard result == .completed else { return }
+        XCTContext.runActivity(named: "Ready transport " + id) { activity in
+            let attachment = XCTAttachment(string: "enabled=\(button.isEnabled), hittable=\(button.isHittable), frame=\(button.frame)\n" + button.debugDescription)
+            attachment.lifetime = .keepAlways
+            activity.add(attachment)
+        }
+        button.tap()
+    }
     private func seek(_ app: XCUIApplication, normalized target: Double, duration: Double) {
         let slider = app.sliders["reader.player.seek"]
         var gesture = target
@@ -134,10 +157,10 @@ final class ReadAloudPlayerUITests: XCTestCase {
         let sought = seconds(app.staticTexts["reader.player.elapsed"])
         XCTAssertGreaterThan(sought, 64, "Seeking before Play crosses backend assets without starting narration")
         XCTAssertEqual(toggle.value as? String, "Paused")
-        app.buttons["reader.player.backward"].tap()
+        tapReadyTransport(app, id: "backward")
         waitForClock(app.staticTexts["reader.player.elapsed"], seconds: sought - 15)
         XCTAssertEqual(seconds(app.staticTexts["reader.player.elapsed"]), sought - 15, accuracy: 1)
-        app.buttons["reader.player.forward"].tap()
+        tapReadyTransport(app, id: "forward")
         waitForClock(app.staticTexts["reader.player.elapsed"], seconds: sought)
         XCTAssertEqual(seconds(app.staticTexts["reader.player.elapsed"]), sought, accuracy: 1)
         app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0)
