@@ -2,6 +2,9 @@ import XCTest
 import UIKit
 
 final class ReadAloudPlayerUITests: XCTestCase {
+    private var paperViewport: CGRect?
+    private var paperViewportTheme: String?
+    private var paperDiagnostics = "No paper sample captured"
     private func app(_ fixture: String = "--reader-continuous-fixture", extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", fixture, "-playbackRate", "0.5", "-readerTheme", "cream"] + extra
@@ -35,28 +38,55 @@ final class ReadAloudPlayerUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
-    private func paperMatches(_ name: String, app: XCUIApplication) -> Bool {
-        // Sample blank status-safe-area and actual EPUB pixels, rather than
-        // trusting a selected segment or the native toolbar's preference.
-        guard let image = XCUIScreen.main.screenshot().image.cgImage else { return false }
-        let page = app.webViews.firstMatch
-        guard page.exists, app.frame.height > 0 else { return false }
+    private func paperMatches(_ name: String) -> Bool {
+        let app = XCUIApplication()
+        let window = app.frame
+        let panel = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
+        let open = app.buttons["reader.player.close"].exists
+        paperDiagnostics = "theme=\(name), playerOpen=\(open), window=\(window)"
+        guard window.width > 0, window.height > 0 else { return false }
+        // Measure the actual EPUB viewport while uncovered. A presented player
+        // can change the covered WebView's accessibility frame on compact iOS.
+        if !open {
+            let page = app.webViews.firstMatch
+            guard page.exists, !page.frame.isEmpty else { return false }
+            paperViewport = page.frame.intersection(window)
+            paperViewportTheme = name
+        }
+        guard paperViewportTheme == name, let viewport = paperViewport, !viewport.isEmpty else { return false }
+        let toolbarBottom = max(app.buttons["reader.close"].frame.maxY, app.buttons["reader.options"].frame.maxY)
+        let x = window.minX + window.width * 0.3
+        let statusPoint = CGPoint(x: x, y: window.minY + window.height * 0.02)
+        let paperPoint = CGPoint(x: x, y: max(viewport.minY + 8, toolbarBottom + 16))
+        let panelFrame = open && panel.exists ? panel.frame : .zero
+        paperDiagnostics += ", closedEPUBViewport=\(viewport), toolbarBottom=\(toolbarBottom), panel=\(panelFrame), status=\(statusPoint), paper=\(paperPoint)"
+        // Native glass toolbar shadows contaminate the right-hand status area.
+        // The same blank paper point must also stay above the player's shadow;
+        // never sample a covered page or accept the charcoal panel as paper.
+        guard viewport.contains(paperPoint), window.contains(statusPoint),
+              !open || (!panelFrame.isEmpty && paperPoint.y < panelFrame.minY - 35),
+              let image = XCUIScreen.main.screenshot().image.cgImage else { return false }
         let expected = name == "Obsidian" ? [0, 0, 0] : name == "White" ? [255, 255, 255] : [250, 244, 232]
-        // The compact player's top shadow reaches 20% of the screen. Sample
-        // inside the actual EPUB viewport instead of mistaking that shadow for
-        // a stale reading palette.
-        let paperY = Double(page.frame.minY + 8 - app.frame.minY) * Double(image.height) / Double(app.frame.height)
-        for y in [Double(image.height) * 0.02, paperY] {
-            guard let pixel = image.cropping(to: CGRect(x: Double(image.width) * 0.8, y: y, width: 1, height: 1)),
+        var matched = true
+        for (label, point) in [("status", statusPoint), ("paper", paperPoint)] {
+            let pixelPoint = CGPoint(x: floor((point.x - window.minX) * CGFloat(image.width) / window.width),
+                                     y: floor((point.y - window.minY) * CGFloat(image.height) / window.height))
+            guard let pixel = image.cropping(to: CGRect(origin: pixelPoint, size: CGSize(width: 1, height: 1))),
                   let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
             context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
             guard let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return false }
-            if (0..<3).contains(where: { abs(Int(bytes[$0]) - expected[$0]) > 3 }) { return false }
+            let rgb = (0..<3).map { Int(bytes[$0]) }
+            paperDiagnostics += "; \(label) pixel=\(pixelPoint), RGB=\(rgb), expected=\(expected), tolerance=3"
+            if (0..<3).contains(where: { abs(rgb[$0] - expected[$0]) > 3 }) { matched = false }
         }
-        return true
+        return matched
     }
-    private func waitForPaper(_ name: String, app: XCUIApplication) {
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.paperMatches(name, app: app) }, object: nil)], timeout: 15), .completed, "The actual EPUB page and reader status area must both use the chosen paper palette")
+    private func waitForPaper(_ name: String) {
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.paperMatches(name) }, object: nil)], timeout: 15)
+        let attachment = XCTAttachment(string: paperDiagnostics)
+        attachment.name = "\(name) actual paper and status pixel samples"
+        attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertEqual(result, .completed, "The actual EPUB page and reader status area must both use the chosen paper palette. \(paperDiagnostics)")
     }
     private func seconds(_ element: XCUIElement) -> Double {
         // Listen describes the time through its accessibility value; reader
@@ -263,7 +293,13 @@ final class ReadAloudPlayerUITests: XCTestCase {
         executionTimeAllowance = 240
         let app = app()
         chooseRecording(app, "reader-continuous-page")
-        waitForPaper("Cream", app: app)
+        app.buttons["reader.player.close"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["reader.player.close"])], timeout: 10), .completed)
+        waitForPaper("Cream")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: app.buttons["reader.speak"])], timeout: 20), .completed)
+        app.buttons["reader.speak"].tap()
+        XCTAssertTrue(app.buttons["reader.player.close"].waitForExistence(timeout: 10))
+        waitForPaper("Cream")
         screenshot("Reader cream top with Read aloud open")
         app.buttons["reader.player.close"].tap(); screenshot("Reader cream top after X close")
         app.buttons["reader.options"].tap(); app.buttons["reader.manageAudiobook"].tap()
@@ -272,10 +308,12 @@ final class ReadAloudPlayerUITests: XCTestCase {
         for theme in ["Obsidian", "White", "Cream"] {
             app.buttons["reader.options"].tap(); app.buttons["Reading appearance"].tap()
             app.segmentedControls.buttons[theme].tap(); app.buttons["Done"].tap()
-            waitForPaper(theme, app: app)
+            waitForPaper(theme)
             screenshot("Reader \(theme) top and page after theme change")
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["reader.speak"])], timeout: 20), .completed)
-            app.buttons["reader.speak"].tap(); waitForPaper(theme, app: app); screenshot("Reader \(theme) top with charcoal Read aloud")
+            app.buttons["reader.speak"].tap()
+            XCTAssertTrue(app.buttons["reader.player.close"].waitForExistence(timeout: 10))
+            waitForPaper(theme); screenshot("Reader \(theme) top with charcoal Read aloud")
             app.buttons["reader.player.close"].tap()
         }
     }
