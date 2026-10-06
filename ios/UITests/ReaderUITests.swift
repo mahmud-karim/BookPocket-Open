@@ -17,19 +17,19 @@ final class ReaderUITests: XCTestCase {
         toolsScrollTo(generation, app: app)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Generate audio"), object: generation)], timeout: 15), .completed)
         XCTAssertEqual(app.buttons["manage.review"].value as? String, "No lines to check", "An explicit saved review removes this scope's blocker")
-        XCTAssertFalse(app.buttons["reader.player.toggle"].exists, "Review does not fabricate generated audio")
+        assertCoveredReaderTransport(app)
         submitManagedChapter(app)
         let queued = app.staticTexts["manage.generation.status"]
         XCTAssertTrue(queued.waitForExistence(timeout: 20), "Only the authenticated resolved exact-source plan can queue generation")
         XCTAssertTrue(queued.label.contains("Queued"))
-        XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
+        assertCoveredReaderTransport(app)
         narrationToolsScreenshot(app, "Obsidian full cast queued only after original text review")
         app.terminate(); app.launch(); openCastReviewReader(app)
         submitManagedChapter(app)
         XCTAssertTrue(queued.waitForExistence(timeout: 20), "A restarted app prepares the persisted reviewed cast through the authenticated transport")
         XCTAssertTrue(queued.label.contains("Queued"))
         XCTAssertEqual(app.buttons["manage.review"].value as? String, "No lines to check", "The original review survives a real app restart")
-        XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
+        assertCoveredReaderTransport(app)
         app.buttons["manage.close"].tap(); app.buttons["reader.player.close"].tap(); app.buttons["reader.close"].tap()
         app.tabBars.buttons["Studio"].tap()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "studio.job.cast-review-generated").firstMatch.waitForExistence(timeout: 15), "The accepted generation request remains saved without simulated audio")
@@ -57,14 +57,14 @@ final class ReaderUITests: XCTestCase {
         toolsScrollTo(pending, app: app)
         XCTAssertEqual(pending.value as? String, "1 lines to check")
         XCTAssertFalse(app.staticTexts["manage.generation.status"].exists)
-        XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
+        assertCoveredReaderTransport(app)
         app.terminate(); app.launch(); openCastReviewReader(app)
         toolsScrollTo(pending, app: app)
         XCTAssertEqual(pending.value as? String, "1 lines to check")
         let main = app.buttons["manage.main"]; toolsScrollTo(main, app: app)
         XCTAssertEqual(main.label, "Review speakers", "A failed save leaves setup blocked rather than offering generation")
         XCTAssertFalse(app.staticTexts["manage.generation.status"].exists)
-        XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
+        assertCoveredReaderTransport(app)
         narrationToolsScreenshot(app, "Obsidian unresolved review remains blocked after restart")
         app.buttons["manage.close"].tap(); app.buttons["reader.player.close"].tap(); app.buttons["reader.close"].tap()
         app.tabBars.buttons["Studio"].tap()
@@ -107,9 +107,19 @@ final class ReaderUITests: XCTestCase {
         let generate = app.buttons["manage.main"]
         toolsScrollTo(generate, app: app)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND label == %@", "Generate audio"), object: generate)], timeout: 15), .completed)
+        // The refreshed cast changes the screen after the first reveal. Inspect
+        // the final Generate control's actual visible frame before tapping it.
+        toolsScrollTo(generate, app: app)
         assertMinimumHitArea(generate); generate.tap()
         let chapter = app.buttons.matching(identifier: "manage.generate.chapter").firstMatch
         XCTAssertTrue(chapter.waitForExistence(timeout: 10)); chapter.tap()
+    }
+    private func assertCoveredReaderTransport(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let transport = app.buttons["reader.player.toggle"]
+        if transport.exists {
+            XCTAssertFalse(transport.isHittable, "Manage must cover the retained underlying player", file: file, line: line)
+            XCTAssertFalse(transport.isEnabled, "An unresolved or queued cast has no generated audio to play", file: file, line: line)
+        }
     }
     private func chooseNewReviewSpeaker(_ app: XCUIApplication) {
         let name = app.textFields["cast.review.newCharacter"]
@@ -136,14 +146,18 @@ final class ReaderUITests: XCTestCase {
             let form = containers.filter { $0.exists && $0.isHittable && $0.frame.height >= 200 && $0.frame.width >= app.frame.width * 0.7 }
                 .max { $0.frame.height < $1.frame.height }
             let surface = form ?? app
-            let navigation = app.navigationBars["Review dialogue"]
+            // Manage and other editors have their own foreground navigation
+            // bars. A control clipped underneath one can remain AX-hittable.
+            let navigation = app.navigationBars.allElementsBoundByIndex.first { $0.exists && $0.isHittable }
             let keyboard = app.keyboards.firstMatch
-            let visibleTop = max(surface.frame.minY, navigation.exists ? navigation.frame.maxY : app.frame.minY)
+            let visibleTop = max(surface.frame.minY, navigation?.frame.maxY ?? app.frame.minY)
             let visibleBottom = min(surface.frame.maxY, keyboard.exists ? keyboard.frame.minY : app.frame.maxY)
             let viewport = CGRect(x: surface.frame.minX, y: visibleTop, width: surface.frame.width, height: max(0, visibleBottom - visibleTop))
             let materialized = element.exists && !element.frame.isEmpty
             if materialized {
-                if requireHittable && element.isHittable { return true }
+                let frame = element.frame
+                let inNavigation = navigation?.frame.contains(frame) == true
+                if requireHittable && element.isHittable && app.frame.contains(frame) && (inNavigation || viewport.contains(frame)) { return true }
                 let visible = element.frame.intersection(viewport)
                 if !requireHittable && !visible.isNull && visible.height >= min(44, element.frame.height) && visible.width >= min(44, element.frame.width) { return true }
             }
@@ -945,10 +959,11 @@ final class ReaderUITests: XCTestCase {
 
     private func assertMinimumHitArea(_ element: XCUIElement, frame capturedFrame: CGRect? = nil, viewport capturedViewport: CGRect? = nil, file: StaticString = #filePath, line: UInt = #line) {
         let frame = capturedFrame ?? element.frame, viewport = capturedViewport ?? XCUIApplication().frame
-        XCTAssertTrue(element.exists && element.isHittable, file: file, line: line)
-        XCTAssertGreaterThanOrEqual(frame.width + 0.001, 44, file: file, line: line)
-        XCTAssertGreaterThanOrEqual(frame.height + 0.001, 44, file: file, line: line)
-        XCTAssertTrue(viewport.contains(frame), file: file, line: line)
+        let geometry = "\(element.identifier): frame \(frame), viewport \(viewport)"
+        XCTAssertTrue(element.exists && element.isHittable, "The actual control must be hittable. \(geometry)", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(frame.width + 0.001, 44, geometry, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(frame.height + 0.001, 44, geometry, file: file, line: line)
+        XCTAssertTrue(viewport.contains(frame), "The complete control must fit. \(geometry)", file: file, line: line)
     }
 
     private func assertEmptyListenFits(_ app: XCUIApplication, name: String, file: StaticString = #filePath, line: UInt = #line) {

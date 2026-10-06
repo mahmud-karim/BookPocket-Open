@@ -143,7 +143,11 @@ struct ManageAudiobookView: View {
             }.background(Obsidian.background).accessibilityIdentifier("manage.surface")
                 .navigationTitle("Manage audiobook").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button { dismiss() } label: { Image(systemName: "chevron.left") }.accessibilityLabel("Back to book").accessibilityIdentifier("manage.close") }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button { dismiss() } label: {
+                            Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(.rect)
+                        }.buttonStyle(.plain).accessibilityLabel("Back to book").accessibilityIdentifier("manage.close")
+                    }
                 }
                 .sheet(item: $destination, onDismiss: { Task { await refreshMetadata(); beginRecovery() } }) { destination in
                     child(destination)
