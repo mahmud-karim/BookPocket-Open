@@ -14,6 +14,8 @@ struct ReaderPlayerView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var discovering = false
     @State private var pendingDiscovery = false
+    @State private var scrubbing = false
+    @State private var scrubPosition = 0.0
     @State private var sheet: Choice?
     private enum Choice: Identifiable {
         case source, recordings, speed, sleep, chapters([DownloadedChapterGroup])
@@ -27,6 +29,10 @@ struct ReaderPlayerView: View {
     private var preparedDuration: Double? { recording.flatMap { companion.recordingDuration($0) } }
     private var recordingIssue: String? {
         guard state.mode != .device, let job, job.status == "completed", let selection = state.selection else { return nil }
+        if let book = state.remote {
+            do { try RangedAudioValidation.validate(job: job, book: book) }
+            catch { return error.localizedDescription }
+        }
         let records = companion.orderedDownloads(jobID: job.id)
         guard companion.downloads.contains(where: { $0.jobID == job.id }) || state.readyIDs.contains(job.id) else { return nil }
         if let book = state.remote {
@@ -72,7 +78,7 @@ struct ReaderPlayerView: View {
         state.readyIDs = recording.offline ? [recording.id] : []; state.error = nil; state.captureError = nil; state.showingSelection = false
         sheet = nil
     }
-    private var canPlay: Bool { !discovering && (state.mode == .device || active || preparedDuration != nil) }
+    private var canPlay: Bool { !discovering && (state.mode == .device || (recordingIssue == nil && (active || preparedDuration != nil))) }
     private var scopeName: String { state.playbackScope == .page ? "page" : "chapter" }
     private var recordingTitle: String {
         let scope = state.playbackScope == .page ? "page" : "chapter"
@@ -116,7 +122,9 @@ struct ReaderPlayerView: View {
                 }.preferredColorScheme(.dark).tint(Obsidian.accent)
             }
             .onChange(of: reader.location) {
-                if !(active && player.isPlaying) && !state.working && state.mode != .device { refreshLocal() }
+                if !(active && player.isPlaying) && !state.working && state.mode != .device {
+                    if scrubbing { pendingDiscovery = true } else { refreshLocal() }
+                }
             }
             .onChange(of: companion.downloads.count) { if state.mode != .device { refreshLocal() } }
             .onDisappear { state.invalidatePlaybackIntent() }
@@ -159,7 +167,7 @@ struct ReaderPlayerView: View {
                     Button { selectScope(scope) } label: {
                         Text(scope == .page ? "Page" : "Chapter").font(.subheadline.weight(.medium))
                             .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(state.playbackScope == scope ? Obsidian.accent : .clear, in: .rect(cornerRadius: 12))
+                            .background(state.playbackScope == scope ? Obsidian.accent : Obsidian.surface, in: .rect(cornerRadius: 12)).contentShape(.rect)
                             .foregroundStyle(state.playbackScope == scope ? Obsidian.onAccent : .primary)
                     }.buttonStyle(.plain).accessibilityIdentifier("reader.scope." + scope.rawValue)
                         .accessibilityAddTraits(state.playbackScope == scope ? .isSelected : [])
@@ -189,11 +197,25 @@ struct ReaderPlayerView: View {
     private var timeline: some View {
         let total = active ? player.duration : preparedDuration ?? 0
         return VStack(spacing: 0) {
-            Slider(value: Binding(get: { active ? player.elapsed : 0 }, set: { seek($0) }), in: 0...max(1, total)) { Text("Audio position") }
+            // Keep the drag independent of AVPlayer construction and reader
+            // follow/discovery. Publish one exact seek when the finger lifts.
+            Slider(value: Binding(get: { scrubbing ? scrubPosition : (active ? player.elapsed : 0) }, set: {
+                if scrubbing { scrubPosition = $0 } else { seek($0) }
+            }), in: 0...max(1, total), onEditingChanged: { editing in
+                if editing {
+                    scrubPosition = active ? player.elapsed : 0
+                    scrubbing = true
+                } else {
+                    let position = scrubPosition
+                    scrubbing = false
+                    seek(position)
+                    if pendingDiscovery { pendingDiscovery = false; refreshLocal() }
+                }
+            }) { Text("Audio position") }
                 .disabled(!canPlay || state.mode == .device).accessibilityIdentifier("reader.player.seek")
             if state.mode != .device && total > 0 {
                 HStack {
-                    Text(clock(active ? player.elapsed : 0)).accessibilityIdentifier("reader.player.elapsed")
+                    Text(clock(scrubbing ? scrubPosition : (active ? player.elapsed : 0))).accessibilityIdentifier("reader.player.elapsed")
                     Spacer()
                     Text(clock(total)).accessibilityIdentifier("reader.player.duration")
                 }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
@@ -231,7 +253,7 @@ struct ReaderPlayerView: View {
                     .disabled(discovering || reader.capturingScope)
             } else {
                 Divider()
-                Button(action: onManage) { HStack { Text("Manage audiobook"); Image(systemName: "chevron.right"); Spacer() }.frame(minHeight: 44) }
+                Button(action: onManage) { HStack { Text("Manage audiobook"); Image(systemName: "chevron.right"); Spacer() }.frame(minHeight: 44).background(Obsidian.background).contentShape(.rect) }
                     .buttonStyle(.plain).accessibilityIdentifier("reader.player.manage")
             }
         }
