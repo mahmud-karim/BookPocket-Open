@@ -2,6 +2,16 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
+## Narration tools in 0.1.18
+
+The user confirmed continuous page/chapter playback in 0.1.17. Retain that library and pairing when updating. For an older Kyon take, open its narration details and choose **Enable word highlighting** with the PC reachable. Wait for preparation, then play and seek across passage boundaries: only the spoken original word should highlight, with no highlight through silence. Total duration and audio must remain unchanged. Repeat offline after preparation, with a newly generated page, and with On-device narration. Check a page containing emoji, accents and repeated names.
+
+Select a written name and choose **Pronunciation**, or open it from the reader menu. Enter a respelling, compare the explicitly labelled Apple previews, and save. The book must retain its original words. Tap a saved correction's Edit action: its populated fields should come into view without opening the keyboard. Regenerate a short Kyon page to hear the correction with the actual narrator. Check that one written name spoken as several words remains mapped to that name. Reopen offline and confirm the correction remains saved; existing recordings should sound unchanged until regeneration.
+
+In **Saved audio**, open a take's actions. Cancel each confirmation first. Test **Remove download** on an expendable downloaded take while offline: the PC recording and other takes must remain. Re-download it, then test **Delete generated take** while connected: only that whole take should disappear from phone and PC. An unreachable PC must report failure and retain the phone copy. Source books, shared assets still used by another take, and pairing must remain.
+
+Check word synchronization during ordinary playback, paused seeking, speed changes and Bluetooth use. Confirm the player still reaches the bottom edge and its elapsed/total time remains visible at larger text sizes. See [the narration-tools guide](NARRATION-TOOLS.md).
+
 ## Continuous recording in 0.1.17
 
 Update the existing LiveContainer app, keep its library/pairing, and select an existing Kyon page recording containing several passages. The seek bar must show zero elapsed and the complete recording duration before Play. Play past the first passage: elapsed time must keep increasing and the total must stay constant. Pause, drag the slider into a later passage, and use the 15-second controls across a passage boundary. Seeking and speed changes while paused must not resume playback; highlighting must follow the selected original words.
@@ -71,7 +81,7 @@ With iOS 0.1.7 or later, export a short completed production as a project on the
 
 ## Reader page and chapter narration
 
-For the unified reader/player update, keep the paired PC and its external OmniVoice service running. Open a text page and tap **Read aloud**. Opening the panel and changing narrator must not start speech. Choose **On-device** and press Play; it should work without the PC. Pause it, then choose **Kyon**. With no matching downloaded take, playback must be disabled. Tap **Generate** → **Current page**; iOS 0.1.12 starts preparation and generation in the compact player. Open narration details to compare the preview with the visible words, including a paragraph that continues onto the next screen. Confirm the downloaded result uses the uniquely named Kyon voice and highlights the same source.
+For the unified reader/player update, keep the paired Windows companion running and its built-in OmniVoice engine ready. Open a text page and tap **Read aloud**. Opening the panel and changing narrator must not start speech. Choose **On-device** and press Play; it should work without the PC. Pause it, then choose **Kyon**. With no matching downloaded take, playback must be disabled. Tap **Generate** → **Current page**; iOS 0.1.12 starts preparation and generation in the compact player. Open narration details to compare the preview with the visible words, including a paragraph that continues onto the next screen. Confirm the downloaded result uses the uniquely named Kyon voice and highlights the same source.
 
 Choose **Generate** → **Current chapter**, check the preview's start/end against Contents, and try a chapter containing an intervening illustration resource. Change text size, capture another page, and verify the new selection follows the reflowed page. Close and reopen the player while the PC generates; pause/resume and retry a failed job. Finished audio should download and play without duplicating completed passages. Pause a downloaded take, manually open another chapter, and confirm the reader stays there, including after a repeated pause or audio interruption. A downloaded chapter should be available from the pages it covers, while a page excerpt must not enable an unrelated page. In airplane mode, reopen the player and confirm matching downloaded narration still works.
 

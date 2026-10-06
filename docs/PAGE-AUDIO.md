@@ -22,3 +22,5 @@ Changing font size can move words between visible pages. Saved clips stay tied t
 The player overlays the reading surface without repaginating the book. Its charcoal background extends to the screen bottom, with no separate strip beneath it. The ordinary player does not scroll; the Saved audio list can scroll. Larger accessibility text uses the existing full-height player presentation.
 
 Generation needs the paired Windows companion. Downloaded audio remains playable offline. See [Connection](CONNECTION.md), [remote access through Funnel](FUNNEL.md), and [Start companion](COMPANION-START.md).
+
+For word-level highlighting, pronunciation corrections and recording removal in 0.1.18, see [Narration tools](NARRATION-TOOLS.md). Older audio can gain word timings without replacing its continuous recording.

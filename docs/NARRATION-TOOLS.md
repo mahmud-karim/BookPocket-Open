@@ -1,6 +1,6 @@
 # Word highlighting, pronunciation and recording removal
 
-This update is under native verification; the currently published preview remains 0.1.17 until a new verified IPA is linked from the README.
+Available in [iOS 0.1.18/build 19](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/v0.1.18-preview.1) with [Windows companion 0.1.10](https://github.com/mahmud-karim/BookPocket-Open/releases/tag/windows-v0.1.10-preview.1). Published packages were downloaded again and independently verified. Physical iPhone synchronization and voice quality remain device checks.
 
 On-device read aloud follows the system's spoken-word callbacks. Kyon and full-cast recordings follow measured word timings. New English recordings receive acoustic alignment when the companion's local alignment model is ready. For an older passage-timed recording, select the saved take and open its narration details, then choose **Enable word highlighting**. The PC prepares timings for the existing audio; the waveform and continuous playback duration stay unchanged. Refresh after preparation, then use the downloaded recording offline.
 
