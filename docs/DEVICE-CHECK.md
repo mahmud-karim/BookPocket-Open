@@ -2,6 +2,10 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
+## Playback recovery and incremental cast in 0.1.19
+
+Follow the [cast and resume physical-device checks](CAST-AND-RESUME.md#physical-iphone-check). Keep existing library/pairing when updating. The Windows companion has been updated to 0.1.12; no new phone VPN or pairing is required.
+
 ## Narration tools in 0.1.18
 
 The user confirmed continuous page/chapter playback in 0.1.17. Retain that library and pairing when updating. For an older Kyon take, open its narration details and choose **Enable word highlighting** with the PC reachable. Wait for preparation, then play and seek across passage boundaries: only the spoken original word should highlight, with no highlight through silence. Total duration and audio must remain unchanged. Repeat offline after preparation, with a newly generated page, and with On-device narration. Check a page containing emoji, accents and repeated names.
