@@ -2,6 +2,10 @@
 
 These checks require the actual iPhone. Simulator and package checks do not count as passing them. Record the phone model, iOS version, LiveContainer version, app version, and any failure with its exact step.
 
+## Guided dialogue review in 0.1.20
+
+Follow the [physical review checks](CAST-AND-RESUME.md#physical-iphone-review-check). Update the existing LiveContainer app while retaining its library and pairing. Windows companion 0.1.13 is deployed and the existing public HTTPS connection remains healthy.
+
 ## Playback recovery and incremental cast in 0.1.19
 
 Follow the [cast and resume physical-device checks](CAST-AND-RESUME.md#physical-iphone-check). Keep existing library/pairing when updating. The Windows companion has been updated to 0.1.12; no new phone VPN or pairing is required.
