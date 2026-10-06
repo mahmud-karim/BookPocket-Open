@@ -19,8 +19,6 @@ struct AudiobookSetupView: View {
     @State private var showPronunciation = false
     @State private var removingRecording: ReaderAudioRecording?
     @State private var deleteFromPC = false
-    @State private var discovering = false
-    @State private var pendingDiscovery = false
     private var job: RemoteJob? { companion.jobs.first { $0.id == state.selectedJobID } }
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var detail: Detail?
@@ -239,7 +237,7 @@ struct AudiobookSetupView: View {
                 ForEach(Array(state.candidates.enumerated()), id: \.element.id) { index, take in
                     Button("Take \(state.candidates.count - index) · \(take.createdAt ?? "Imported") · \(state.readyIDs.contains(take.id) ? "Offline" : take.status)") {
                         state.invalidatePlaybackIntent()
-                        if active { player.pause() }; state.selectedJobID = take.id; state.showingSelection = false; state.pollRevision += 1
+                        if player.bookID == reader.bookID { player.pause() }; state.selectedJobID = take.id; state.showingSelection = false; state.pollRevision += 1
                     }
                 }
             } label: { Label(state.selectedJobID == nil ? "Choose a matching take" : "Change take", systemImage: "list.bullet").frame(minHeight: 48) }
@@ -259,17 +257,8 @@ struct AudiobookSetupView: View {
         Button(action: action) { Label(title, systemImage: icon).labelStyle(.iconOnly).font(.system(size: 22)).frame(minWidth: 48, minHeight: 48).contentShape(.rect) }.accessibilityIdentifier("reader.player." + id)
     }
     private func refreshLocal() {
-        guard !discovering else { pendingDiscovery = true; return }
-        discovering = true
-        state.readyIDs = []
-        Task {
-            defer {
-                discovering = false
-                if pendingDiscovery { pendingDiscovery = false; refreshLocal() }
-            }
-            do { if let local = reader.book { state.discover(snapshot: request.snapshot, local: local, companion: companion) } }
-            catch { state.captureError = error.localizedDescription; state.readyIDs = []; state.selectedJobID = nil }
-        }
+        guard let local = reader.book, local.id == request.bookID else { return }
+        state.discover(snapshot: request.snapshot, local: local, companion: companion)
     }
     private func capture(_ scope: NarrationScope) {
         guard isCapturedChapter else { return }
