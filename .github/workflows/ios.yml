@@ -43,11 +43,9 @@ jobs:
           mkdir -p artifacts
           git rev-parse HEAD > artifacts/source-commit.txt
           test "$(cat artifacts/source-commit.txt)" = '${{ github.event.pull_request.head.sha || github.sha }}'
-          # Select both phones; boot each only when its tests are ready.
+          # Each phone builds and tests independently on its own runner.
           DEVICE=$(python3 scripts/select_simulator.py --report artifacts/primary-device.json)
           echo "$DEVICE" > artifacts/primary-device-id.txt
-          COMPACT=$(python3 scripts/select_simulator.py --compact --exclude "$DEVICE" --report artifacts/compact-device.json)
-          echo "$COMPACT" > artifacts/compact-device-id.txt
           xcodebuild -version
           xcodebuild build-for-testing -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/Simulator" \
@@ -55,9 +53,6 @@ jobs:
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-compile.log
       - id: device
         run: echo "id=$(cat artifacts/primary-device-id.txt)" >> "$GITHUB_OUTPUT"
-      - id: compact
-        name: Select an installed compact iPhone
-        run: echo "id=$(cat artifacts/compact-device-id.txt)" >> "$GITHUB_OUTPUT"
       - name: Boot simulator
         timeout-minutes: 10
         run: python3 scripts/boot_simulator.py '${{ steps.device.outputs.id }}'
@@ -195,11 +190,49 @@ jobs:
           xcrun simctl io '${{ steps.device.outputs.id }}' screenshot artifacts/final-screen.png || true
           xcrun xcresulttool export attachments --path artifacts/Tests.xcresult --output-path artifacts/screenshots || true
           xcrun xcresulttool export diagnostics --path artifacts/Tests.xcresult --output-path artifacts/diagnostics || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-evidence
+          path: artifacts/
+          retention-days: 3
+  compact:
+    # Independent runner: compact UI verification does not wait for primary tests.
+    runs-on: ${{ inputs.macos_runner || 'macos-15' }}
+    timeout-minutes: 90
+    env:
+      UI_TEST_SCOPE: ${{ inputs.ui_scope || (github.head_ref == 'codex/manage-audiobook' && 'manage') || (github.head_ref == 'codex/read-aloud-player' && 'reader') || 'full' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: python3 scripts/select_xcode.py
+      - run: brew install xcodegen
+      - run: xcodegen generate
+        working-directory: ios
+      - name: Compile compact simulator app and tests
+        id: compile
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          git rev-parse HEAD > artifacts/source-commit.txt
+          test "$(cat artifacts/source-commit.txt)" = '${{ github.event.pull_request.head.sha || github.sha }}'
+          # Use the same distinct compact selection as the original second pass.
+          DEVICE=$(python3 scripts/select_simulator.py)
+          COMPACT=$(python3 scripts/select_simulator.py --compact --exclude "$DEVICE" --report artifacts/compact-device.json)
+          echo "$COMPACT" > artifacts/compact-device-id.txt
+          xcodebuild -version
+          xcodebuild build-for-testing -project ios/BookPocketOpen.xcodeproj -scheme BookPocketOpen \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/Simulator" \
+            ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-compile.log
+      - id: compact
+        name: Select an installed compact iPhone
+        run: echo "id=$(cat artifacts/compact-device-id.txt)" >> "$GITHUB_OUTPUT"
       - name: Boot compact iPhone
         if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         timeout-minutes: 10
         run: |
-          xcrun simctl shutdown '${{ steps.device.outputs.id }}' || true
           python3 scripts/boot_simulator.py '${{ steps.compact.outputs.id }}'
       - name: Verify reader and Listen controls on compact iPhone
         if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
@@ -334,12 +367,12 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-simulator-evidence
+          name: ios-compact-simulator-evidence
           path: artifacts/
           retention-days: 3
   device:
     # Build the separate device product while tests run. Publication remains a
-    # root-owned gate requiring successful simulator and device jobs together.
+    # root-owned gate requiring successful primary, compact, and device jobs.
     runs-on: ${{ inputs.macos_runner || 'macos-15' }}
     timeout-minutes: 35
     steps:

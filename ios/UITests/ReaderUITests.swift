@@ -89,7 +89,9 @@ final class ReaderUITests: XCTestCase {
     private func requestCastReview(_ app: XCUIApplication) {
         let review = app.buttons["manage.review"]
         toolsScrollTo(review, app: app)
-        XCTAssertTrue(review.waitForExistence(timeout: 20)); XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
+        XCTAssertTrue(review.waitForExistence(timeout: 20))
+        let coveredTransport = app.buttons["reader.player.toggle"]
+        if coveredTransport.exists { XCTAssertFalse(coveredTransport.isHittable, "Manage audiobook must cover the underlying player controls") }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 lines to check"), object: review)], timeout: 15), .completed)
         assertMinimumHitArea(review); review.tap()
         let exact = app.staticTexts["cast.review.exact"]

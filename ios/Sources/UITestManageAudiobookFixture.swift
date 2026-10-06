@@ -134,7 +134,10 @@ private final class ManageAudiobookUITestProtocol: URLProtocol {
             }
             if mode == "full_cast" && ids.contains(where: { $0.hasPrefix("manage-source-0-") }) { return (409, ["detail": "This chapter still needs its voice and speaker review."]) }
             var jobs = state["jobs"] as? [[String: Any]] ?? []
-            var job = payload; job["id"] = "manage-generation-\(jobs.count + 1)"; job["status"] = "queued"; job["completed_segments"] = 0; job["total_segments"] = ids.count; job["assets"] = []; job["created_at"] = "2026-01-01T00:00:00Z"
+            // The real companion records the selected voice's name as job
+            // provenance. A single-voice take cannot be identified as Kyon
+            // from an opaque voice ID alone; retain that same contract here.
+            var job = payload; job["voice_name"] = "Kyon"; job["id"] = "manage-generation-\(jobs.count + 1)"; job["status"] = "queued"; job["completed_segments"] = 0; job["total_segments"] = ids.count; job["assets"] = []; job["created_at"] = "2026-01-01T00:00:00Z"
             jobs.append(job); state["jobs"] = jobs; try persist(state, stateURL); return (202, job)
         }
         if url.path == "/v1/jobs" { return (200, ["jobs": state["jobs"] ?? []]) }
