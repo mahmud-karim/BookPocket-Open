@@ -348,6 +348,11 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                 existing = known_request(db)
                 if existing is not None: return existing
         acquired = False
+        def release_admission():
+            nonlocal acquired
+            if acquired:
+                acquired = False
+                analysis_lock.release()
         try:
             with store.db() as db:
                 # Registration and lookup share the same SQLite write lock so
@@ -408,25 +413,27 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                 if request_id:
                     db.execute("INSERT INTO analysis_requests VALUES(?,?,?)", (request_id, fingerprint, job["id"]))
         except BaseException:
-            if acquired: analysis_lock.release()
+            release_admission()
             raise
         if not missing: return get_analysis(job['id'])
-        def persist():
-            with store.db() as db: db.execute("UPDATE analyses SET data=? WHERE id=?", (canonical(job), job["id"]))
+        def persist(release=False):
+            with store.db() as db:
+                db.execute("UPDATE analyses SET data=? WHERE id=?", (canonical(job), job["id"]))
+                if release: release_admission()
         def finish():
             if job['status'] == 'failed':
                 job['stage'] = 'failed'
                 for state in job['chapter_statuses']:
                     if state['status'] in {'queued', 'running'}: state.update(status='failed', error=job.get('error'))
             try:
-                persist()
+                persist(release=True)
             except Exception:
                 job.update(status="failed", stage="failed", error="Unable to save analysis status. Check available disk space; start a new analysis after resolving storage errors", finished_at=now())
                 failed_persistence[job["id"]] = dict(job)
-                try: persist()
+                try: persist(release=True)
                 except Exception: pass  # Repaired by read_analysis or startup recovery.
             finally:
-                analysis_lock.release()
+                release_admission()
         def run():
             try:
                 with scheduler.lease("analysis"): run_admitted()
@@ -529,6 +536,13 @@ def register_casting(app, store, auth, admin, get_book, scheduler):
                             # Coverage and chapter suggestions become visible in
                             # one commit; later chapter failure keeps earlier work.
                             db.execute('UPDATE analyses SET data=? WHERE id=?', (canonical(committed), job['id']))
+                            if committed['status'] == 'completed':
+                                # New submissions acquire BEGIN IMMEDIATE before
+                                # admission, so they cannot pass this boundary
+                                # until the matching cast/status commit succeeds.
+                                # The heavy-work lease still excludes model work
+                                # until run_admitted and its client finish exiting.
+                                release_admission()
                         # Never publish a terminal/chapter-complete memory state
                         # until SQLite commits its matching cast suggestions.
                         job.clear()
