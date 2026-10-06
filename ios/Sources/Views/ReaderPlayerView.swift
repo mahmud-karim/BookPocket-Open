@@ -6,6 +6,8 @@ struct ReaderPlayerView: View {
     let reader: ReaderModel
     @Bindable var state: ReaderPlayerState
     var onClose: (() -> Void)? = nil
+    /// A short portrait phone trades the title row for visible book text.
+    var compact = false
     let onManage: () -> Void
     @Environment(CompanionStore.self) private var companion
     @Environment(LibraryStore.self) private var library
@@ -126,25 +128,33 @@ struct ReaderPlayerView: View {
             .onDisappear { state.invalidatePlaybackIntent() }
     }
     private func content(wide: Bool) -> some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text("Read aloud").font(.title3.weight(.semibold))
-                Spacer()
-                Button { state.invalidatePlaybackIntent(); if let onClose { onClose() } else { dismiss() } } label: {
-                    Image(systemName: "xmark").frame(width: 44, height: 44).background(Obsidian.surface, in: .circle)
-                }.buttonStyle(.plain).accessibilityLabel("Close Read aloud").accessibilityIdentifier("reader.player.close")
-            }
+        let short = compact && !wide && !dynamicTypeSize.isAccessibilitySize
+        return VStack(spacing: short ? 6 : 8) {
+            if short { HStack(spacing: 8) { chapterRow; closeButton } }
+            else { HStack { Text("Read aloud").font(.title3.weight(.semibold)); Spacer(); closeButton } }
             if wide {
                 HStack(spacing: 24) {
-                    VStack(spacing: 4) { chapterRow; scopePicker; recordingLabel; if !canPlay { status }; setupLink }.frame(maxWidth: .infinity)
-                    VStack(spacing: 8) { timeline; transport; settings }.frame(maxWidth: .infinity)
+                    VStack(spacing: 4) { chapterRow; scopePicker; recordingLabel; if !canPlay { status }; setupLink() }.frame(maxWidth: .infinity)
+                    VStack(spacing: 8) { timeline; transport(); settings }.frame(maxWidth: .infinity)
                 }
+            } else if short {
+                scopePicker; recordingLabel
+                if showsStatus { status.lineLimit(2).minimumScaleFactor(0.85) }
+                timeline
+                HStack(spacing: 0) { speedButton; Spacer(minLength: 0); transport(compact: true); Spacer(minLength: 0); sleepButton }.foregroundStyle(.secondary)
+                setupLink(caption: false)
             } else {
                 chapterRow; scopePicker; recordingLabel
-                if !canPlay || state.mode == .device || state.attention != nil || recordingIssue != nil { status }
-                timeline; transport; settings; setupLink
+                if showsStatus { status }
+                timeline; transport(); settings; setupLink()
             }
         }
+    }
+    private var showsStatus: Bool { !canPlay || state.mode == .device || state.attention != nil || recordingIssue != nil }
+    private var closeButton: some View {
+        Button { state.invalidatePlaybackIntent(); if let onClose { onClose() } else { dismiss() } } label: {
+            Image(systemName: "xmark").frame(width: 44, height: 44).background(Obsidian.surface, in: .circle)
+        }.buttonStyle(.plain).accessibilityLabel("Close Read aloud").accessibilityIdentifier("reader.player.close")
     }
     private var chapterRow: some View {
         Button { openChapters() } label: {
@@ -218,8 +228,8 @@ struct ReaderPlayerView: View {
             }
         }
     }
-    private var transport: some View {
-        HStack(spacing: 36) {
+    private func transport(compact: Bool = false) -> some View {
+        HStack(spacing: compact ? 24 : 36) {
             control(state.mode == .device ? "Previous passage" : "Back 15 seconds", icon: state.mode == .device ? "backward.end" : "gobackward.15", id: "backward") { skip(-15) }.disabled(!canPlay)
             Button { play() } label: {
                 Image(systemName: active && player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 26))
@@ -228,20 +238,22 @@ struct ReaderPlayerView: View {
             }.buttonStyle(.plain).disabled(!canPlay).accessibilityLabel(active && player.isPlaying ? "Pause" : "Play")
                 .accessibilityIdentifier("reader.player.toggle").accessibilityValue(active && player.isPlaying ? "Playing" : "Paused")
             control(state.mode == .device ? "Next passage" : "Forward 15 seconds", icon: state.mode == .device ? "forward.end" : "goforward.15", id: "forward") { skip(15) }.disabled(!canPlay)
-        }.foregroundStyle(Obsidian.accent).padding(.vertical, 4)
+        }.foregroundStyle(Obsidian.accent).padding(.vertical, compact ? 0 : 4)
+    }
+    private var speedButton: some View {
+        Button { sheet = .speed } label: { Text("\(player.rate.formatted())×").frame(minWidth: 44, minHeight: 44) }
+            .accessibilityLabel("Playback speed").accessibilityValue("\(player.rate.formatted())×").accessibilityIdentifier("reader.player.speed")
+    }
+    private var sleepButton: some View {
+        control("Sleep timer", icon: "moon", id: "sleep") { sheet = .sleep }.accessibilityValue(player.sleepUntil == nil ? "Off" : "On")
     }
     private var settings: some View {
-        HStack {
-            Button { sheet = .speed } label: { Text("\(player.rate.formatted())×").frame(minWidth: 44, minHeight: 44) }
-                .accessibilityLabel("Playback speed").accessibilityValue("\(player.rate.formatted())×").accessibilityIdentifier("reader.player.speed")
-            Spacer()
-            control("Sleep timer", icon: "moon", id: "sleep") { sheet = .sleep }.accessibilityValue(player.sleepUntil == nil ? "Off" : "On")
-        }.foregroundStyle(.secondary)
+        HStack { speedButton; Spacer(); sleepButton }.foregroundStyle(.secondary)
     }
-    private var setupLink: some View {
+    private func setupLink(caption: Bool = true) -> some View {
         VStack(spacing: 4) {
             if state.mode != .device && !canPlay && !state.requiresTakeSelection {
-                Text("Set up and generate it in Manage audiobook.").font(.caption).foregroundStyle(.secondary)
+                if caption { Text("Set up and generate it in Manage audiobook.").font(.caption).foregroundStyle(.secondary) }
                 Button(action: onManage) {
                     HStack { Spacer(); Text("Set up \(scopeName) audio"); Image(systemName: "chevron.right"); Spacer() }
                         .frame(minHeight: 48).background(Obsidian.accent, in: .rect(cornerRadius: 12)).foregroundStyle(Obsidian.onAccent)

@@ -164,9 +164,9 @@ final class ManageAudiobookUITests: XCTestCase {
     }
     private func checkFirstChapterSetup(_ app: XCUIApplication) {
         let voices = app.buttons["manage.characters"]; reveal(voices, app: app)
-        XCTAssertEqual(voices.value as? String, "1 need voices")
+        XCTAssertEqual(voices.value as? String, "1 needs a voice")
         let review = app.buttons["manage.review"]; reveal(review, app: app)
-        XCTAssertEqual(review.value as? String, "1 lines to check")
+        XCTAssertEqual(review.value as? String, "1 line to check")
         let main = app.buttons["manage.main"]; reveal(main, app: app)
         XCTAssertEqual(main.label, "Choose character voices")
         XCTAssertFalse(app.buttons["reader.player.generate"].exists)
@@ -176,12 +176,12 @@ final class ManageAudiobookUITests: XCTestCase {
         reveal(picker, app: app, seekEarlier: true, requireFullVisibility: true)
         assertTouchTarget(picker); XCTAssertTrue(picker.isEnabled)
         picker.tap()
-        let chapter = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
-        XCTAssertTrue(chapter.waitForExistence(timeout: 10), "The native chapter menu must expose the exact selected book chapter")
-        // Native menu actions can briefly report nonhittable even when their
-        // actual tap selects the correct chapter. Verify the real result below.
-        XCTAssertTrue(chapter.isEnabled)
+        let chapter = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "manage.chapter.option.", title)).firstMatch
+        XCTAssertTrue(chapter.waitForExistence(timeout: 10), "The chapter list must expose the exact selected book chapter")
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "Choosing a chapter never needs the keyboard")
+        XCTAssertTrue(chapter.isEnabled && chapter.isHittable)
         chapter.tap()
+        waitForManage(afterClosing: chapter, app: app)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value == %@", title), object: picker)], timeout: 10), .completed)
         XCTAssertEqual(picker.value as? String, title)
     }

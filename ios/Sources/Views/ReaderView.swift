@@ -127,10 +127,13 @@ struct ReaderView: View {
                     // An overlay preserves the Readium viewport and exact page
                     // capture. It has no floating UISheet transform or hit path.
                     GeometryReader { geometry in
+                        // The full panel would cover every line of the page on a
+                        // 4.7-inch portrait screen, so that size gets a shorter one.
+                        let short = geometry.size.height < 700 && geometry.size.height > geometry.size.width
                         VStack(spacing: 0) {
                             Spacer(minLength: 0)
-                            ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer, onManage: openAudiobookSetup)
-                                .frame(height: min(530, geometry.size.height))
+                            ReaderPlayerView(reader: model, state: companion.readerPlayer(for: model.bookID), onClose: closePlayer, compact: short, onManage: openAudiobookSetup)
+                                .frame(height: min(short ? 412 : 530, geometry.size.height))
                                 .environment(\.colorScheme, .dark)
                                 .clipShape(.rect(topLeadingRadius: 24, topTrailingRadius: 24))
                                 .shadow(color: .black.opacity(0.25), radius: 14, y: -4)

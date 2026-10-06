@@ -23,7 +23,7 @@ struct ManageAudiobookView: View {
     @State private var generateScope = false
     @State private var generatedID: String?
     private enum Destination: String, Identifiable {
-        case characters, review, pronunciation, generation, recordings
+        case chapters, characters, review, pronunciation, generation, recordings
         var id: String { rawValue }
     }
     private var chapter: RemoteChapter? { book?.chapters.first { $0.id == chapterID } }
@@ -114,9 +114,9 @@ struct ManageAudiobookView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Setup").font(.headline)
                             VStack(spacing: 0) {
-                                row("Characters & voices", icon: "person.2", detail: summary.map { $0.needsAnalysis ? "Analyze chapter first" : $0.missingVoiceCount == 0 ? "Voices ready" : "\($0.missingVoiceCount) need voices" } ?? "Not checked", id: "manage.characters") { destination = .characters }
+                                row("Characters & voices", icon: "person.2", detail: summary.map { $0.needsAnalysis ? "Analyze chapter first" : $0.missingVoiceCount == 0 ? "Voices ready" : ($0.missingVoiceCount == 1 ? "1 needs a voice" : "\($0.missingVoiceCount) need voices") } ?? "Not checked", id: "manage.characters") { destination = .characters }
                                 Divider().padding(.leading, 46)
-                                row("Speaker review", icon: "text.bubble", detail: summary.map { $0.needsAnalysis ? "Analyze chapter first" : $0.pendingReviewCount == 0 ? "No lines to check" : "\($0.pendingReviewCount) lines to check" } ?? "Not checked", id: "manage.review") { destination = .review }
+                                row("Speaker review", icon: "text.bubble", detail: summary.map { $0.needsAnalysis ? "Analyze chapter first" : $0.pendingReviewCount == 0 ? "No lines to check" : ($0.pendingReviewCount == 1 ? "1 line to check" : "\($0.pendingReviewCount) lines to check") } ?? "Not checked", id: "manage.review") { destination = .review }
                                 Divider().padding(.leading, 46)
                                 pronunciationRow
                             }.background(Obsidian.surface, in: .rect(cornerRadius: 14))
@@ -202,16 +202,26 @@ struct ManageAudiobookView: View {
         }.padding(3).background(Obsidian.surface, in: .rect(cornerRadius: 12))
     }
     private var chapterPicker: some View {
-        Menu {
-            ForEach(book?.chapters ?? []) { item in
-                Button { chapterID = item.id } label: {
-                    if item.id == chapterID { Label(item.title, systemImage: "checkmark") } else { Text(item.title) }
+        // The same chapter list as Read aloud. A long book stays scrollable,
+        // which a native pull-down menu does not offer.
+        Button { destination = .chapters } label: {
+            HStack { Image(systemName: "book").font(.title3); Text(chapter?.title ?? request.chapterTitle).lineLimit(1); Spacer(minLength: 0); Image(systemName: "chevron.down").font(.caption) }
+                .padding(.horizontal, 14).frame(minHeight: 48).background(Obsidian.surface, in: .rect(cornerRadius: 12)).contentShape(.rect)
+        }.buttonStyle(.plain).disabled(book == nil || state.working).accessibilityLabel("Chapter")
+            .accessibilityIdentifier("manage.chapter").accessibilityValue(chapter?.title ?? request.chapterTitle)
+    }
+    private var chapterList: some View {
+        NavigationStack {
+            List {
+                ForEach(Array((book?.chapters ?? []).enumerated()), id: \.element.id) { index, item in
+                    Button { chapterID = item.id; destination = nil } label: {
+                        HStack { Text(item.title); Spacer(); if item.id == chapterID { Image(systemName: "checkmark") } }.frame(minHeight: 44).contentShape(.rect)
+                    }.accessibilityLabel(item.title).accessibilityAddTraits(item.id == chapterID ? .isSelected : [])
+                        .accessibilityIdentifier("manage.chapter.option.\(index)")
                 }
-            }
-        } label: {
-            HStack { Image(systemName: "book").font(.title3); Text(chapter?.title ?? request.chapterTitle).foregroundStyle(.primary); Spacer(); Image(systemName: "chevron.down").font(.caption) }
-                .padding(14).frame(minHeight: 48).background(Obsidian.surface, in: .rect(cornerRadius: 12))
-        }.disabled(book == nil || state.working).accessibilityIdentifier("manage.chapter").accessibilityValue(chapter?.title ?? request.chapterTitle)
+            }.navigationTitle("Chapter").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { destination = nil }.accessibilityIdentifier("manage.chapter.done") } }
+        }.preferredColorScheme(.dark).tint(Obsidian.accent)
     }
     @ViewBuilder private var analysisCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -343,6 +353,7 @@ struct ManageAudiobookView: View {
     }
     @ViewBuilder private func child(_ destination: Destination) -> some View {
         switch destination {
+        case .chapters: chapterList
         case .characters:
             if let book { CastView(book: book, relevantRanges: ranges, section: .characters) }
         case .review:

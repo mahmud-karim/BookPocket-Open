@@ -55,12 +55,12 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(app.buttons["manage.close"].waitForExistence(timeout: 10))
         let pending = app.buttons["manage.review"]
         toolsScrollTo(pending, app: app)
-        XCTAssertEqual(pending.value as? String, "1 lines to check")
+        XCTAssertEqual(pending.value as? String, "1 line to check")
         XCTAssertFalse(app.staticTexts["manage.generation.status"].exists)
         assertCoveredReaderTransport(app)
         app.terminate(); app.launch(); openCastReviewReader(app)
         toolsScrollTo(pending, app: app)
-        XCTAssertEqual(pending.value as? String, "1 lines to check")
+        XCTAssertEqual(pending.value as? String, "1 line to check")
         let main = app.buttons["manage.main"]; toolsScrollTo(main, app: app)
         XCTAssertEqual(main.label, "Review speakers", "A failed save leaves setup blocked rather than offering generation")
         XCTAssertFalse(app.staticTexts["manage.generation.status"].exists)
@@ -92,7 +92,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 20))
         let coveredTransport = app.buttons["reader.player.toggle"]
         if coveredTransport.exists { XCTAssertFalse(coveredTransport.isHittable, "Manage audiobook must cover the underlying player controls") }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 lines to check"), object: review)], timeout: 15), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 line to check"), object: review)], timeout: 15), .completed)
         assertMinimumHitArea(review); review.tap()
         let exact = app.staticTexts["cast.review.exact"]
         XCTAssertTrue(exact.waitForExistence(timeout: 20))
@@ -667,7 +667,11 @@ final class ReaderUITests: XCTestCase {
     private func openReaderSetup(_ app: XCUIApplication) {
         let action = app.buttons["reader.player.setup"].exists ? app.buttons["reader.player.setup"] : app.buttons["reader.player.manage"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: action)], timeout: 20), .completed)
-        toolsScrollTo(action, app: app); XCTAssertTrue(action.isHittable); action.tap()
+        // The standard player is a fixed panel outside every scroll view; only
+        // its accessibility-size presentation scrolls, and it scrolls itself.
+        let surface = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
+        for _ in 0..<8 { if action.isHittable { break }; surface.swipeUp() }
+        XCTAssertTrue(action.isHittable, "The real setup control must remain reachable"); action.tap()
         XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
     }
     private func openReaderRecordingTools(_ app: XCUIApplication) {
