@@ -101,7 +101,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
         }
     }
     private func fits(_ app: XCUIApplication, missing: Bool = false) {
-        let surface = app.otherElements["reader.player.surface"]
+        let surface = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
         XCTAssertTrue(surface.exists)
         XCTAssertGreaterThanOrEqual(surface.frame.maxY, app.frame.maxY - 1, "The charcoal panel includes the home indicator area")
         for id in ["chapters", "narrator", "backward", "toggle", "forward", "speed", "sleep", "close", missing ? "setup" : "manage"] {
@@ -249,7 +249,7 @@ final class ReadAloudPlayerUITests: XCTestCase {
         chooseRecording(app, "reader-continuous-page")
         XCTAssertEqual(seconds(app.staticTexts["reader.player.duration"]), 124)
         screenshot("Read aloud largest text portrait")
-        let surface = app.otherElements["reader.player.surface"]
+        let surface = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
         for id in ["toggle", "speed", "sleep", "manage"] {
             let control = app.buttons["reader.player." + id]
             for _ in 0..<8 { if control.isHittable { break }; surface.swipeUp() }

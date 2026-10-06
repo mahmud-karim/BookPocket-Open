@@ -237,7 +237,7 @@ final class ReaderUITests: XCTestCase {
     func testReaderWordHighlightingUsesOriginalWordsAcrossContinuousRecording() {
         executionTimeAllowance = 300
         let app = narrationToolsApp(); app.launch(); openContinuousPage(app)
-        let toggle = app.buttons["reader.player.toggle"], surface = app.otherElements["reader.player.surface"]
+        let toggle = app.buttons["reader.player.toggle"], surface = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
         toggle.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: toggle)], timeout: 10), .completed)
         toggle.tap()
@@ -622,30 +622,33 @@ final class ReaderUITests: XCTestCase {
     }
 
     private func assertReaderPlayerFits(_ app: XCUIApplication, name: String) {
-        let surface = app.otherElements["reader.player.surface"], viewport = app.frame
+        let surface = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch, viewport = app.frame
         XCTAssertTrue(surface.exists)
-        let scrolling = surface.scrollViews.count > 0
+        let scrolling = surface.elementType == .scrollView || surface.scrollViews.count > 0
+        let scrollView = surface.elementType == .scrollView ? surface : surface.scrollViews.firstMatch
         if !app.launchArguments.contains(UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue) {
             XCTAssertFalse(scrolling, "Normal player controls fit without scrolling")
         }
+        // UIKit rounds sheet control bounds to physical pixels.
+        let pixel = 1 / XCUIScreen.main.screenshot().image.scale
         let action = app.buttons["reader.player.setup"].exists ? "setup" : "manage"
         for id in ["backward", "toggle", "forward", "speed", "chapters", "sleep", "narrator", "close", action] {
             let control = app.buttons["reader.player." + id]
             if scrolling {
                 // Disabled transport still needs a visible, full touch-sized
                 // frame; disabled controls need not report hittable to XCTest.
-                for _ in 0..<8 { if viewport.contains(control.frame) && (control.isHittable || !control.isEnabled) { break }; surface.scrollViews.firstMatch.swipeDown() }
-                for _ in 0..<8 { if viewport.contains(control.frame) && (control.isHittable || !control.isEnabled) { break }; surface.scrollViews.firstMatch.swipeUp() }
+                for _ in 0..<8 { if viewport.contains(control.frame) && (control.isHittable || !control.isEnabled) { break }; scrollView.swipeDown() }
+                for _ in 0..<8 { if viewport.contains(control.frame) && (control.isHittable || !control.isEnabled) { break }; scrollView.swipeUp() }
             }
             XCTAssertTrue(control.exists && viewport.contains(control.frame), id)
-            XCTAssertGreaterThanOrEqual(control.frame.width + 0.001, 44, id)
-            XCTAssertGreaterThanOrEqual(control.frame.height + 0.001, 44, id)
+            XCTAssertGreaterThanOrEqual(control.frame.width + pixel, 44, id)
+            XCTAssertGreaterThanOrEqual(control.frame.height + pixel, 44, id)
             if control.isEnabled { XCTAssertTrue(control.isHittable, id) }
         }
         XCTAssertFalse(app.buttons["reader.player.generate"].exists, "Generation belongs to setup")
         XCTAssertFalse(app.buttons["reader.player.pronunciation"].exists)
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
-        if scrolling { for _ in 0..<8 { if app.buttons["reader.player.close"].isHittable { break }; surface.scrollViews.firstMatch.swipeDown() } }
+        if scrolling { for _ in 0..<8 { if app.buttons["reader.player.close"].isHittable { break }; scrollView.swipeDown() } }
     }
     private func openReaderSetup(_ app: XCUIApplication) {
         let action = app.buttons["reader.player.setup"].exists ? app.buttons["reader.player.setup"] : app.buttons["reader.player.manage"]
@@ -681,7 +684,7 @@ final class ReaderUITests: XCTestCase {
         app.buttons["reader.player.speed"].tap()
         XCTAssertTrue(app.buttons["1.5×"].waitForExistence(timeout: 5))
         for title in ["0.75×", "1×", "1.25×", "1.5×", "2×"] { assertMinimumHitArea(app.buttons[title]) }
-        XCTAssertEqual(app.otherElements["reader.player.surface"].scrollViews.count, 0)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch.scrollViews.count, 0)
         let rates = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         rates.name = name + " rates"; rates.lifetime = .keepAlways; add(rates)
         app.buttons["1.5×"].tap()
@@ -836,14 +839,15 @@ final class ReaderUITests: XCTestCase {
     private func assertReaderTimelineFits(_ app: XCUIApplication, name: String) {
         assertReaderPlayerFits(app, name: name)
         let slider = app.sliders["reader.player.seek"], elapsed = app.staticTexts["reader.player.elapsed"], duration = app.staticTexts["reader.player.duration"]
-        let surface = app.otherElements["reader.player.surface"]
-        if surface.scrollViews.count > 0 {
+        let surface = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
+        let scrollView = surface.elementType == .scrollView ? surface : surface.scrollViews.firstMatch
+        if surface.elementType == .scrollView || surface.scrollViews.count > 0 {
             // At accessibility sizes, inspect the timeline together after
             // scrolling it into view, then verify transport remains reachable.
-            for _ in 0..<8 { if elapsed.isHittable && duration.isHittable && app.frame.contains(elapsed.frame) && app.frame.contains(duration.frame) { break }; surface.scrollViews.firstMatch.swipeUp() }
+            for _ in 0..<8 { if elapsed.isHittable && duration.isHittable && app.frame.contains(elapsed.frame) && app.frame.contains(duration.frame) { break }; scrollView.swipeUp() }
         }
         let viewport = app.frame, sliderFrame = slider.frame, elapsedFrame = elapsed.frame, durationFrame = duration.frame
-        let toggleFrame = app.buttons["reader.player.toggle"].frame, surfaceFrame = app.otherElements["reader.player.surface"].frame
+        let toggleFrame = app.buttons["reader.player.toggle"].frame, surfaceFrame = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch.frame
         for (text, frame) in [(elapsed, elapsedFrame), (duration, durationFrame)] { XCTAssertTrue(text.exists && text.isHittable && viewport.contains(frame)); XCTAssertGreaterThan(frame.height, 0) }
         XCTAssertLessThanOrEqual(sliderFrame.maxY, elapsedFrame.minY + 1)
         XCTAssertLessThanOrEqual(elapsedFrame.maxY, toggleFrame.minY)
@@ -892,7 +896,7 @@ final class ReaderUITests: XCTestCase {
         assertReaderPlayerFits(app, name: "Obsidian page clips without full chapter")
         // The panel's surface is the content area below its own navigation bar.
         // Its background must extend through the iPhone home indicator area.
-        XCTAssertGreaterThanOrEqual(app.otherElements["reader.player.surface"].frame.maxY, app.frame.maxY - 1)
+        XCTAssertGreaterThanOrEqual(app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch.frame.maxY, app.frame.maxY - 1)
         app.buttons["reader.scope.chapter"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "No audio for this chapter"), object: app.staticTexts["reader.player.readiness"])], timeout: 20), .completed)
         XCTAssertFalse(play.isEnabled); saved.tap()
@@ -913,7 +917,7 @@ final class ReaderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Playing"), object: play)], timeout: 10), .completed)
         play.tap()
         assertReaderPlayerFits(app, name: "Obsidian selected saved page playback to bottom edge")
-        XCTAssertGreaterThanOrEqual(app.otherElements["reader.player.surface"].frame.maxY, app.frame.maxY - 1)
+        XCTAssertGreaterThanOrEqual(app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch.frame.maxY, app.frame.maxY - 1)
         assertReaderScopeChoicesFit(app, name: "Obsidian page or chapter generation chooser")
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(waitForScreenshotOrientation(landscape: true))
