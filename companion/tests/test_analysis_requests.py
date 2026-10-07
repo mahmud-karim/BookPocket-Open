@@ -83,6 +83,9 @@ def test_simultaneous_duplicates_conflicts_terminal_and_restart(analysis, tmp_pa
     completed = terminal(client, job)
     assert completed["status"] == "completed"
     assert client.post(route, json=request).json() == completed
+    # Reconstruct only after the original process has released its worker
+    # lease; retrying a known UUID above still remains nonblocking.
+    client.app.state.scheduler.join()
     # Identity uses normalized UUID and captured consent, never mutable settings.
     client.put("/v1/admin/analyzer", json={"url": "https://different.example/v1", "model": "changed"})
     assert client.post(route, json={**request, "request_id": request["request_id"].upper()}).json() == completed
@@ -102,8 +105,16 @@ def test_legacy_submissions_remain_fresh_and_invalid_uuid_rejected(analysis):
     client, route, _, release, calls = analysis
     assert client.post(route, json={"request_id": "not-a-uuid"}).status_code == 422
     release.set()
-    first = terminal(client, client.post(route, json={}).json())
-    second = terminal(client, client.post(route, json={"request_id": None}).json())
+    response = client.post(route, json={})
+    assert response.status_code == 202, response.text
+    first = terminal(client, response.json())
+    # Completion commits atomically with the cast before the model worker's
+    # actual lease release. This test submits fresh work after that release;
+    # accepting a terminal snapshot does not bypass heavy-work serialization.
+    client.app.state.scheduler.join()
+    response = client.post(route, json={"request_id": None})
+    assert response.status_code == 202, response.text
+    second = terminal(client, response.json())
     assert first["status"] == second["status"] == "completed"
     assert first["id"] != second["id"] and len(calls) == 2
 
@@ -135,12 +146,14 @@ raise SystemExit("Fixture analysis did not reach the crash boundary")
         mapping = db.execute("SELECT analysis_id FROM analysis_requests WHERE request_id=?", (request["request_id"],)).fetchone()
         crashed = json.loads(db.execute("SELECT data FROM analyses WHERE id=?", (mapping[0],)).fetchone()[0])
     assert crashed["status"] == "running"
+    assert crashed["stage"] == "analyzing" and crashed["completed_segments"] == 0
     (tmp_path / "analyzer.json").unlink()
     with open_client(tmp_path) as reconstructed:
         replay = reconstructed.post(route, json=request)
         assert replay.status_code == 202
         assert replay.json()["id"] == crashed["id"]
         assert replay.json()["status"] == "failed" and "restart" in replay.json()["error"]
+        assert replay.json()["stage"] == "failed" and replay.json()["completed_segments"] == 0
         assert reconstructed.post(route, json=request).json() == replay.json()
     assert not calls
 

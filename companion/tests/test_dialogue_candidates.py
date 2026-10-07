@@ -42,14 +42,20 @@ def test_dialogue_candidates_allow_new_speaker_and_keep_narrator_guard(tmp_path,
         jobs = []
         for _ in range(2):
             response = client.post(route+'/analyze', json={'request_id':str(uuid.uuid4())})
+            assert response.status_code == 202, response.text
             deadline = time.monotonic()+10
             while time.monotonic()<deadline:
                 job = client.get('/v1/analyses/'+response.json()['id']).json()
                 if job['status'] not in {'queued', 'running'}: break
                 time.sleep(.02)
+            assert job['status'] not in {'queued', 'running'}, job
             jobs.append(job)
+            # The terminal cast snapshot commits before the worker releases
+            # its lease. Wait for that release before deliberately fresh work.
+            app.state.scheduler.join()
         assert jobs[0]['status'] == 'completed'
         assert jobs[1]['status'] == 'failed' and 'not narrator' in jobs[1]['error']
+        assert len(captured) == 2
         saved = client.get(route+'/cast').json()
         assert saved['assignments'][0]['character_id'] == 'mira'
         assert next(c for c in saved['characters'] if c['id']=='narrator')['voice_id']=='private-narrator-voice'

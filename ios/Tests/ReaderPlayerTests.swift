@@ -66,6 +66,10 @@ final class ReaderPlayerTests: XCTestCase {
         state.discover(snapshot: invalid, local: local, companion: store)
         XCTAssertEqual(state.captureError, "An exact source capture is still required.", "An unmappable source cannot claim recovery")
         XCTAssertNil(state.selection); XCTAssertNil(state.selectedJobID); XCTAssertTrue(state.readyIDs.isEmpty)
+        state.captureError = nil
+        state.discover(snapshot: invalid, local: local, companion: store)
+        XCTAssertNotNil(state.captureError, "A newly unmappable source must report its real error rather than appear as ungenerated audio")
+        XCTAssertEqual(state.attention, "Generation failed. Retry this job.", "A source failure cannot discard an existing production failure")
     }
     @MainActor func testReaderCaptureDeadlineReleasesStalledCaptureAndIgnoresLateResults() async throws {
         let stalled = ReaderDownloadGate()

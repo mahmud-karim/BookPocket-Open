@@ -157,6 +157,15 @@ struct CastService {
             try await resumeAnalysis(id: id, book: book, service: service)
         } catch is CancellationError {} catch { if operationID == id { self.error = error.localizedDescription } }
     }
+    /// Recover an already accepted server job after reopening the app. This
+    /// never resubmits source text or changes the original hosted consent.
+    func resumeExisting(book: RemoteBook, job: AnalysisJob, service: CastService) async {
+        guard job.bookId == book.id, analysisBase == nil, !busy, let id = begin() else { return }
+        analysisBase = saved; analysis = job
+        defer { finish(id) }
+        do { try await resumeAnalysis(id: id, book: book, service: service) }
+        catch is CancellationError {} catch { if operationID == id { self.error = error.localizedDescription } }
+    }
     private func confirmAnalysis(id: UUID, service: CastService, recovering: Bool = true) async throws {
         guard let request = pendingAnalysisRequest else { return }
         analysisRequestID = id; awaitingAnalysisConfirmation = true

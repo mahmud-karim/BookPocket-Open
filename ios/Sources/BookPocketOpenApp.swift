@@ -13,6 +13,14 @@ import SwiftUI
     #endif
     init() {
         #if DEBUG
+        if UITestManageAudiobookFixture.enabled {
+            let sessionID = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--manage-persistence-id=") }?.split(separator: "=").last.map(String.init)
+            let root = URL.documentsDirectory.appendingPathComponent("ManageAudiobookUITest-" + (sessionID ?? UUID().uuidString))
+            _library = State(initialValue: LibraryStore(root: root.appendingPathComponent("Library")))
+            do { _companion = State(initialValue: try UITestManageAudiobookFixture.store(root: root.appendingPathComponent("Companion"))) }
+            catch { fatalError("Isolated audiobook management fixture failed: \(error)") }
+            return
+        }
         if UITestCastReviewFixture.enabled {
             let sessionID = ProcessInfo.processInfo.arguments.first { $0.hasPrefix("--review-persistence-id=") }?.split(separator: "=").last.map(String.init)
             let root = URL.documentsDirectory.appendingPathComponent("CastReviewUITest-" + (sessionID ?? UUID().uuidString))
@@ -68,6 +76,13 @@ import SwiftUI
             }
             .task {
                 #if DEBUG
+                if UITestManageAudiobookFixture.enabled && !installedTransportFixture {
+                    installedTransportFixture = true
+                    do {
+                        if library.books.isEmpty { try await UITestManageAudiobookFixture.install(library: library, companion: companion) }
+                        else { await companion.refresh() }
+                    } catch { library.error = error.localizedDescription }
+                }
                 if UITestCastReviewFixture.enabled && !installedTransportFixture {
                     installedTransportFixture = true
                     do {

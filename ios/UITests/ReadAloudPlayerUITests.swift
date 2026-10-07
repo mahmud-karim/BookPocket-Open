@@ -1,0 +1,376 @@
+import XCTest
+import UIKit
+
+final class ReadAloudPlayerUITests: XCTestCase {
+    private var paperViewport: CGRect?
+    private var paperViewportTheme: String?
+    private var paperSampleWindow: CGRect?
+    private var paperSamplePoints: [(String, CGPoint)] = []
+    private var paperExpected: [Int] = []
+    private var paperPanelTop: CGFloat?
+    private var paperDiagnostics = "No paper sample captured"
+    private func app(_ fixture: String = "--reader-continuous-fixture", extra: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--offline-transport-fixture", "--reader-player-fixture", fixture, "-playbackRate", "0.5", "-readerTheme", "cream"] + extra
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        XCTAssertTrue(app.buttons["listen.downloads"].waitForExistence(timeout: 45))
+        app.tabBars.buttons["Library"].tap()
+        let book = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library.book.")).firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 15)); book.tap()
+        let speak = app.buttons["reader.speak"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: speak)], timeout: 90), .completed)
+        speak.tap()
+        source(app, "kyon")
+        return app
+    }
+    private func source(_ app: XCUIApplication, _ mode: String) {
+        let narrator = app.buttons["reader.player.narrator"]
+        XCTAssertTrue(narrator.waitForExistence(timeout: 10)); narrator.tap()
+        let choice = app.buttons["reader.voice." + mode]
+        XCTAssertTrue(choice.waitForExistence(timeout: 10)); choice.tap()
+        XCTAssertTrue(app.buttons["reader.player.toggle"].waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: narrator)], timeout: 20), .completed)
+    }
+    private func chooseRecording(_ app: XCUIApplication, _ id: String) {
+        app.buttons["reader.player.saved"].tap()
+        let recording = app.buttons["reader.saved." + id]
+        XCTAssertTrue(recording.waitForExistence(timeout: 15)); recording.tap()
+        XCTAssertTrue(app.buttons["reader.player.toggle"].waitForExistence(timeout: 10))
+    }
+    private func screenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    private func assertManageContext(_ app: XCUIApplication, scope: String, chapter: String, contains original: String, excludes unrelated: String) {
+        let picker = app.buttons["manage.chapter"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", chapter), object: picker)], timeout: 20), .completed)
+        let metadata = app.descendants(matching: .any).matching(identifier: "manage.book").firstMatch
+        XCTAssertTrue(metadata.waitForExistence(timeout: 10))
+        let context = metadata.value as? String ?? ""
+        XCTAssertTrue(context.contains(scope), "Overview retains the actual immutable requested scope")
+        XCTAssertTrue(context.contains(original), "The original captured source must be verifiable offline")
+        XCTAssertFalse(context.contains(unrelated), "The player cannot substitute another chapter's source")
+    }
+    private func preparePaperSamples(_ name: String, app: XCUIApplication, playerOpen: Bool) -> Bool {
+        let window = app.frame
+        paperDiagnostics = "theme=\(name), playerOpen=\(playerOpen), window=\(window)"
+        guard window.width > 0, window.height > 0 else { return false }
+        // Measure the actual EPUB viewport while uncovered. A presented player
+        // can change the covered WebView's accessibility frame on compact iOS.
+        if !playerOpen {
+            let page = app.webViews.firstMatch
+            guard page.exists, !page.frame.isEmpty else { return false }
+            paperViewport = page.frame.intersection(window)
+            paperViewportTheme = name
+        }
+        guard paperViewportTheme == name, let viewport = paperViewport, !viewport.isEmpty else { return false }
+        // Collect every accessibility frame before the polling waiter starts.
+        // Re-querying buttons inside its predicate can interrupt XCTest's
+        // remote accessibility snapshot on compact simulators.
+        let toolbarBottom = max(app.buttons["reader.close"].frame.maxY, app.buttons["reader.options"].frame.maxY)
+        let x = window.minX + window.width * 0.3
+        let statusPoint = CGPoint(x: x, y: window.minY + window.height * 0.02)
+        let paperPoint = CGPoint(x: x, y: max(viewport.minY + 8, toolbarBottom + 16))
+        let panel = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
+        let panelFrame = playerOpen && panel.exists ? panel.frame : .zero
+        guard viewport.contains(paperPoint), window.contains(statusPoint),
+              !playerOpen || (!panelFrame.isEmpty && paperPoint.y < panelFrame.minY - 35) else { return false }
+        paperSampleWindow = window
+        paperSamplePoints = [("status", statusPoint), ("paper", paperPoint)]
+        paperExpected = name == "Obsidian" ? [0, 0, 0] : name == "White" ? [255, 255, 255] : [250, 244, 232]
+        paperPanelTop = playerOpen ? panelFrame.minY : nil
+        paperDiagnostics += ", closedEPUBViewport=\(viewport), toolbarBottom=\(toolbarBottom), panel=\(panelFrame), status=\(statusPoint), paper=\(paperPoint)"
+        return true
+    }
+    private func paperPixelsMatch() -> Bool {
+        // This waiter deliberately reads pixels only; all XCTest accessibility
+        // queries were completed synchronously in preparePaperSamples.
+        guard let window = paperSampleWindow, let image = XCUIScreen.main.screenshot().image.cgImage else { return false }
+        var matched = true
+        var readings: [String] = []
+        for (label, point) in paperSamplePoints {
+            let pixelPoint = CGPoint(x: floor((point.x - window.minX) * CGFloat(image.width) / window.width),
+                                     y: floor((point.y - window.minY) * CGFloat(image.height) / window.height))
+            guard image.width > 0, image.height > 0, pixelPoint.x >= 0, pixelPoint.x < CGFloat(image.width),
+                  pixelPoint.y >= 0, pixelPoint.y < CGFloat(image.height),
+                  let pixel = image.cropping(to: CGRect(origin: pixelPoint, size: CGSize(width: 1, height: 1))),
+                  let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            guard let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return false }
+            let rgb = (0..<3).map { Int(bytes[$0]) }
+            readings.append("\(label) pixel=\(pixelPoint), RGB=\(rgb)")
+            if (0..<3).contains(where: { abs(rgb[$0] - paperExpected[$0]) > 3 }) { matched = false }
+        }
+        paperDiagnostics += "; \(readings.joined(separator: "; ")), expected=\(paperExpected), tolerance=3, panelTop=\(String(describing: paperPanelTop))"
+        return matched
+    }
+    private func waitForPaper(_ name: String, app: XCUIApplication, playerOpen: Bool) {
+        guard preparePaperSamples(name, app: app, playerOpen: playerOpen) else {
+            XCTFail("Cannot measure the actual unobscured EPUB and reader bars: \(paperDiagnostics)")
+            return
+        }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.paperPixelsMatch() }, object: nil)], timeout: 15)
+        let attachment = XCTAttachment(string: paperDiagnostics)
+        attachment.name = "\(name) actual paper and status pixel samples"
+        attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertEqual(result, .completed, "The actual EPUB page and reader status area must both use the chosen paper palette. \(paperDiagnostics)")
+    }
+    private func seconds(_ element: XCUIElement) -> Double {
+        // Listen describes the time through its accessibility value; reader
+        // timeline labels expose the same clock directly as visible text.
+        let value = element.value as? String
+        let clock = value?.contains(":") == true ? value! : element.label
+        let parts = clock.split(separator: ":").compactMap { Double($0) }
+        return parts.count == 2 ? parts[0] * 60 + parts[1] : -1
+    }
+    private func waitForClock(_ element: XCUIElement, seconds expected: Double, accuracy: Double = 1) {
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            element.exists && abs(self.seconds(element) - expected) <= accuracy
+        }, object: nil)], timeout: 10)
+        XCTAssertEqual(result, .completed, "Requested continuous position \(expected); actual clock \(seconds(element))")
+    }
+    private func settledClock(_ element: XCUIElement) -> Double {
+        var previous: Double?
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let reading = self.seconds(element)
+            defer { previous = reading }
+            return reading >= 0 && previous == reading
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 15), .completed, "The paused clock must settle after a seek")
+        return seconds(element)
+    }
+    private func tapReadyTransport(_ app: XCUIApplication, id: String) {
+        let button = app.buttons["reader.player." + id]
+        XCTContext.runActivity(named: "Transport state before " + id) { activity in
+            let state = "enabled=\(button.isEnabled), hittable=\(button.isHittable), frame=\(button.frame), readiness=\(app.staticTexts["reader.player.readiness"].exists)\n" + button.debugDescription
+            let attachment = XCTAttachment(string: state)
+            attachment.lifetime = .keepAlways
+            activity.add(attachment)
+        }
+        // A paused seek follows the EPUB locator and starts an asynchronous
+        // exact-source lookup. Tap only once transport is available again.
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            button.isEnabled && button.isHittable && !app.staticTexts["reader.player.readiness"].exists
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [ready], timeout: 20)
+        XCTAssertEqual(result, .completed, "Transport must recover after paused seek")
+        guard result == .completed else { return }
+        XCTContext.runActivity(named: "Ready transport " + id) { activity in
+            let attachment = XCTAttachment(string: "enabled=\(button.isEnabled), hittable=\(button.isHittable), frame=\(button.frame)\n" + button.debugDescription)
+            attachment.lifetime = .keepAlways
+            activity.add(attachment)
+        }
+        button.tap()
+    }
+    private func seek(_ app: XCUIApplication, normalized target: Double, duration: Double) {
+        let slider = app.sliders["reader.player.seek"]
+        // Native adjust(toNormalizedSliderPosition:) uses a fast, best-effort
+        // drag. Its four corrections oscillated 103 -> 87 -> 115 -> 84 seconds.
+        // Grab the thumb inside its current frame, drag slowly, then let go.
+        // The drag is best effort; callers assert against the observed clock.
+        var destination = target
+        for attempt in 0..<3 {
+            var previousReading: Double?
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard slider.isEnabled, slider.isHittable, !app.staticTexts["reader.player.readiness"].exists else { previousReading = nil; return false }
+                let reading = Double(slider.value as? String ?? "") ?? self.seconds(app.staticTexts["reader.player.elapsed"])
+                defer { previousReading = reading }
+                return previousReading.map { abs($0 - reading) < 0.05 } ?? false
+            }, object: nil)
+            let result = XCTWaiter.wait(for: [ready], timeout: 20)
+            XCTAssertEqual(result, .completed, "Paused position and transport must settle before correction")
+            guard result == .completed else { return }
+            let measured = Double(slider.value as? String ?? "") ?? seconds(app.staticTexts["reader.player.elapsed"])
+            if abs(measured - duration * target) <= 1 { return }
+            guard measured.isFinite, measured >= 0, measured <= duration else { return }
+            if attempt > 0 { destination = max(0, min(1, destination + 0.5 * (target - measured / duration))) }
+            let frame = slider.frame
+            let inset = min(frame.height / 2, frame.width / 4)
+            let track = frame.width - 2 * inset
+            let origin = slider.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: inset + track * CGFloat(measured / duration), dy: frame.height / 2))
+            let end = origin.withOffset(CGVector(dx: inset + track * CGFloat(destination), dy: frame.height / 2))
+            XCTContext.runActivity(named: "Slow physical seek attempt \(attempt + 1)") { activity in
+                start.press(forDuration: 0.3, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
+                let attachment = XCTAttachment(string: "frame=\(frame), request=\(destination), before=\(measured), target=\(duration * target), value=\(slider.value ?? "nil"), clock=\(seconds(app.staticTexts["reader.player.elapsed"]))")
+                attachment.lifetime = .keepAlways
+                activity.add(attachment)
+            }
+        }
+    }
+    private func fits(_ app: XCUIApplication, missing: Bool = false) {
+        let surface = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
+        XCTAssertTrue(surface.exists)
+        XCTAssertGreaterThanOrEqual(surface.frame.maxY, app.frame.maxY - 1, "The charcoal panel includes the home indicator area")
+        for id in ["chapters", "narrator", "backward", "toggle", "forward", "speed", "sleep", "close", missing ? "setup" : "manage"] {
+            let element = app.buttons["reader.player." + id]
+            XCTAssertTrue(element.exists, id)
+            XCTAssertTrue(app.frame.contains(element.frame), "\(id) must fit in the real window")
+            XCTAssertGreaterThanOrEqual(element.frame.width + 0.1, 44, id)
+            XCTAssertGreaterThanOrEqual(element.frame.height + 0.1, 44, id)
+            if element.isEnabled { XCTAssertTrue(element.isHittable, id) }
+        }
+        // A full-screen reader can retain the underlying TabView in the AX tree
+        // even though the inspected screen covers it. No tab may be actionable.
+        let backgroundTabs = app.tabBars.firstMatch
+        if backgroundTabs.exists {
+            XCTAssertFalse(backgroundTabs.isHittable, "Immersive reader must cover the application tab bar")
+            for name in ["Library", "Listen", "Studio", "Connection"] {
+                let tab = backgroundTabs.buttons[name]
+                if tab.exists { XCTAssertFalse(tab.isHittable, "A covered application tab must not receive reader touches") }
+            }
+        }
+        XCTAssertFalse(app.buttons["reader.player.generate"].exists)
+        XCTAssertFalse(app.buttons["reader.player.pronunciation"].exists)
+        XCTAssertFalse(app.buttons["reader.player.cast"].exists)
+    }
+    func testReadyPageAndChapterUseContinuousTimelineAndShareListenProgress() {
+        executionTimeAllowance = 300
+        let app = app()
+        chooseRecording(app, "reader-continuous-page")
+        let toggle = app.buttons["reader.player.toggle"]
+        XCTAssertTrue(toggle.isEnabled); XCTAssertEqual(toggle.value as? String, "Paused")
+        XCTAssertEqual(seconds(app.staticTexts["reader.player.duration"]), 124)
+        fits(app); screenshot("Read aloud ready page — paper top and charcoal bottom")
+        XCUIDevice.shared.orientation = .landscapeRight
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.width > app.frame.height }, object: nil)], timeout: 10), .completed)
+        fits(app); screenshot("Read aloud ready page compact landscape")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in app.frame.height > app.frame.width }, object: nil)], timeout: 10), .completed)
+        seek(app, normalized: 0.8, duration: 124)
+        // XCTest cannot place a native thumb on an exact second. Every later
+        // clock check is exact relative to the position the drag really reached.
+        let sought = settledClock(app.staticTexts["reader.player.elapsed"])
+        screenshot("Read aloud paused seek to 80 percent across assets")
+        XCTAssertGreaterThan(sought, 64, "Seeking before Play crosses backend assets without starting narration")
+        XCTAssertLessThan(sought, 124, "A paused seek stays inside the selected recording")
+        XCTAssertEqual(toggle.value as? String, "Paused")
+        tapReadyTransport(app, id: "backward")
+        waitForClock(app.staticTexts["reader.player.elapsed"], seconds: sought - 15)
+        XCTAssertEqual(seconds(app.staticTexts["reader.player.elapsed"]), sought - 15, accuracy: 1)
+        tapReadyTransport(app, id: "forward")
+        waitForClock(app.staticTexts["reader.player.elapsed"], seconds: sought)
+        XCTAssertEqual(seconds(app.staticTexts["reader.player.elapsed"]), sought, accuracy: 1)
+        app.sliders["reader.player.seek"].adjust(toNormalizedSliderPosition: 0)
+        waitForClock(app.staticTexts["reader.player.elapsed"], seconds: 0)
+        toggle.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.seconds(app.staticTexts["reader.player.elapsed"]) >= 5 }, object: nil)], timeout: 35), .completed)
+        XCTAssertEqual(seconds(app.staticTexts["reader.player.duration"]), 124)
+        XCTAssertEqual(toggle.value as? String, "Playing"); toggle.tap()
+        screenshot("Read aloud joined timeline after crossing first asset")
+        app.buttons["reader.scope.chapter"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: toggle)], timeout: 20), .completed)
+        XCTAssertEqual(seconds(app.staticTexts["reader.player.duration"]), 184)
+        XCTAssertEqual(seconds(app.staticTexts["reader.player.elapsed"]), 0)
+        XCTAssertFalse(app.navigationBars["Manage audiobook"].exists, "Scope selection only prepares playback")
+        toggle.tap(); toggle.tap(); fits(app); screenshot("Read aloud ready full chapter")
+        app.buttons["reader.player.close"].tap()
+        XCTAssertFalse(app.buttons["reader.player.toggle"].exists)
+        app.buttons["reader.close"].tap(); app.tabBars.buttons["Listen"].tap()
+        waitForClock(app.staticTexts["listen.duration"], seconds: 184)
+        XCTAssertEqual(seconds(app.staticTexts["listen.duration"]), 184)
+        XCTAssertEqual(app.buttons["player.full.toggle"].value as? String, "Paused")
+    }
+    func testMissingPageAndChapterOpenExplicitExactScopeSetup() {
+        executionTimeAllowance = 240
+        let app = app("--reader-page-clips-fixture")
+        let toggle = app.buttons["reader.player.toggle"]
+        XCTAssertFalse(toggle.isEnabled)
+        XCTAssertFalse(app.navigationBars["Manage audiobook"].exists)
+        fits(app, missing: true); screenshot("Read aloud missing page with explicit setup action")
+        XCTAssertEqual(app.buttons["reader.player.setup"].label, "Set up page audio")
+        app.buttons["reader.player.setup"].tap()
+        XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
+        assertManageContext(app, scope: "Current page", chapter: "The Lantern", contains: "Mira opened", excludes: "Across the Bridge")
+        screenshot("Manage audiobook receives exact page snapshot")
+        app.buttons["manage.close"].tap()
+        app.buttons["reader.scope.chapter"].tap()
+        let setup = app.buttons["reader.player.setup"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "No audio for this chapter"), object: app.staticTexts["reader.player.readiness"])], timeout: 20), .completed)
+        XCTAssertFalse(app.navigationBars["Manage audiobook"].exists)
+        XCTAssertFalse(toggle.isEnabled); XCTAssertFalse(app.sliders["reader.player.seek"].isEnabled)
+        screenshot("Read aloud missing chapter with explicit setup action")
+        setup.tap(); XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
+        assertManageContext(app, scope: "Current chapter", chapter: "The Lantern", contains: "Mira opened", excludes: "Across the Bridge")
+        app.buttons["manage.close"].tap()
+        app.buttons["reader.player.chapters"].tap(); app.buttons["reader.player.chapter.1"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Across the Bridge"), object: app.buttons["reader.player.chapters"])], timeout: 20), .completed)
+        setup.tap(); XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
+        assertManageContext(app, scope: "Current chapter", chapter: "Across the Bridge", contains: "At dawn, Mira", excludes: "Mira opened")
+        screenshot("Manage audiobook receives exact second chapter context")
+    }
+    func testAlternateRecordingsAndPlaybackSourcesRemainExplicit() {
+        executionTimeAllowance = 240
+        let app = app("--reader-alternate-takes-fixture")
+        let toggle = app.buttons["reader.player.toggle"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Choose a matching recording"), object: app.staticTexts["reader.player.readiness"])], timeout: 20), .completed)
+        XCTAssertFalse(toggle.isEnabled)
+        chooseRecording(app, "reader-alternate-job")
+        XCTAssertTrue(toggle.isEnabled); screenshot("Read aloud explicitly selected alternate recording")
+        source(app, "cast")
+        XCTAssertFalse(toggle.isEnabled, "Kyon cannot stand in for missing Full cast")
+        app.buttons["reader.player.chapters"].tap()
+        app.buttons["reader.player.chapter.reader-tone-job-1:reader-chapter-1"].tap()
+        XCTAssertTrue(toggle.isEnabled)
+        screenshot("Read aloud saved Full cast recording")
+        source(app, "device")
+        XCTAssertTrue(toggle.isEnabled, "On-device speech requires no generated recording")
+        toggle.tap(); XCTAssertEqual(toggle.value as? String, "Playing"); toggle.tap()
+        app.buttons["reader.player.speed"].tap(); app.buttons["1.5×"].tap()
+        XCTAssertEqual(app.buttons["reader.player.speed"].value as? String, "1.5×")
+        app.buttons["reader.player.sleep"].tap(); app.buttons["5 minutes"].tap()
+        XCTAssertEqual(app.buttons["reader.player.sleep"].value as? String, "On")
+        screenshot("Read aloud on-device playback remains available")
+    }
+    func testReaderPaperTopAndCloseRespectCreamDarkAndWhiteThemes() {
+        executionTimeAllowance = 240
+        let app = app()
+        chooseRecording(app, "reader-continuous-page")
+        app.buttons["reader.player.close"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["reader.player.close"])], timeout: 10), .completed)
+        waitForPaper("Cream", app: app, playerOpen: false)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: app.buttons["reader.speak"])], timeout: 20), .completed)
+        app.buttons["reader.speak"].tap()
+        XCTAssertTrue(app.buttons["reader.player.close"].waitForExistence(timeout: 10))
+        waitForPaper("Cream", app: app, playerOpen: true)
+        screenshot("Reader cream top with Read aloud open")
+        app.buttons["reader.player.close"].tap(); screenshot("Reader cream top after X close")
+        app.buttons["reader.options"].tap(); app.buttons["reader.manageAudiobook"].tap()
+        XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
+        app.buttons["manage.close"].tap()
+        for theme in ["Obsidian", "White", "Cream"] {
+            app.buttons["reader.options"].tap(); app.buttons["Reading appearance"].tap()
+            app.segmentedControls.buttons[theme].tap(); app.buttons["Done"].tap()
+            waitForPaper(theme, app: app, playerOpen: false)
+            screenshot("Reader \(theme) top and page after theme change")
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["reader.speak"])], timeout: 20), .completed)
+            app.buttons["reader.speak"].tap()
+            XCTAssertTrue(app.buttons["reader.player.close"].waitForExistence(timeout: 10))
+            waitForPaper(theme, app: app, playerOpen: true); screenshot("Reader \(theme) top with charcoal Read aloud")
+            app.buttons["reader.player.close"].tap()
+        }
+    }
+    func testLargestTextAndLandscapeKeepPlaybackAndSetupReachable() {
+        executionTimeAllowance = 240
+        let app = app(extra: ["-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue])
+        chooseRecording(app, "reader-continuous-page")
+        XCTAssertEqual(seconds(app.staticTexts["reader.player.duration"]), 124)
+        screenshot("Read aloud largest text portrait")
+        let surface = app.descendants(matching: .any).matching(identifier: "reader.player.surface").firstMatch
+        for id in ["toggle", "speed", "sleep", "manage"] {
+            let control = app.buttons["reader.player." + id]
+            for _ in 0..<8 { if control.isHittable { break }; surface.swipeUp() }
+            XCTAssertTrue(control.isHittable, "\(id) must remain reachable at accessibility sizes")
+        }
+        app.buttons["reader.player.manage"].tap()
+        XCTAssertTrue(app.navigationBars["Manage audiobook"].waitForExistence(timeout: 15))
+        assertManageContext(app, scope: "Current page", chapter: "The Lantern", contains: "Mira opened", excludes: "Across the Bridge")
+        app.buttons["manage.close"].tap()
+        XCUIDevice.shared.orientation = .landscapeRight
+        screenshot("Read aloud largest text landscape")
+        app.buttons["reader.player.close"].tap()
+        XCTAssertTrue(app.buttons["reader.speak"].waitForExistence(timeout: 10))
+    }
+}
