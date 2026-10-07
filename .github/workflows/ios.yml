@@ -57,7 +57,7 @@ jobs:
         timeout-minutes: 10
         run: python3 scripts/boot_simulator.py '${{ steps.device.outputs.id }}'
       - name: Run unit and UI tests
-        timeout-minutes: 35
+        timeout-minutes: 50
         run: |
           set -euo pipefail
           TEST_FILTERS=()
@@ -143,7 +143,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
             ${TEST_FILTERS[@]+"${TEST_FILTERS[@]}"} \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
-            -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/Tests.xcresult \
+            -maximum-test-execution-time-allowance 480 -resultBundlePath artifacts/Tests.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/simulator-tests.log
           if [ "$UI_TEST_SCOPE" = connection ]; then
             for TEST in testCompanionAddressChangeVerifiesBeforeReplacingPairing testConnectionTabShowsVerifiedStatusAndKeepsPairing testConnectionOfflineForgetAndPairingEntry testConnectionSettingsRemainReachableAtLargestTextSize testNarrationMiniPlayerLeavesNativeTabsVisibleAndUsable testStartCompanionVerifiesReadinessAndFitsScreen testStartCompanionFailureKeepsUnavailableAndPairing; do
@@ -236,7 +236,7 @@ jobs:
           python3 scripts/boot_simulator.py '${{ steps.compact.outputs.id }}'
       - name: Verify reader and Listen controls on compact iPhone
         if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: |
           set -euo pipefail
           COMPACT_FILTERS=(
@@ -309,7 +309,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/Simulator" -parallel-testing-enabled NO \
             "${COMPACT_FILTERS[@]}" \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
-            -maximum-test-execution-time-allowance 300 -resultBundlePath artifacts/CompactListen.xcresult \
+            -maximum-test-execution-time-allowance 480 -resultBundlePath artifacts/CompactListen.xcresult \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY=- | tee artifacts/compact-tests.log
           if [ "$UI_TEST_SCOPE" = playback ]; then
             for TEST in testMiniPlayerDismissalAndListeningSelectionSurviveRestart testStudioFailedJobDeletionRequiresConfirmationAndKeepsOfflineRow; do

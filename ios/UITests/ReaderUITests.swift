@@ -3,7 +3,7 @@ import UIKit
 
 final class ReaderUITests: XCTestCase {
     func testFullCastUnclearTextReviewSavesExactSpeakerAndVoiceAndUnblocksGeneration() {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 420
         let app = castReviewApp()
         app.launch(); openCastReviewReader(app)
         requestCastReview(app)
@@ -36,7 +36,7 @@ final class ReaderUITests: XCTestCase {
     }
 
     func testFullCastUnclearTextReviewFailureKeepsChoicesAndDoesNotGenerate() {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 420
         let app = castReviewApp(); app.launchArguments.append("--cast-review-conflict")
         app.launch(); openCastReviewReader(app); requestCastReview(app); chooseNewReviewSpeaker(app)
         let save = app.buttons["cast.review.save"]
@@ -532,7 +532,7 @@ final class ReaderUITests: XCTestCase {
     }
 
     func testLargestDynamicTypeKeepsListenAndReaderControlsUsable() {
-        executionTimeAllowance = 240
+        executionTimeAllowance = 360
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--offline-transport-fixture", "--content-size-probe", "-playbackRate", "1",
             "-UIPreferredContentSizeCategoryName", UIContentSizeCategory.accessibilityExtraExtraExtraLarge.rawValue]

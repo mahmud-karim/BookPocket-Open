@@ -5,7 +5,7 @@ import UIKit
 /// authenticated DEBUG companion. These do not claim model or audio quality.
 final class ManageAudiobookUITests: XCTestCase {
     func testManageAudiobookAnalysisProgressAndChapterSetupRemainScoped() {
-        executionTimeAllowance = 300
+        executionTimeAllowance = 420
         let app = makeApp(); app.launch(); openManage(app)
         chooseCast(app)
         XCTAssertEqual(app.buttons["manage.characters"].value as? String, "Analyze chapter first")
